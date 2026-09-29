@@ -1,0 +1,13 @@
+# Code Owners
+
+# Global owners
+* @admin
+
+# Frontend
+/frontend/ @frontend-team
+
+# Backend
+/backend/ @backend-team
+
+# Security
+/security/ @security-team
