@@ -50,3 +50,10 @@ htmlcov/
 
 # Docker
 docker-compose.override.yml
+
+# Documentation
+docs/
+CONTRIBUTING.md/
+sample-data/
+github/
+security/
