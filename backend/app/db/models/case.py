@@ -12,6 +12,7 @@ from app.db.base import Base
 
 class CaseStatus(str,enum.Enum):
     OPEN="open"
+    IN_PROGRESS="in_progress"
     CLOSED="closed"
 
 class Case(Base):
