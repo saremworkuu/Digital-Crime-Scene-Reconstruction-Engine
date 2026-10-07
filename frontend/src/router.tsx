@@ -1,7 +1,9 @@
 import { createBrowserRouter } from 'react-router-dom'
 import AppShell from './components/layout/AppShell'
 import ProtectedRoute from './components/layout/ProtectedRoute'
+import Home from './pages/Home'
 import Login from './pages/Login'
+import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Cases from './pages/Cases'
 import CaseDetail from './pages/CaseDetail'
@@ -16,11 +18,19 @@ import NotFound from './pages/NotFound'
 
 const router = createBrowserRouter([
   {
+    path: '/',
+    element: <Home />,
+  },
+  {
     path: '/login',
     element: <Login />,
   },
   {
-    path: '/',
+    path: '/register',
+    element: <Register />,
+  },
+  {
+    path: '/dashboard',
     element: (
       <ProtectedRoute>
         <AppShell />
