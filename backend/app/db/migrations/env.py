@@ -17,7 +17,7 @@ from app.db.models.evidence import Evidence
 from app.db.models.relationship import Relationship
 from app.db.models.report import Report
 from app.db.models.user import User
-
+from app.db.models.login_attempt import LoginAttempt
 
 config = context.config
 
