@@ -17,6 +17,7 @@ def verify_password(password:str,hashed_password:str)->bool:
         return False
 
 def create_access_token(data:dict)->str:
+    import uuid
     to_encode=data.copy()
 
     now=datetime.now(timezone.utc)
@@ -26,7 +27,8 @@ def create_access_token(data:dict)->str:
 
     to_encode.update({
         "iat":now,   #issued at
-        "exp":expire  #expiration
+        "exp":expire,  #expiration
+        "jti":str(uuid.uuid4()), #jwt ID
     })
 
     return jwt.encode(

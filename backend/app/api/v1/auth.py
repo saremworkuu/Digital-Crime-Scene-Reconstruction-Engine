@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-
-
 from fastapi import APIRouter,Depends,HTTPException,status,Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, delete, func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -10,19 +9,24 @@ from sqlalchemy.exc import IntegrityError
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.core.security import( verify_password,create_access_token,hash_password)
+from app.core.dependencies import get_current_user
 
 from app.db.models.user import User
 from app.db.models.login_attempt import LoginAttempt
+from app.db.models.revoked_token import RevokedToken
 
-from app.schemas.auth import LoginRequest,SignupRequest,TokenResponse,UserResponse
+from app.schemas.auth import LoginRequest,SignupRequest,TokenResponse,UserResponse, ChangePasswordRequest
 from app.core.security import verify_password,create_access_token
-
+from app.core.config import settings
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from fastapi import Request
+from jose import jwt
+from fastapi import Request,Depends,HTTPException
 
 router = APIRouter()
+security = HTTPBearer()
 limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post(
     "/signup",
@@ -151,7 +155,32 @@ def login(
 
 
 @router.post("/logout")
-def logout(current_user:User=Depends(get_current_user)):
+def logout(
+    current_user: User = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    token=credentials.credentials
+    
+    payload = jwt.decode(
+        token,
+        settings.SECRET_KEY,
+        algorithms=[settings.ALGORITHM],
+    )
+    token_id = payload["jti"]
+    expires_at = datetime.fromtimestamp(
+        payload["exp"],
+        tz=timezone.utc,
+    )
+
+    revoked_token = RevokedToken(
+        jti=token_id,
+        expires_at=expires_at,
+    )
+
+    db.add(revoked_token)
+    db.commit()
+
     return {'message':"Logged out successfully"}
 
 @router.post("/refresh",response_model=TokenResponse)
@@ -163,3 +192,45 @@ def refresh_token(current_user:User=Depends(get_current_user)):
     return TokenResponse(access_token=new_token)
 
 
+@router.post("/change-password")
+def change_password(data:ChangePasswordRequest,current_user:User=Depends(get_current_user),credentials:HTTPAuthorizationCredentials=Depends(security),db:Session=Depends(get_db),):
+    if data.new_password != data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password and confirmation do not match",
+        )
+    if data.current_password ==data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current password.",
+        )
+    if not verify_password(
+        data.current_password,
+        current_user.hashed_password,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+    current_user.hashed_password=hash_password(data.new_password)
+
+    payload=jwt.decode(
+        credentials.credentials,
+        settings.SECRET_KEY,
+        algorithms=[settings.ALGORITHM]
+    )
+    expires_at=datetime.fromtimestamp(
+        payload["exp"],
+        tz=timezone.utc
+    )
+    db.add(
+        RevokedToken(
+            jti=payload["jti"],
+            expires_at=expires_at,
+        )
+    )
+
+    db.commit()
+    return{
+        "message":"Password changed successfully.Please log in again"
+    }

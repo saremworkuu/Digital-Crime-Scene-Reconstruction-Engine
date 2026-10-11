@@ -18,6 +18,7 @@ from app.db.models.relationship import Relationship
 from app.db.models.report import Report
 from app.db.models.user import User
 from app.db.models.login_attempt import LoginAttempt
+from app.db.models.revoked_token import RevokedToken
 
 config = context.config
 
