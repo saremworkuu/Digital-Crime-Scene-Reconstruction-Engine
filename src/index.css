@@ -1,0 +1,642 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #0e0d0d;
+    background-image: 
+      radial-gradient(circle at 82% -8%, rgba(249, 87, 33, 0.16), transparent 45%),
+      radial-gradient(circle at 18% 2%, rgba(234, 88, 12, 0.08), transparent 38%),
+      linear-gradient(180deg, #11100f 0%, #0d0c0c 100%);
+    background-attachment: fixed;
+    color: #e7e5e4;
+    min-height: 100vh;
+  }
+  
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: rgba(249, 87, 33, 0.35);
+    color: #ffedd5;
+  }
+}
+
+/* ==========================================================================
+   INVISIBLE SCROLLBARS (FULL SCROLL FUNCTIONALITY PRESERVED)
+   Hides visible scrollbars across the website without disabling scrolling.
+   ========================================================================== */
+html,
+body,
+#root,
+* {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* IE and Edge */
+}
+
+::-webkit-scrollbar,
+*::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari, Edge, Opera */
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
+::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  display: none !important;
+  background: transparent !important;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2.5s infinite ease-in-out;
+}
+
+/* Print styles for Forensic Reports */
+@media print {
+  body {
+    background-color: white !important;
+    background-image: none !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-break-inside-avoid {
+    break-inside: avoid;
+  }
+  .print-break-after-page {
+    break-after: page;
+  }
+}
+
+/* ==========================================================================
+   LIGHT MODE STYLING & HIGH-CONTRAST CYBER FORENSIC THEME
+   Activated when html has class 'light' or data-theme='light'
+   ========================================================================== */
+html.light body,
+[data-theme="light"] body {
+  background-color: #f8fafc !important;
+  background-image: 
+    radial-gradient(circle at 82% -8%, rgba(249, 87, 33, 0.10), transparent 45%),
+    radial-gradient(circle at 18% 2%, rgba(234, 88, 12, 0.05), transparent 38%),
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%) !important;
+  color: #0f172a !important;
+}
+
+/* Base surfaces, headers, and navbars */
+html.light header,
+[data-theme="light"] header {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.06) !important;
+}
+
+html.light .bg-\[\#121110\]\/95,
+html.light .bg-\[\#12100f\]\/90,
+html.light .bg-\[\#161413\]\/95,
+html.light .bg-\[\#161413\]\/90,
+[data-theme="light"] .bg-\[\#121110\]\/95,
+[data-theme="light"] .bg-\[\#12100f\]\/90,
+[data-theme="light"] .bg-\[\#161413\]\/95,
+[data-theme="light"] .bg-\[\#161413\]\/90 {
+  background-color: rgba(255, 255, 255, 0.97) !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* All main card surfaces, modals & containers in light mode */
+html.light .bg-\[\#070709\],
+html.light .bg-\[\#09090c\],
+html.light .bg-\[\#0a0a0d\],
+html.light .bg-\[\#101014\],
+html.light .bg-\[\#101014\]\/95,
+html.light .bg-\[\#121110\],
+html.light .bg-\[\#121217\],
+html.light .bg-\[\#131110\],
+html.light .bg-\[\#141211\],
+html.light .bg-\[\#141211\]\/80,
+html.light .bg-\[\#141418\],
+html.light .bg-\[\#151312\],
+html.light .bg-\[\#161413\],
+html.light .bg-\[\#161413\]\/50,
+html.light .bg-\[\#161413\]\/90,
+html.light .bg-\[\#161413\]\/95,
+html.light .bg-\[\#181514\],
+html.light .bg-\[\#181615\],
+html.light .bg-\[\#191716\],
+html.light .bg-\[\#191716\]\/90,
+html.light .bg-\[\#1a1411\],
+html.light .bg-\[\#1a1715\],
+html.light .bg-\[\#1a1716\],
+html.light .bg-\[\#1a1817\],
+html.light .bg-\[\#1c1816\],
+html.light .bg-\[\#1c1816\]\/70,
+html.light .bg-\[\#1c1917\],
+html.light .bg-\[\#1c1918\],
+html.light .bg-\[\#1e1917\],
+html.light .bg-\[\#1e1b19\],
+html.light .bg-\[\#1f1b19\],
+html.light .bg-\[\#201d1b\],
+html.light .bg-\[\#221e1c\],
+html.light .bg-\[\#221f1d\],
+html.light .bg-\[\#23201d\],
+html.light .bg-\[\#23201e\],
+html.light .bg-\[\#241e1b\],
+html.light .bg-\[\#241f1d\],
+html.light .bg-\[\#24201e\],
+html.light .bg-\[\#24211f\],
+html.light .bg-\[\#25201d\],
+html.light .bg-\[\#25201e\],
+html.light .bg-\[\#28221f\],
+html.light .bg-\[\#292422\],
+html.light .bg-\[\#2c2724\],
+html.light .bg-\[\#2d2825\],
+html.light .bg-\[\#2f2926\],
+html.light .bg-\[\#342a26\],
+html.light .bg-neutral-800,
+html.light .bg-neutral-800\/80,
+html.light .bg-neutral-850,
+html.light .bg-neutral-900,
+html.light .bg-neutral-900\/60,
+html.light .bg-neutral-900\/80,
+html.light .bg-neutral-900\/90,
+html.light .bg-neutral-950,
+html.light .bg-slate-900,
+html.light .bg-slate-950,
+[data-theme="light"] .bg-\[\#070709\],
+[data-theme="light"] .bg-\[\#09090c\],
+[data-theme="light"] .bg-\[\#0a0a0d\],
+[data-theme="light"] .bg-\[\#101014\],
+[data-theme="light"] .bg-\[\#101014\]\/95,
+[data-theme="light"] .bg-\[\#121110\],
+[data-theme="light"] .bg-\[\#121217\],
+[data-theme="light"] .bg-\[\#131110\],
+[data-theme="light"] .bg-\[\#141211\],
+[data-theme="light"] .bg-\[\#141211\]\/80,
+[data-theme="light"] .bg-\[\#141418\],
+[data-theme="light"] .bg-\[\#151312\],
+[data-theme="light"] .bg-\[\#161413\],
+[data-theme="light"] .bg-\[\#161413\]\/50,
+[data-theme="light"] .bg-\[\#161413\]\/90,
+[data-theme="light"] .bg-\[\#161413\]\/95,
+[data-theme="light"] .bg-\[\#181514\],
+[data-theme="light"] .bg-\[\#181615\],
+[data-theme="light"] .bg-\[\#191716\],
+[data-theme="light"] .bg-\[\#191716\]\/90,
+[data-theme="light"] .bg-\[\#1a1411\],
+[data-theme="light"] .bg-\[\#1a1715\],
+[data-theme="light"] .bg-\[\#1a1716\],
+[data-theme="light"] .bg-\[\#1a1817\],
+[data-theme="light"] .bg-\[\#1c1816\],
+[data-theme="light"] .bg-\[\#1c1816\]\/70,
+[data-theme="light"] .bg-\[\#1c1917\],
+[data-theme="light"] .bg-\[\#1c1918\],
+[data-theme="light"] .bg-\[\#1e1917\],
+[data-theme="light"] .bg-\[\#1e1b19\],
+[data-theme="light"] .bg-\[\#1f1b19\],
+[data-theme="light"] .bg-\[\#201d1b\],
+[data-theme="light"] .bg-\[\#221e1c\],
+[data-theme="light"] .bg-\[\#221f1d\],
+[data-theme="light"] .bg-\[\#23201d\],
+[data-theme="light"] .bg-\[\#23201e\],
+[data-theme="light"] .bg-\[\#241e1b\],
+[data-theme="light"] .bg-\[\#241f1d\],
+[data-theme="light"] .bg-\[\#24201e\],
+[data-theme="light"] .bg-\[\#24211f\],
+[data-theme="light"] .bg-\[\#25201d\],
+[data-theme="light"] .bg-\[\#25201e\],
+[data-theme="light"] .bg-\[\#28221f\],
+[data-theme="light"] .bg-\[\#292422\],
+[data-theme="light"] .bg-\[\#2c2724\],
+[data-theme="light"] .bg-\[\#2d2825\],
+[data-theme="light"] .bg-\[\#2f2926\],
+[data-theme="light"] .bg-\[\#342a26\],
+[data-theme="light"] .bg-neutral-800,
+[data-theme="light"] .bg-neutral-800\/80,
+[data-theme="light"] .bg-neutral-850,
+[data-theme="light"] .bg-neutral-900,
+[data-theme="light"] .bg-neutral-900\/60,
+[data-theme="light"] .bg-neutral-900\/80,
+[data-theme="light"] .bg-neutral-900\/90,
+[data-theme="light"] .bg-neutral-950,
+[data-theme="light"] .bg-slate-900,
+[data-theme="light"] .bg-slate-950 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.04) !important;
+}
+
+/* Deep inner inputs, code blocks & table rows */
+html.light .bg-\[\#0c0b0a\],
+html.light .bg-\[\#0d0c0c\],
+html.light .bg-\[\#0e0d0d\],
+html.light .bg-\[\#100f0e\],
+html.light .bg-\[\#110f0e\],
+html.light .bg-\[\#11100f\],
+html.light .bg-\[\#12100f\],
+html.light [data-theme="light"] .bg-\[\#0c0b0a\],
+[data-theme="light"] .bg-\[\#0c0b0a\],
+[data-theme="light"] .bg-\[\#0d0c0c\],
+[data-theme="light"] .bg-\[\#0e0d0d\],
+[data-theme="light"] .bg-\[\#100f0e\],
+[data-theme="light"] .bg-\[\#110f0e\],
+[data-theme="light"] .bg-\[\#11100f\],
+[data-theme="light"] .bg-\[\#12100f\] {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Form inputs & dropdowns in light mode */
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea,
+[data-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="light"] select,
+[data-theme="light"] textarea {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder,
+[data-theme="light"] input::placeholder,
+[data-theme="light"] textarea::placeholder {
+  color: #64748b !important;
+}
+
+html.light select option,
+[data-theme="light"] select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Defined, crisp borders across cards and sections */
+html.light .border-\[\#24201e\],
+html.light .border-\[\#25201e\],
+html.light .border-\[\#26201e\],
+html.light .border-\[\#26211f\],
+html.light .border-\[\#282321\],
+html.light .border-\[\#282422\],
+html.light .border-\[\#29221f\],
+html.light .border-\[\#2a2523\],
+html.light .border-\[\#2b2523\],
+html.light .border-\[\#2c2724\],
+html.light .border-\[\#2e2825\],
+html.light .border-\[\#2e2926\],
+html.light .border-\[\#332c28\],
+html.light .border-\[\#382f2c\],
+html.light .border-\[\#38312d\],
+html.light .border-\[\#38322e\],
+html.light .border-\[\#3a322e\],
+html.light .border-\[\#3e3835\],
+html.light .border-neutral-800,
+html.light .border-neutral-700,
+[data-theme="light"] .border-\[\#24201e\],
+[data-theme="light"] .border-\[\#25201e\],
+[data-theme="light"] .border-\[\#26201e\],
+[data-theme="light"] .border-\[\#26211f\],
+[data-theme="light"] .border-\[\#282321\],
+[data-theme="light"] .border-\[\#282422\],
+[data-theme="light"] .border-\[\#29221f\],
+[data-theme="light"] .border-\[\#2a2523\],
+[data-theme="light"] .border-\[\#2b2523\],
+[data-theme="light"] .border-\[\#2c2724\],
+[data-theme="light"] .border-\[\#2e2825\],
+[data-theme="light"] .border-\[\#2e2926\],
+[data-theme="light"] .border-\[\#332c28\],
+[data-theme="light"] .border-\[\#382f2c\],
+[data-theme="light"] .border-\[\#38312d\],
+[data-theme="light"] .border-\[\#38322e\],
+[data-theme="light"] .border-\[\#3a322e\],
+[data-theme="light"] .border-\[\#3e3835\],
+[data-theme="light"] .border-neutral-800,
+[data-theme="light"] .border-neutral-700 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Crystal-clear typography and text contrast in light mode */
+html.light .text-\[\#fafaf9\],
+html.light .text-\[\#f5f5f4\],
+html.light .text-\[\#e7e5e4\],
+html.light .text-neutral-100,
+html.light .text-neutral-200,
+html.light .text-slate-100,
+html.light .text-slate-200,
+[data-theme="light"] .text-\[\#fafaf9\],
+[data-theme="light"] .text-\[\#f5f5f4\],
+[data-theme="light"] .text-\[\#e7e5e4\],
+[data-theme="light"] .text-neutral-100,
+[data-theme="light"] .text-neutral-200,
+[data-theme="light"] .text-slate-100,
+[data-theme="light"] .text-slate-200 {
+  color: #0f172a !important;
+}
+
+html.light .text-\[\#d6d3d1\],
+html.light .text-neutral-300,
+html.light .text-slate-300,
+[data-theme="light"] .text-\[\#d6d3d1\],
+[data-theme="light"] .text-neutral-300,
+[data-theme="light"] .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.light .text-\[\#a8a29e\],
+html.light .text-neutral-400,
+html.light .text-slate-400,
+[data-theme="light"] .text-\[\#a8a29e\],
+[data-theme="light"] .text-neutral-400,
+[data-theme="light"] .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.light .text-\[\#78716c\],
+html.light .text-\[\#57534e\],
+html.light .text-neutral-500,
+html.light .text-slate-500,
+[data-theme="light"] .text-\[\#78716c\],
+[data-theme="light"] .text-\[\#57534e\],
+[data-theme="light"] .text-neutral-500,
+[data-theme="light"] .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Warm Cyber-Orange highlights readable on white */
+html.light .text-\[\#ff936b\],
+html.light .text-\[\#ff8d60\],
+html.light .text-\[\#ff7847\],
+html.light .text-\[\#ff8f3d\],
+[data-theme="light"] .text-\[\#ff936b\],
+[data-theme="light"] .text-\[\#ff8d60\],
+[data-theme="light"] .text-\[\#ff7847\],
+[data-theme="light"] .text-\[\#ff8f3d\] {
+  color: #c2410c !important;
+}
+
+html.light .text-\[\#fca5a5\],
+[data-theme="light"] .text-\[\#fca5a5\] {
+  color: #dc2626 !important;
+}
+
+html.light .text-\[\#86efac\],
+[data-theme="light"] .text-\[\#86efac\] {
+  color: #15803d !important;
+}
+
+html.light .text-\[\#fbbf24\],
+[data-theme="light"] .text-\[\#fbbf24\] {
+  color: #b45309 !important;
+}
+
+/* Hover highlights & preventing text from turning white on hover */
+html.light .hover\:bg-\[\#1a1716\]:hover,
+html.light .hover\:bg-\[\#1c1917\]:hover,
+html.light .hover\:bg-\[\#1c1918\]:hover,
+html.light .hover\:bg-\[\#1f1b19\]:hover,
+html.light .hover\:bg-\[\#221f1d\]:hover,
+html.light .hover\:bg-\[\#23201d\]:hover,
+html.light .hover\:bg-\[\#23201e\]:hover,
+html.light .hover\:bg-\[\#24201e\]:hover,
+html.light .hover\:bg-\[\#25201d\]:hover,
+html.light .hover\:bg-\[\#25201e\]:hover,
+html.light .hover\:bg-\[\#292524\]:hover,
+html.light .hover\:bg-\[\#2c2623\]:hover,
+html.light .hover\:bg-\[\#341a12\]:hover,
+[data-theme="light"] .hover\:bg-\[\#1a1716\]:hover,
+[data-theme="light"] .hover\:bg-\[\#1c1917\]:hover,
+[data-theme="light"] .hover\:bg-\[\#1c1918\]:hover,
+[data-theme="light"] .hover\:bg-\[\#1f1b19\]:hover,
+[data-theme="light"] .hover\:bg-\[\#221f1d\]:hover,
+[data-theme="light"] .hover\:bg-\[\#23201d\]:hover,
+[data-theme="light"] .hover\:bg-\[\#23201e\]:hover,
+[data-theme="light"] .hover\:bg-\[\#24201e\]:hover,
+[data-theme="light"] .hover\:bg-\[\#25201d\]:hover,
+[data-theme="light"] .hover\:bg-\[\#25201e\]:hover,
+[data-theme="light"] .hover\:bg-\[\#292524\]:hover,
+[data-theme="light"] .hover\:bg-\[\#2c2623\]:hover,
+[data-theme="light"] .hover\:bg-\[\#341a12\]:hover {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .hover\:text-\[\#fafaf9\]:hover,
+html.light .hover\:text-\[\#d6d3d1\]:hover,
+html.light .hover\:text-neutral-200:hover,
+[data-theme="light"] .hover\:text-\[\#fafaf9\]:hover,
+[data-theme="light"] .hover\:text-\[\#d6d3d1\]:hover,
+[data-theme="light"] .hover\:text-neutral-200:hover {
+  color: #0f172a !important;
+}
+
+/* Orange badges, chips and pills */
+html.light .bg-\[\#20100a\],
+html.light .bg-\[\#22130c\],
+html.light .bg-\[\#22130d\],
+html.light .bg-\[\#221712\],
+html.light .bg-\[\#24130d\],
+html.light .bg-\[\#24130d\]\/80,
+html.light .bg-\[\#26130b\],
+html.light .bg-\[\#261711\],
+html.light .bg-\[\#27130b\],
+html.light .bg-\[\#27130b\]\/80,
+html.light .bg-\[\#28150f\],
+html.light .bg-\[\#29120b\],
+html.light .bg-\[\#29130d\],
+html.light .bg-\[\#29140d\],
+html.light .bg-\[\#29160f\],
+html.light .bg-\[\#291711\],
+html.light .bg-\[\#2a130a\],
+html.light .bg-\[\#2a140d\],
+html.light .bg-\[\#2a1711\],
+html.light .bg-\[\#2b130a\],
+html.light .bg-\[\#30160d\],
+html.light .bg-\[\#32170f\],
+html.light .bg-\[\#34170f\],
+html.light .bg-\[\#38180e\],
+html.light .bg-\[\#3a150c\],
+html.light .bg-\[\#3a160d\],
+[data-theme="light"] .bg-\[\#20100a\],
+[data-theme="light"] .bg-\[\#22130c\],
+[data-theme="light"] .bg-\[\#22130d\],
+[data-theme="light"] .bg-\[\#221712\],
+[data-theme="light"] .bg-\[\#24130d\],
+[data-theme="light"] .bg-\[\#24130d\]\/80,
+[data-theme="light"] .bg-\[\#26130b\],
+[data-theme="light"] .bg-\[\#261711\],
+[data-theme="light"] .bg-\[\#27130b\],
+[data-theme="light"] .bg-\[\#27130b\]\/80,
+[data-theme="light"] .bg-\[\#28150f\],
+[data-theme="light"] .bg-\[\#29120b\],
+[data-theme="light"] .bg-\[\#29130d\],
+[data-theme="light"] .bg-\[\#29140d\],
+[data-theme="light"] .bg-\[\#29160f\],
+[data-theme="light"] .bg-\[\#291711\],
+[data-theme="light"] .bg-\[\#2a130a\],
+[data-theme="light"] .bg-\[\#2a140d\],
+[data-theme="light"] .bg-\[\#2a1711\],
+[data-theme="light"] .bg-\[\#2b130a\],
+[data-theme="light"] .bg-\[\#30160d\],
+[data-theme="light"] .bg-\[\#32170f\],
+[data-theme="light"] .bg-\[\#34170f\],
+[data-theme="light"] .bg-\[\#38180e\],
+[data-theme="light"] .bg-\[\#3a150c\],
+[data-theme="light"] .bg-\[\#3a160d\] {
+  background-color: #fff7ed !important;
+  border-color: #fed7aa !important;
+  color: #c2410c !important;
+}
+
+/* Green verified / security badges */
+html.light .bg-emerald-950,
+html.light .bg-emerald-950\/40,
+html.light .bg-emerald-950\/60,
+html.light .bg-emerald-950\/80,
+html.light .bg-\[\#102a18\],
+[data-theme="light"] .bg-emerald-950,
+[data-theme="light"] .bg-emerald-950\/40,
+[data-theme="light"] .bg-emerald-950\/60,
+[data-theme="light"] .bg-emerald-950\/80,
+[data-theme="light"] .bg-\[\#102a18\] {
+  background-color: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+  color: #15803d !important;
+}
+
+/* Red alert / critical badges */
+html.light .bg-red-950\/50,
+html.light .bg-red-950\/60,
+html.light .bg-red-950\/80,
+html.light .bg-\[\#2e1215\],
+html.light .bg-\[\#3b1219\],
+html.light .bg-\[\#40181d\],
+[data-theme="light"] .bg-red-950\/50,
+[data-theme="light"] .bg-red-950\/60,
+[data-theme="light"] .bg-red-950\/80,
+[data-theme="light"] .bg-\[\#2e1215\],
+[data-theme="light"] .bg-\[\#3b1219\],
+[data-theme="light"] .bg-\[\#40181d\] {
+  background-color: #fef2f2 !important;
+  border-color: #fecaca !important;
+  color: #b91c1c !important;
+}
+
+/* Amber warning badges */
+html.light .bg-amber-950\/40,
+html.light .bg-amber-950\/60,
+html.light .bg-amber-950\/80,
+html.light .bg-\[\#2a200d\],
+[data-theme="light"] .bg-amber-950\/40,
+[data-theme="light"] .bg-amber-950\/60,
+[data-theme="light"] .bg-amber-950\/80,
+[data-theme="light"] .bg-\[\#2a200d\] {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+  color: #b45309 !important;
+}
+
+/* Ensure 3D viewport canvas containers blend seamlessly without dark background */
+html.light .threat-globe-viewport,
+[data-theme="light"] .threat-globe-viewport {
+  background-color: transparent !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* ==========================================================================
+   DYNAMIC MOTION & KINETIC TEXT ANIMATIONS (POLISHED & ORGANIC)
+   ========================================================================== */
+@keyframes textMotionReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+    filter: blur(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+@keyframes kineticContainerFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes kineticWordWave {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+@keyframes kineticLaserShimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes cyberAuraPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(249, 87, 33, 0.25));
+  }
+  50% {
+    filter: drop-shadow(0 0 16px rgba(249, 87, 33, 0.75)) drop-shadow(0 0 28px rgba(251, 146, 60, 0.35));
+  }
+}
+
+.animate-motion-title {
+  animation: textMotionReveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-kinetic-container {
+  animation: kineticContainerFloat 3.8s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-kinetic-word {
+  display: inline-block;
+  animation: kineticWordWave 2.8s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-text-shimmer {
+  background-size: 250% 250%;
+  animation: kineticLaserShimmer 2.5s ease infinite;
+}
+
+.animate-cyber-glow {
+  animation: cyberAuraPulse 2.4s ease-in-out infinite;
+}
+

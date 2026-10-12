@@ -1,0 +1,38 @@
+[
+  {
+    "EventID": 4625,
+    "TimeCreated": "2026-09-22T03:30:12Z",
+    "Computer": "dc01.corp.local",
+    "TargetUserName": "Administrator",
+    "WorkstationName": "WEB01",
+    "Status": "0xC000006D",
+    "Message": "An account failed to log on"
+  },
+  {
+    "EventID": 4624,
+    "TimeCreated": "2026-09-22T03:32:45Z",
+    "Computer": "dc01.corp.local",
+    "TargetUserName": "Administrator",
+    "WorkstationName": "WEB01",
+    "LogonType": 3,
+    "Message": "An account was successfully logged on"
+  },
+  {
+    "EventID": 4688,
+    "TimeCreated": "2026-09-22T03:35:10Z",
+    "Computer": "dc01.corp.local",
+    "SubjectUserName": "Administrator",
+    "NewProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "CommandLine": "powershell.exe -enc JABzAD0ATgBlAHcALQBPAGIAagBlAGMAdAAgAE4AZQB0AC4AVwBlAGIAQwBsAGkAZQBuAHQA...",
+    "Message": "A new process has been created"
+  },
+  {
+    "EventID": 4688,
+    "TimeCreated": "2026-09-22T03:40:02Z",
+    "Computer": "dc01.corp.local",
+    "SubjectUserName": "Administrator",
+    "NewProcessName": "C:\\Windows\\System32\\vssadmin.exe",
+    "CommandLine": "vssadmin.exe delete shadows /all /quiet",
+    "Message": "Shadow copies deletion command executed"
+  }
+]

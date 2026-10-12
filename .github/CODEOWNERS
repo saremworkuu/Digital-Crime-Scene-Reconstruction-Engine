@@ -1,0 +1,4 @@
+* @dcsre-core-team
+/backend/app/parsers/ @dcsre-forensics
+/backend/app/rules/ @dcsre-threat-intel
+/security/ @dcsre-security-lead
