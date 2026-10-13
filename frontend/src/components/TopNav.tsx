@@ -99,7 +99,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         </div>
 
         {/* Zone 3: Actions */}
-        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+        <div className="flex items-center gap-4 sm:gap-6 shrink-0">
           {currentUser ? (
             /* Signed-in Actions: Home, About, Contact in between Home and Workspace, then Workspace */
             <>
@@ -107,64 +107,60 @@ export const TopNav: React.FC<TopNavProps> = ({
               <button
                 type="button"
                 onClick={() => setCurrentPage('home')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                className={`text-base font-medium transition-all cursor-pointer ${
                   currentPage === 'home'
-                    ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60'
-                    : 'bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4]'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="Go to DCSRE Home Page"
                 aria-label="Go to DCSRE Home Page"
               >
-                <HomeIcon className="w-4 h-4 text-[#f95721]" />
-                <span className="hidden sm:inline font-mono text-[11px]">Home</span>
+                <span className="hidden sm:inline font-mono text-[14px]">Home</span>
               </button>
 
               {/* About Button */}
               <button
                 type="button"
                 onClick={() => setCurrentPage('about')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                className={`text-base font-medium transition-all cursor-pointer ${
                   currentPage === 'about'
-                    ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60'
-                    : 'bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4]'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="About DCSRE Forensic Platform"
                 aria-label="About DCSRE Forensic Platform"
               >
-                <Info className="w-4 h-4 text-[#f95721]" />
-                <span className="hidden sm:inline font-mono text-[11px]">About</span>
+                <span className="hidden sm:inline font-mono text-[14px]">About</span>
               </button>
 
               {/* Contact Button */}
               <button
                 type="button"
                 onClick={() => setCurrentPage('contact')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                className={`text-base font-medium transition-all cursor-pointer ${
                   currentPage === 'contact'
-                    ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60'
-                    : 'bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4]'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="Contact DFIR Triage & Command Desk"
                 aria-label="Contact DFIR Triage & Command Desk"
               >
-                <Mail className="w-4 h-4 text-[#f95721]" />
-                <span className="hidden sm:inline font-mono text-[11px]">Contact</span>
+                <span className="hidden sm:inline font-mono text-[14px]">Contact</span>
               </button>
 
               {/* Workspace Button */}
               <button
                 type="button"
                 onClick={() => setCurrentPage(currentUser.role === 'admin' ? 'dashboard' : 'cases')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`text-base font-semibold transition-all cursor-pointer ${
                   currentPage !== 'home' && currentPage !== 'about' && currentPage !== 'contact'
-                    ? 'bg-[#f95721] text-white shadow-[0_0_12px_rgba(249,87,33,0.35)] border-transparent'
-                    : 'bg-[#2a140d] hover:bg-[#f95721] text-[#f95721] hover:text-white border-[#ea580c]/60 hover:border-transparent shadow-sm'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="Go to Investigation Workspace"
                 aria-label="Go to Investigation Workspace"
               >
-                <FolderLock className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline font-mono text-[11px]">Workspace</span>
+                <span className="hidden sm:inline font-mono text-[14px]">Workspace</span>
               </button>
             </>
           ) : (
@@ -174,48 +170,45 @@ export const TopNav: React.FC<TopNavProps> = ({
               <button
                 type="button"
                 onClick={() => setCurrentPage('home')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                className={`text-base font-medium transition-all cursor-pointer ${
                   currentPage === 'home'
-                    ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60'
-                    : 'bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4]'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="DCSRE Home"
                 aria-label="DCSRE Home"
               >
-                <HomeIcon className="w-4 h-4 text-[#f95721]" />
-                <span className="hidden sm:inline font-mono text-[11px]">Home</span>
+                <span className="hidden sm:inline font-mono text-[14px]">Home</span>
               </button>
 
               {/* About DCSRE Button */}
               <button
                 type="button"
                 onClick={() => setCurrentPage('about')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                className={`text-base font-medium transition-all cursor-pointer ${
                   currentPage === 'about'
-                    ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60'
-                    : 'bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4]'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="About DCSRE Forensic Platform"
                 aria-label="About DCSRE Forensic Platform"
               >
-                <Info className="w-4 h-4 text-[#f95721]" />
-                <span className="hidden sm:inline font-mono text-[11px]">About</span>
+                <span className="hidden sm:inline font-mono text-[14px]">About</span>
               </button>
 
               {/* Contact Button */}
               <button
                 type="button"
                 onClick={() => setCurrentPage('contact')}
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                className={`text-base font-medium transition-all cursor-pointer ${
                   currentPage === 'contact'
-                    ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60'
-                    : 'bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4]'
+                    ? 'text-[#f95721]'
+                    : 'text-[#e7e5e4] hover:text-[#f95721]'
                 }`}
                 title="Contact DFIR Triage & Command Desk"
                 aria-label="Contact DFIR Triage & Command Desk"
               >
-                <Mail className="w-4 h-4 text-[#f95721]" />
-                <span className="hidden sm:inline font-mono text-[11px]">Contact</span>
+                <span className="hidden sm:inline font-mono text-[14px]">Contact</span>
               </button>
             </>
           )}
@@ -224,20 +217,14 @@ export const TopNav: React.FC<TopNavProps> = ({
           <button
             type="button"
             onClick={toggleTheme}
-            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4] shadow-sm"
+            className="p-1.5 rounded-lg border text-xs font-medium flex items-center transition-all cursor-pointer bg-[#191716] hover:bg-[#221f1d] border-[#2e2926] text-[#e7e5e4] shadow-sm"
             title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           >
             {theme === 'dark' ? (
-              <>
-                <Sun className="w-4 h-4 text-amber-400" />
-                <span className="hidden sm:inline font-mono text-[11px] text-[#d6d3d1]">Light</span>
-              </>
+              <Sun className="w-4 h-4 text-amber-400" />
             ) : (
-              <>
-                <Moon className="w-4 h-4 text-indigo-400" />
-                <span className="hidden sm:inline font-mono text-[11px] text-[#3f3f46]">Dark</span>
-              </>
+              <Moon className="w-4 h-4 text-indigo-400" />
             )}
           </button>
 
@@ -408,14 +395,13 @@ export const TopNav: React.FC<TopNavProps> = ({
               <button
                 type="button"
                 onClick={() => setCurrentPage('login')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`text-base font-semibold transition-all cursor-pointer ${
                   currentPage === 'login' || currentPage === 'admin_login' || currentPage === 'register'
-                    ? 'bg-[#f95721] text-white shadow-[0_0_12px_rgba(249,87,33,0.4)]'
-                    : 'bg-[#191716] border border-[#2e2926] text-[#fafaf9] hover:bg-[#24130d] hover:border-[#ea580c]/50'
+                    ? 'text-[#f95721]'
+                    : 'text-[#fafaf9] hover:text-[#f95721]'
                 }`}
                 title="Unified Access Gateway for Investigators, Admins, and Registration"
               >
-                <LogIn className="w-3.5 h-3.5 text-[#f95721]" />
                 <span>Log In</span>
               </button>
             </div>

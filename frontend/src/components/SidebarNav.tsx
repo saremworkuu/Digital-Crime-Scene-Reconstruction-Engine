@@ -42,13 +42,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ className = '' }) => {
   const isLight = theme === 'light';
   const isAdmin = currentUser?.role === 'admin';
 
-  // Admin only can see the dashboard; filter it out for investigators to mitigate operational risk
-  const visibleItems = SIDEBAR_ITEMS.filter((item) => {
-    if (item.id === 'dashboard') {
-      return isAdmin;
-    }
-    return true;
-  });
+  // Show all sidebar items for both admins and investigators
+  const visibleItems = SIDEBAR_ITEMS;
 
   return (
     <aside
