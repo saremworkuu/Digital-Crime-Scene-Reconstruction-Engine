@@ -1,13 +1,18 @@
 # Evidence model
 import uuid
+import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String,Text,Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
+class ParsingStatus(str,enum.Enum):
+    PENDING="pending"
+    PARSED="parsed"
+    FAILED="failed"
 
 class Evidence(Base):
     __tablename__ = "evidence"
@@ -23,14 +28,31 @@ class Evidence(Base):
         ForeignKey("cases.id"),
         nullable=False
     )
+    uploaded_by:Mapped[uuid.UUID]=mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False
+    ) 
 
     filename: Mapped[str] = mapped_column(
-        String,
+        String(255),
         nullable=False
     )
-
+    description:Mapped[str]=mapped_column(
+        Text,
+        default="",
+        nullable=True
+    )
     file_type: Mapped[str] = mapped_column(
-        String,
+        String(100),
+        nullable=False
+    )
+    file_path:Mapped[str]=mapped_column(
+        String(1024),
+        nullable=False
+    )
+    sha256_hash:Mapped[str]=mapped_column(
+        String(64),
         nullable=False
     )
 
@@ -43,4 +65,23 @@ class Evidence(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False
+    )
+
+    parsing_status:Mapped[ParsingStatus]=mapped_column(
+        Enum(
+            ParsingStatus,
+            name="evidence_parsing_status",
+            values_callable=lambda cls:[item.value for item in cls],
+        ),
+        default=ParsingStatus.PENDING,
+        nullable=False,
+    )
+
+    parser_used:Mapped[str|None]=mapped_column(
+        String(100),
+        nullable=True,
+    )
+    parsing_error:Mapped[str|None]=mapped_column(
+        Text,
+        nullable=True
     )

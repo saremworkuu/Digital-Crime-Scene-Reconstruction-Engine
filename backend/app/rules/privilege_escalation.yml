@@ -1,1 +1,18 @@
-# Privilege escalation detection rule
+id: privilege_escalation
+name: Privilege Escalation
+description: >-
+  Detects explicit privilege escalation indicators and potentially
+  suspicious privilege elevation activity.
+severity: high
+mitre_technique: T1548
+
+detection:
+  event_types:
+    - privilege_escalation
+    - privilege_elevation
+    - privilege_use
+    - uac_bypass
+    - setuid
+    - sudoers_change
+    - token_impersonation
+  group_by: username

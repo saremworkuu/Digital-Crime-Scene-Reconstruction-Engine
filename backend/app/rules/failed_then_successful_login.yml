@@ -1,0 +1,12 @@
+id: failed_then_successful_login
+name: Failed Logins Followed by Success
+description: >-
+  Detects multiple failed login attempts followed by a successful
+  login from the same IP address.
+severity: high
+mitre_technique: T1078
+
+detection:
+  threshold: 3
+  window_minutes: 30
+  group_by: source_ip
