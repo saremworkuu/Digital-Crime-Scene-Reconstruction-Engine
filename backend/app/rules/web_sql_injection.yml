@@ -1,1 +1,17 @@
 # Web SQL injection detection rule
+id: web_sql_injection
+name: Potential Web SQL Injection
+description: >-
+  Detects web request events containing patterns associated with
+  SQL injection attempts, including SQL manipulation and
+  common database-specific attack payloads.
+severity: high
+mitre_technique: T1190
+
+detection:
+  event_types:
+    - http_request
+    - web_request
+    - web_access
+    - waf_alert
+  group_by: source_ip

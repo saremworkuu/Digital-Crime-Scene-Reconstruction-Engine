@@ -1,154 +1,514 @@
-import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, status,Request
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from uuid import UUID
+
+from sqlalchemy import or_
+
+from app.core.dependencies import get_current_user
 from app.db.session import get_db
-from app.db.models import Case, User, AuditLog
-from app.schemas.case import CaseCreate, CaseUpdate, CaseResponse
-from app.core.security import oauth2_scheme, decode_token
+from app.db.models.case import Case
+from app.db.models.user import User, UserRole
+from app.db.models.audit_log import AuditLog
+from app.schemas.case import CaseCreate, CaseResponse, CaseUpdate
+from app.db.models.case_assignment import CaseAssignment
+from app.schemas.case import (
+    CaseAssignmentCreate,
+    CaseAssignmentResponse,
+)
+from app.services.audit import log_audit_event
+router = APIRouter()
 
-router = APIRouter(prefix="/cases", tags=["cases"])
 
-@router.get("", response_model=List[CaseResponse])
-def list_cases(status: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(Case)
-    if status and status != "All":
-        query = query.filter(Case.status == status)
-    cases = query.all()
-    
-    # Return formatted cases
-    results = []
-    for c in cases:
-        results.append(CaseResponse(
-            id=c.id,
-            name=c.name,
-            description=c.description,
-            status=c.status,
-            created_at=c.created_at,
-            updated_at=c.updated_at,
-            owner_id=c.owner_id,
-            tags=c.tags or [],
-            evidence_count=len(c.evidence_files),
-            event_count=len(c.events),
-            detection_count=len(c.detections),
-            critical_detection_count=sum(1 for d in c.detections if d.severity == "critical")
-        ))
-    return results
+@router.post(
+    "/",
+    response_model=CaseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_case(
+    request: Request,
+    case_data: CaseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Only Admins and Investigators may create cases.
+    if current_user.role not in (UserRole.ADMIN, UserRole.INVESTIGATOR):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admins and Investigators can create cases.",
+        )
 
-@router.post("", response_model=CaseResponse)
-def create_case(data: CaseCreate, token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    payload = decode_token(token)
-    user_id = payload.get("sub", "usr-sarah")
-
+    # Build the case using trusted server-side values.
     new_case = Case(
-        id=f"case-{uuid.uuid4().hex[:8]}",
-        name=data.name,
-        description=data.description,
-        status="Open",
-        owner_id=user_id,
-        tags=data.tags or []
+        name=case_data.name.strip(),
+        description=case_data.description,
+        created_by=current_user.id,
     )
-    db.add(new_case)
-    db.commit()
-    db.refresh(new_case)
 
-    # Record Audit Log (FR-AUDIT-1)
-    audit = AuditLog(
-        id=f"audit-{uuid.uuid4().hex[:8]}",
-        user_id=user_id,
-        user_name="Analyst",
-        user_role=payload.get("role", "investigator"),
-        case_id=new_case.id,
-        action="CASE_CREATED",
-        target_type="case",
-        target_id=new_case.id,
-        ip_address="127.0.0.1",
-        user_agent="FastAPI-Backend",
-        details_json={"name": new_case.name}
-    )
-    db.add(audit)
-    db.commit()
+    if not new_case.name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Case name cannot be empty.",
+        )
 
-    return CaseResponse(
-        id=new_case.id,
-        name=new_case.name,
-        description=new_case.description,
-        status=new_case.status,
-        created_at=new_case.created_at,
-        updated_at=new_case.updated_at,
-        owner_id=new_case.owner_id,
-        tags=new_case.tags or []
+    try:
+        db.add(new_case)
+        db.flush()
+
+        # Record who created the case.
+        audit_entry = log_audit_event(
+            db=db,
+            user=current_user,
+            action="case.created",
+            resource=f"case:{new_case.id}",
+            request=request,
+            case_id=new_case.id,
+            details={
+                "case_name": new_case.name,
+                "status": (new_case.status.value
+                if hasattr(new_case.status, "value")
+                else str(new_case.status),
+                )
+            },
+        )
+    
+        db.commit()
+        db.refresh(new_case)
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return new_case
+
+
+
+@router.get("/", response_model=list[CaseResponse])
+def list_cases(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Hide soft-deleted cases from ordinary listings.
+    query = db.query(Case).filter(Case.is_deleted.is_(False))
+
+    # Admins can see every non-deleted case.
+    if current_user.role == UserRole.ADMIN:
+        pass
+
+    # Investigators can see cases they created or were assigned.
+    elif current_user.role == UserRole.INVESTIGATOR:
+        assigned_case_ids = (
+            db.query(CaseAssignment.case_id)
+            .filter(CaseAssignment.user_id == current_user.id)
+        )
+
+        query = query.filter(
+            or_(
+                Case.created_by == current_user.id,
+                Case.id.in_(assigned_case_ids),
+            )
+        )
+
+    # Viewers can see only cases assigned to them.
+    elif current_user.role == UserRole.VIEWER:
+        assigned_case_ids = (
+            db.query(CaseAssignment.case_id)
+            .filter(CaseAssignment.user_id == current_user.id)
+        )
+
+        query = query.filter(Case.id.in_(assigned_case_ids))
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to view cases.",
+        )
+
+    return query.order_by(Case.created_at.desc()).all()
+
+
+
+@router.post(
+    "/{case_id}/assignments",
+    response_model=CaseAssignmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def assign_case(
+    request: Request,
+    case_id: UUID,
+    assignment_data: CaseAssignmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Only admins can assign cases.
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admins can assign cases.",
+        )
+
+    # Make sure the case exists and is not deleted.
+    case = (
+        db.query(Case)
+        .filter(
+            Case.id == case_id,
+            Case.is_deleted.is_(False),
+        )
+        .first()
     )
+
+    if case is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Case not found.",
+        )
+
+    # Find the user who will receive the assignment.
+    assigned_user = (
+        db.query(User)
+        .filter(User.id == assignment_data.user_id)
+        .first()
+    )
+
+    if assigned_user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    if assigned_user.role not in (
+        UserRole.INVESTIGATOR,
+        UserRole.VIEWER,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Cases can only be assigned to investigators or viewers.",
+        )
+
+    # Prevent duplicate assignments.
+    existing = (
+        db.query(CaseAssignment)
+        .filter(
+            CaseAssignment.case_id == case_id,
+            CaseAssignment.user_id == assigned_user.id,
+        )
+        .first()
+    )
+
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This user is already assigned to the case.",
+        )
+
+    assignment = CaseAssignment(
+        case_id=case_id,
+        user_id=assigned_user.id,
+        assigned_by=current_user.id,
+    )
+
+    try:
+        db.add(assignment)
+        db.flush()
+
+        audit_entry = log_audit_event(
+            db=db,
+            user=current_user,
+            action="case.assigned",
+            resource=f"case:{case.id}",
+            request=request,
+            case_id=case.id,
+            details={
+            "case_name": case.name,
+            "assigned_user_id": str(assigned_user.id),
+            "assigned_user_role": assigned_user.role.value
+            if hasattr(assigned_user.role, "value")
+            else str(assigned_user.role),
+        },
+        )
+        
+
+        db.commit()
+        db.refresh(assignment)
+    except Exception:
+        db.rollback()
+        raise
+
+    return assignment
+
+
 
 @router.get("/{case_id}", response_model=CaseResponse)
-def get_case(case_id: str, db: Session = Depends(get_db)):
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return CaseResponse(
-        id=case.id,
-        name=case.name,
-        description=case.description,
-        status=case.status,
-        created_at=case.created_at,
-        updated_at=case.updated_at,
-        owner_id=case.owner_id,
-        tags=case.tags or [],
-        evidence_count=len(case.evidence_files),
-        event_count=len(case.events),
-        detection_count=len(case.detections)
+def get_case(
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Find the case, excluding soft-deleted records.
+    case = (
+        db.query(Case)
+        .filter(
+            Case.id == case_id,
+            Case.is_deleted.is_(False),
+        )
+        .first()
     )
 
-@router.put("/{case_id}", response_model=CaseResponse)
-def update_case(case_id: str, data: CaseUpdate, db: Session = Depends(get_db)):
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    if data.name is not None: case.name = data.name
-    if data.description is not None: case.description = data.description
-    if data.status is not None: case.status = data.status
-    if data.tags is not None: case.tags = data.tags
-    case.updated_at = datetime.now(timezone.utc)
-    
-    db.commit()
-    db.refresh(case)
-    return CaseResponse(
-        id=case.id,
-        name=case.name,
-        description=case.description,
-        status=case.status,
-        created_at=case.created_at,
-        updated_at=case.updated_at,
-        owner_id=case.owner_id,
-        tags=case.tags or []
+    if case is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Case not found.",
+        )
+
+    # Admins can view all non-deleted cases.
+    if current_user.role == UserRole.ADMIN:
+        return case
+
+    # Investigators can view cases they created or were assigned.
+    if current_user.role == UserRole.INVESTIGATOR:
+        if case.created_by == current_user.id:
+            return case
+
+        assignment = (
+            db.query(CaseAssignment)
+            .filter(
+                CaseAssignment.case_id == case.id,
+                CaseAssignment.user_id == current_user.id,
+            )
+            .first()
+        )
+
+        if assignment is not None:
+            return case
+
+    # Viewers can view cases assigned to them.
+    elif current_user.role == UserRole.VIEWER:
+        assignment = (
+            db.query(CaseAssignment)
+            .filter(
+                CaseAssignment.case_id == case.id,
+                CaseAssignment.user_id == current_user.id,
+            )
+            .first()
+        )
+
+        if assignment is not None:
+            return case
+
+    raise HTTPException(
+        status_code=403,
+        detail="You do not have permission to view this case.",
     )
+
+
+
+@router.patch("/{case_id}", response_model=CaseResponse)
+def update_case(
+    request:Request,
+    case_id: UUID,
+    case_data: CaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Find the case, excluding soft-deleted records.
+    case = (
+        db.query(Case)
+        .filter(
+            Case.id == case_id,
+            Case.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if case is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Case not found.",
+        )
+
+    # Viewers cannot modify cases.
+    if current_user.role == UserRole.VIEWER:
+        raise HTTPException(
+            status_code=403,
+            detail="Viewers cannot update cases.",
+        )
+
+    # Admins can update any case.
+    if current_user.role == UserRole.ADMIN:
+        pass
+
+    # Investigators can update cases they created or were assigned.
+    elif current_user.role == UserRole.INVESTIGATOR:
+        is_creator = case.created_by == current_user.id
+
+        is_assigned = (
+            db.query(CaseAssignment)
+            .filter(
+                CaseAssignment.case_id == case.id,
+                CaseAssignment.user_id == current_user.id,
+            )
+            .first()
+            is not None
+        )
+
+        if not is_creator and not is_assigned:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to update this case.",
+            )
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to update cases.",
+        )
+
+    # Get only fields explicitly included in the request.
+    updates = case_data.model_dump(exclude_unset=True)
+
+    if not updates:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide at least one field to update.",
+        )
+
+    # Validate the case name if it was provided.
+    if "name" in updates:
+        if updates["name"] is None or not updates["name"].strip():
+            raise HTTPException(
+                status_code=422,
+                detail="Case name cannot be empty.",
+            )
+
+        updates["name"] = updates["name"].strip()
+
+    # Status must not be null.
+    if "status" in updates and updates["status"] is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Case status cannot be null.",
+        )
+
+    try:
+        for field, value in updates.items():
+            setattr(case, field, value)
+
+        audit_entry = log_audit_event(
+            db=db,
+            user=current_user,
+            action="case.updated",
+            resource=f"case:{case.id}",
+            request=request,
+            case_id=case.id,
+            details={
+                "case_name": case.name,
+                "status": case.status.value
+                if hasattr(case.status, "value")
+                else str(case.status),
+            },
+        )
+
+        db.commit()
+        db.refresh(case)
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return case
+
+
 
 @router.delete("/{case_id}")
-def delete_case(case_id: str, db: Session = Depends(get_db)):
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    db.delete(case)
-    db.commit()
-    return {"message": "Case deleted successfully"}
-
-@router.post("/{case_id}/assign")
-def assign_users_to_case(
-    case_id: str,
-    data: dict,
-    db: Session = Depends(get_db)
+def delete_case(
+    request:Request,
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    # For now, this is a placeholder - would need a case_users junction table
-    # in the database to properly implement many-to-many relationships
-    user_ids = data.get("user_ids", [])
-    
+    # Find the case, excluding already deleted cases.
+    case = (
+        db.query(Case)
+        .filter(
+            Case.id == case_id,
+            Case.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+    if case is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Case not found.",
+        )
+
+    # Viewers cannot delete cases.
+    if current_user.role == UserRole.VIEWER:
+        raise HTTPException(
+            status_code=403,
+            detail="Viewers cannot delete cases.",
+        )
+
+    # Admins can delete any non-deleted case.
+    if current_user.role == UserRole.ADMIN:
+        pass
+
+    # Investigators can delete cases they created or were assigned.
+    elif current_user.role == UserRole.INVESTIGATOR:
+        is_creator = case.created_by == current_user.id
+
+        is_assigned = (
+            db.query(CaseAssignment)
+            .filter(
+                CaseAssignment.case_id == case.id,
+                CaseAssignment.user_id == current_user.id,
+            )
+            .first()
+            is not None
+        )
+
+        if not is_creator and not is_assigned:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to delete this case.",
+            )
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to delete cases.",
+        )
+
+    try:
+        # Mark the case as deleted; do not remove the database row.
+        case.is_deleted = True
+        case.deleted_at = datetime.now(timezone.utc)
+
+        audit_entry =log_audit_event(
+            db=db,
+            user=current_user,
+            action="case.deleted",
+            resource=f"case:{case.id}",
+            request=request,
+            case_id=case.id,
+            details={
+                "case_name": case.name,
+                "status": (
+                    case.status.value
+                    if hasattr(case.status, "value")
+                    else str(case.status)
+                ),
+            },
+        )
+
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
     return {
-        "message": f"Users assigned to case {case_id}",
-        "user_ids": user_ids
+        "message": "Case deleted successfully.",
+        "case_id": str(case.id),
     }
