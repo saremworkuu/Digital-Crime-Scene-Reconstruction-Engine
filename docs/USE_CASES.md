@@ -1,47 +1,13 @@
-# Use Cases
+# Forensic Use Cases
 
-## UC-1: User Login
-**Actor:** Investigator
-**Precondition:** User has valid credentials
-**Steps:**
-1. User navigates to login page
-2. User enters username and password
-3. System validates credentials
-4. User is redirected to dashboard
+## Use Case 1: External Breach to Lateral Movement (Operation Cobalt Shadow)
+1. **Initial Access**: Adversary uploads web shell `shell.php` via Apache file upload vulnerability (`T1190`, `T1505.003`).
+2. **Execution**: Adversary runs `whoami` and spawns interactive shell (`T1059.004`).
+3. **Privilege Escalation**: Adversary abuses cached sudo permissions to elevate from `www-data` to `root` (`T1548.003`).
+4. **Credential Access & Lateral Movement**: Adversary extracts credentials and connects to Active Directory DC01 via PsExec (`T1021.002`).
+5. **Impact**: Deletion of volume shadow copies (`T1490`) and database exfiltration over TLS (`T1041`).
 
-## UC-2: Create Investigation Case
-**Actor:** Investigator
-**Precondition:** User is authenticated
-**Steps:**
-1. User clicks "New Case"
-2. User enters case name and description
-3. System creates case record
-4. User is redirected to case detail page
-
-## UC-3: Upload Evidence
-**Actor:** Investigator
-**Precondition:** Case exists
-**Steps:**
-1. User navigates to evidence section
-2. User selects file to upload
-3. System uploads and parses file
-4. System stores events in database
-5. User receives confirmation
-
-## UC-4: View Timeline
-**Actor:** Investigator
-**Precondition:** Case has events
-**Steps:**
-1. User navigates to timeline view
-2. System displays events chronologically
-3. User can zoom and filter
-4. User can click events for details
-
-## UC-5: Generate Report
-**Actor:** Investigator
-**Precondition:** Case has analysis results
-**Steps:**
-1. User clicks "Generate Report"
-2. User selects report options
-3. System compiles report
-4. User downloads report
+## Use Case 2: Ransomware Outbreak (DarkLock)
+1. Phishing email payload execution via Macro/PowerShell.
+2. Volume shadow copies deleted using `vssadmin.exe delete shadows /all /quiet`.
+3. System files encrypted and ransom note dropped.

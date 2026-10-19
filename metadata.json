@@ -1,0 +1,6 @@
+{
+  "name": "DCSRE - Digital Crime Scene Reconstruction Engine",
+  "description": "Forensic reconstruction and incident visualization platform that ingests digital evidence, normalizes events, correlates attack chains, and reconstructs chronological timelines and attack-path graphs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

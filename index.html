@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DCSRE - Digital Crime Scene Reconstruction Engine</title>
+    <meta name="description" content="Forensic reconstruction and incident visualization platform that ingests digital evidence, normalizes events, correlates attack chains, and reconstructs chronological timelines and attack-path graphs." />
+    <meta property="og:title" content="DCSRE - Digital Crime Scene Reconstruction Engine" />
+    <meta property="og:description" content="Forensic reconstruction and incident visualization platform that ingests digital evidence, normalizes events, correlates attack chains, and reconstructs chronological timelines and attack-path graphs." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // Gracefully prevent injected browser extensions (e.g. MetaMask in sandboxed iframes) from crashing the page
+      (function() {
+        function isExtensionError(msg, src) {
+          var str = String(msg || '').toLowerCase();
+          var source = String(src || '').toLowerCase();
+          return (
+            str.includes('metamask') ||
+            str.includes('ethereum') ||
+            str.includes('failed to connect') ||
+            source.includes('chrome-extension://') ||
+            source.includes('moz-extension://') ||
+            source.includes('safari-web-extension://')
+          );
+        }
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event.reason;
+          var msg = (reason && (reason.message || reason.stack || reason.toString())) || '';
+          if (isExtensionError(msg, '')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          if (isExtensionError(event.message, event.filename)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased font-sans selection:bg-cyan-500/20 selection:text-cyan-300 min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

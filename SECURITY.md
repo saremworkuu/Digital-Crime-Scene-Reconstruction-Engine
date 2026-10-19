@@ -1,40 +1,11 @@
 # Security Policy
 
-## Supported Versions
+## Reporting Vulnerabilities
 
-| Version | Supported |
-| ------- | --------- |
-| 1.0.x  | Yes       |
+DCSRE is a digital forensics and incident response platform. If you discover a vulnerability or security flaw, please do not disclose it publicly.
 
-## Reporting a Vulnerability
+Contact:
+- Email: `security@dcsre.corp`
+- PGP Key ID: `0x4A2B9C81`
 
-If you discover a security vulnerability, please report it responsibly:
-
-1. **Do not** create a public issue
-2. Email security@example.com with details
-3. Include steps to reproduce
-4. Allow us time to investigate and fix
-
-We will respond within 48 hours and provide regular updates on the fix timeline.
-
-## Security Best Practices
-
-### For Users
-- Keep dependencies updated
-- Use strong passwords
-- Enable two-factor authentication
-- Review audit logs regularly
-- Keep software patched
-
-### For Developers
-- Follow secure coding practices
-- Never commit secrets
-- Use environment variables for sensitive data
-- Review dependencies for vulnerabilities
-- Test with security tools
-
-## Disclosure Policy
-
-- Vulnerabilities will be disclosed after a fix is released
-- Credit will be given to reporters
-- We follow coordinated disclosure guidelines
+We aim to acknowledge reports within 24 hours and provide remediation within 7 business days.

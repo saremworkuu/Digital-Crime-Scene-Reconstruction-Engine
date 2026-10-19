@@ -1,0 +1,6 @@
+src_ip,dst_ip,src_port,dst_port,protocol,bytes,packets,tags
+198.51.100.42,10.0.1.10,49152,80,TCP,4812,12,http_initial
+198.51.100.42,10.0.1.10,49154,80,TCP,18240,45,upload_webshell
+10.0.1.10,198.51.100.42,52100,443,TCP,15200,60,c2_beaconing
+10.0.1.10,10.0.2.5,44501,445,TCP,82400,120,lateral_smb
+10.0.2.5,198.51.100.42,54320,8443,TCP,4280000,3200,data_exfiltration

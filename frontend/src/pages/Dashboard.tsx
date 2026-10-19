@@ -1,75 +1,145 @@
-const statCards = [
-  { label: 'Open cases', value: '28', delta: '+4 this week' },
-  { label: 'Evidence items', value: '1,486', delta: '97% processed' },
-  { label: 'Threat events', value: '342', delta: '61 flagged' },
-  { label: 'Confidence', value: '91%', delta: 'High confidence' },
-]
+import React from 'react';
+import { useApp } from '../store';
+import { ThreatMap } from '../components/ThreatMap';
 
-const timeline = [
-  { time: '14:02:11', event: 'Failed login burst', type: 'auth.log', severity: 'High' },
-  { time: '14:03:04', event: 'Valid account established', type: 'web-01', severity: 'Critical' },
-  { time: '14:04:21', event: 'Payload uploaded via form', type: 'access.log', severity: 'Critical' },
-  { time: '14:05:12', event: 'Command execution detected', type: 'process tree', severity: 'High' },
-]
+export const Dashboard: React.FC = () => {
+  const { 
+    currentUser,
+    activeCase, 
+    cases, 
+    activeCaseDetections, 
+    activeCaseEvents, 
+    setCurrentPage,
+    setActiveCaseId
+  } = useApp();
 
-const alerts = [
-  { title: 'Remote command execution', severity: 'Critical', time: '14:05:12' },
-  { title: 'SQL injection pattern', severity: 'High', time: '14:04:21' },
-  { title: 'Outbound transfer to unknown host', severity: 'Critical', time: '14:09:31' },
-]
-
-export default function Dashboard() {
   return (
-    <div className="dashboard-page">
-      <section className="stats-grid">
-        {statCards.map((card) => (
-          <article key={card.label} className="stat-card">
-            <span>{card.label}</span>
-            <strong>{card.value}</strong>
-            <small>{card.delta}</small>
-          </article>
-        ))}
-      </section>
+    <div className="space-y-6">
+      
+      {/* Top 3 Metric Cards (Matching Screenshot 3 with Warm Charcoal & Burnt Orange!) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+        
+        {/* 1. Active Incidents Card */}
+        <div className="rounded-2xl bg-[#161413]/90 border border-[#2b2523] p-5 backdrop-blur-xl flex items-center justify-between relative overflow-hidden group shadow-xl">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#a8a29e] font-medium">Active incidents</span>
+              <span className="text-[10px] font-mono text-[#f95721] bg-[#2a140d] px-1.5 py-0.5 rounded border border-[#ea580c]/30 font-semibold">
+                &gt; 8%
+              </span>
+            </div>
 
-      <section className="dashboard-grid">
-        <div className="panel large-panel">
-          <div className="panel-header">
-            <h3>Investigation timeline</h3>
-            <button type="button" className="ghost-btn small-btn">Export</button>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold font-mono text-[#fafaf9]">
+                {activeCaseDetections.length > 0 ? activeCaseDetections.length : 7}
+              </span>
+              <span className="text-xs text-[#78716c] font-mono">11 last week</span>
+            </div>
           </div>
 
-          <div className="timeline-list">
-            {timeline.map((item) => (
-              <div key={`${item.time}-${item.event}`} className="timeline-item">
-                <span className="time">{item.time}</span>
-                <div className="timeline-content">
-                  <strong>{item.event}</strong>
-                  <small>{item.type}</small>
-                </div>
-                <span className={`severity ${item.severity.toLowerCase()}`}>{item.severity}</span>
-              </div>
+          {/* Radial meter ring (Screenshot 3) */}
+          <div className="relative w-14 h-14 shrink-0 flex items-center justify-center">
+            <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+              <path
+                className="text-[#25201e]"
+                strokeWidth="3.5"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+              <path
+                className="text-[#f95721]"
+                strokeDasharray="40, 100"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+            </svg>
+            <span className="absolute text-[11px] font-mono font-bold text-[#fafaf9]">
+              40%
+            </span>
+          </div>
+        </div>
+
+        {/* 2. Compliance Score Card */}
+        <div className="rounded-2xl bg-[#161413]/90 border border-[#2b2523] p-5 backdrop-blur-xl flex items-center justify-between relative overflow-hidden group shadow-xl">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#a8a29e] font-medium">Compliance score</span>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-900/50 font-semibold">
+                ↗ 6%
+              </span>
+            </div>
+
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold font-mono text-[#fafaf9]">51%</span>
+              <span className="text-xs text-[#78716c] font-mono">47% last week</span>
+            </div>
+          </div>
+
+          {/* Green radial arc (Screenshot 3) */}
+          <div className="relative w-14 h-14 shrink-0 flex items-center justify-center">
+            <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+              <path
+                className="text-[#25201e]"
+                strokeWidth="3.5"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+              <path
+                className="text-emerald-500"
+                strokeDasharray="51, 100"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                stroke="currentColor"
+                fill="none"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+              />
+            </svg>
+            <span className="absolute text-[11px] font-mono font-bold text-[#fafaf9]">
+              51%
+            </span>
+          </div>
+        </div>
+
+        {/* 3. Time to Remediate Card */}
+        <div className="rounded-2xl bg-[#161413]/90 border border-[#2b2523] p-5 backdrop-blur-xl flex items-center justify-between relative overflow-hidden group shadow-xl sm:col-span-2 lg:col-span-1">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#a8a29e] font-medium">Time to remediate</span>
+              <span className="text-[10px] font-mono text-[#fb923c] bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-900/50 font-semibold">
+                11%
+              </span>
+            </div>
+
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-bold font-mono text-[#fafaf9]">2d:6h</span>
+              <span className="text-xs text-[#78716c] font-mono">2d: 8h last week</span>
+            </div>
+          </div>
+
+          {/* Waveform audio/bar meter graphic (Screenshot 3) */}
+          <div className="flex items-end gap-1 h-10 w-16 justify-end">
+            {[40, 75, 60, 90, 45, 80, 50, 65, 30].map((h, i) => (
+              <span
+                key={i}
+                style={{ height: `${h}%` }}
+                className="w-1 rounded-full bg-[#f95721] opacity-85 shadow-[0_0_6px_rgba(249,87,33,0.5)]"
+              />
             ))}
           </div>
         </div>
 
-        <div className="panel">
-          <div className="panel-header">
-            <h3>Priority alerts</h3>
-          </div>
+      </div>
 
-          <div className="alert-list">
-            {alerts.map((alert) => (
-              <div key={alert.title} className="alert-item">
-                <div>
-                  <strong>{alert.title}</strong>
-                  <small>{alert.time}</small>
-                </div>
-                <span className={`severity ${alert.severity.toLowerCase()}`}>{alert.severity}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* Main Threat Map */}
+      <div className="w-full">
+        <ThreatMap onOpenReport={() => setCurrentPage('reports')} />
+      </div>
+
     </div>
-  )
-}
+  );
+};

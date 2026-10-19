@@ -1,0 +1,6 @@
+Sep 22 03:15:10 web01 sshd[1420]: Failed password for invalid user admin from 198.51.100.42 port 44122 ssh2
+Sep 22 03:15:12 web01 sshd[1422]: Failed password for invalid user root from 198.51.100.42 port 44124 ssh2
+Sep 22 03:15:15 web01 sshd[1425]: Failed password for invalid user backup from 198.51.100.42 port 44126 ssh2
+Sep 22 03:22:15 web01 sudo: www-data : TTY=pts/1 ; PWD=/var/www/html ; USER=root ; COMMAND=/bin/bash
+Sep 22 03:22:16 web01 su[1502]: Successful su for root by www-data
+Sep 22 03:25:40 web01 useradd[1590]: new user: name=backdoor, UID=0, GID=0, home=/root, shell=/bin/bash

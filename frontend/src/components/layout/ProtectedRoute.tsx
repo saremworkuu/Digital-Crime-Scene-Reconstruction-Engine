@@ -1,12 +1,15 @@
-import { Navigate } from 'react-router-dom'
-import { ReactNode } from 'react'
+import React, { ReactNode } from 'react';
+import { useStore } from '../../store';
+import { Login } from '../../pages/Login';
 
-export default function ProtectedRoute({ children }: { children: ReactNode }) {
-  const isAuthenticated = localStorage.getItem('dcsre_auth') === 'true'
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
-  }
-
-  return <>{children}</>
+interface ProtectedRouteProps {
+  children: ReactNode;
 }
+
+export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const { state } = useStore();
+  if (!state.currentUser) {
+    return <Login />;
+  }
+  return <>{children}</>;
+};

@@ -1,17 +1,17 @@
-import { Outlet } from 'react-router-dom'
-import Sidebar from './Sidebar'
-import Topbar from './Topbar'
+import React, { ReactNode } from 'react';
+import { TopNav } from '../TopNav';
 
-export default function AppShell() {
-  return (
-    <div className="app-shell">
-      <Sidebar />
-      <div className="main-panel">
-        <Topbar />
-        <main className="content-panel">
-          <Outlet />
-        </main>
-      </div>
-    </div>
-  )
+interface AppShellProps {
+  children: ReactNode;
 }
+
+export const AppShell: React.FC<AppShellProps> = ({ children }) => {
+  return (
+    <div className="min-h-screen bg-[#0e0d0d] text-[#e7e5e4] flex flex-col font-sans selection:bg-[#f95721]/30 selection:text-[#ff936b]">
+      <TopNav />
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {children}
+      </main>
+    </div>
+  );
+};
