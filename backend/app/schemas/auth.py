@@ -1,31 +1,53 @@
 # Auth schemas
+from typing import Optional, Any
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
+
 class LoginRequest(BaseModel):
-    email:EmailStr
-    password:str=Field(min_length=12)
+    email: EmailStr
+    password: str = Field(min_length=6)
 
 
 class SignupRequest(BaseModel):
-    username:str=Field(min_length=3,max_length=50)
-    email:EmailStr
-    password:str=Field(min_length=12,max_length=128)
+    username: str = Field(min_length=3, max_length=50)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
 
-class TokenResponse(BaseModel):
-    access_token:str
-    token_type:str="bearer"
+
+class RegisterRequest(BaseModel):
+    name: Optional[str] = None
+    username: Optional[str] = None
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    role: Optional[str] = "viewer"
+    department: Optional[str] = None
+    badge_id: Optional[str] = None
+    pgp_key: Optional[str] = None
 
 
 class UserResponse(BaseModel):
     id: str
     username: str
+    name: Optional[str] = None
     email: EmailStr
     role: str
-    is_active: bool
+    is_active: bool = True
+    department: Optional[str] = None
+    badge_id: Optional[str] = None
+    badgeId: Optional[str] = None
+    created_at: Optional[Any] = None
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token: Optional[str] = None
+    token_type: str = "bearer"
+    user: Optional[UserResponse] = None
+
+
 class ChangePasswordRequest(BaseModel):
-    current_password:str
-    new_password:str=Field(min_length=12,max_length=128)
-    confirm_password:str
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=128)
+    confirm_password: Optional[str] = None

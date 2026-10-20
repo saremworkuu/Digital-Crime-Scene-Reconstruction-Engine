@@ -18,6 +18,16 @@ import { computeSHA256 } from '../services/hasher';
 import { parseEvidenceContent } from '../services/parsers';
 import { evaluateRulesAgainstEvents } from '../services/detection';
 import { buildGraphFromEvents } from '../services/graphBuilder';
+import {
+  casesApi,
+  evidenceApi,
+  eventsApi,
+  graphApi,
+  detectionsApi,
+  auditApi,
+  authApi,
+  apiClient
+} from '../api';
 
 export const DEMO_USERS: User[] = [
   {
@@ -303,6 +313,73 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   ]);
 
+  // Synchronize cases, rules, and audit logs with FastAPI backend
+  useEffect(() => {
+    const syncBackend = async () => {
+      try {
+        const [casesRes, rulesRes, auditRes] = await Promise.all([
+          casesApi.list(),
+          detectionsApi.listRules(),
+          auditApi.list()
+        ]);
+
+        if (casesRes.data && Array.isArray(casesRes.data) && casesRes.data.length > 0) {
+          const backendCases: Case[] = casesRes.data.map((bc: any) => ({
+            id: String(bc.id),
+            name: bc.name,
+            description: bc.description || '',
+            status: ((bc.status?.charAt(0).toUpperCase() + bc.status?.slice(1)) as CaseStatus) || 'Open',
+            created_at: bc.created_at || new Date().toISOString(),
+            updated_at: bc.updated_at || new Date().toISOString(),
+            owner_id: String(bc.created_by || 'usr-admin'),
+            owner_name: 'Lead Forensics',
+            assigned_users: ['Sarem Worku'],
+            evidence_count: bc.evidence_count || 0,
+            event_count: bc.event_count || 0,
+            detection_count: bc.detection_count || 0,
+            critical_detection_count: 0,
+            tags: bc.tags || []
+          }));
+
+          setCases(prev => {
+            const backendIds = new Set(backendCases.map(c => c.id));
+            return [...backendCases, ...prev.filter(c => !backendIds.has(c.id))];
+          });
+        }
+
+        if (rulesRes.data && Array.isArray(rulesRes.data) && rulesRes.data.length > 0) {
+          setRules(rulesRes.data);
+        }
+
+        if (auditRes.data && Array.isArray(auditRes.data) && auditRes.data.length > 0) {
+          const backendLogs: AuditLogEntry[] = auditRes.data.map((al: any) => ({
+            id: String(al.id),
+            user_id: String(al.user_id || 'system'),
+            user_name: al.username || 'System Administrator',
+            user_role: al.role || 'admin',
+            case_id: String(al.case_id || 'system'),
+            action: al.action as any,
+            target_type: (al.resource_type || 'system') as any,
+            target_id: String(al.resource_id || al.id),
+            timestamp: al.timestamp || new Date().toISOString(),
+            ip_address: al.ip_address || '127.0.0.1',
+            user_agent: al.user_agent || 'DCSRE-Web/1.0',
+            details: al.details || {}
+          }));
+
+          setAuditLogs(prev => {
+            const logIds = new Set(prev.map(l => l.id));
+            return [...prev, ...backendLogs.filter(l => !logIds.has(l.id))];
+          });
+        }
+      } catch (e) {
+        console.warn('Backend sync notice (offline or demo mode):', e);
+      }
+    };
+
+    syncBackend();
+  }, [currentUser]);
+
   // Append to Audit Trail (FR-AUDIT-1)
   const logAuditAction = (
     action: AuditLogEntry['action'],
@@ -541,6 +618,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCases(prev => [newCase, ...prev]);
     setActiveCaseId(newId);
     logAuditAction('CASE_CREATED', 'case', newId, { name, tags });
+
+    // Persist to FastAPI Backend Database
+    casesApi.create({ name, description, tags }).then(res => {
+      if (res.data?.id) {
+        setCases(prev => prev.map(c => c.id === newId ? { ...c, id: String(res.data!.id) } : c));
+        if (activeCaseId === newId) {
+          setActiveCaseId(String(res.data.id));
+        }
+      }
+    }).catch(err => console.warn('Backend case creation notice:', err));
+
     return newId;
   };
 
@@ -548,12 +636,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateCaseStatus = (caseId: string, status: CaseStatus) => {
     setCases(prev => prev.map(c => c.id === caseId ? { ...c, status, updated_at: new Date().toISOString() } : c));
     logAuditAction('CASE_STATUS_CHANGED', 'case', caseId, { status });
+    casesApi.update(caseId, { status }).catch(err => console.warn('Backend update status notice:', err));
   };
 
   // Action: Update Case Details (FR-CASE-5)
   const updateCaseDetails = (caseId: string, name: string, description: string) => {
     setCases(prev => prev.map(c => c.id === caseId ? { ...c, name, description, updated_at: new Date().toISOString() } : c));
     logAuditAction('CASE_UPDATED', 'case', caseId, { name });
+    casesApi.update(caseId, { name, description } as any).catch(err => console.warn('Backend update details notice:', err));
   };
 
   // Action: Delete Case (FR-CASE-6)
@@ -569,6 +659,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
     logAuditAction('CASE_DELETED', 'case', caseId);
+    casesApi.delete(caseId).catch(err => console.warn('Backend delete case notice:', err));
   };
 
   // Action: Upload & Ingest Evidence File (FR-EVID-1, FR-EVID-2, FR-EVID-5, FR-PARSE-1..10)
@@ -594,7 +685,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const fileHash = await computeSHA256(file);
     const contentText = await file.text();
 
-    // Parse content
+    // Parse content locally
     const parseResult = parseEvidenceContent(contentText, detectedParser, caseId, evidenceId);
 
     const newEvidence: EvidenceFile = {
@@ -635,6 +726,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       parser: detectedParser
     });
 
+    // Ingest via FastAPI Backend API if reachable
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('file_type', detectedParser);
+      formData.append('description', `Forensic artifact ${file.name}`);
+
+      const backendEvid = await evidenceApi.upload(caseId, formData);
+      if (backendEvid?.id) {
+        // Sync database normalized events and detections
+        const [evtsRes, detsRes] = await Promise.all([
+          eventsApi.listByCase(caseId),
+          detectionsApi.listByCase(caseId)
+        ]);
+        if (evtsRes.data && Array.isArray(evtsRes.data) && evtsRes.data.length > 0) {
+          setEvents(prev => [...evtsRes.data!, ...prev.filter(e => e.case_id !== caseId)]);
+        }
+        if (detsRes.data && Array.isArray(detsRes.data) && detsRes.data.length > 0) {
+          setDetections(prev => [...detsRes.data!, ...prev.filter(d => d.case_id !== caseId)]);
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Backend API upload notice (falling back to client parsing):', apiErr);
+    }
+
     return newEvidence;
   };
 
@@ -667,6 +783,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setEvidenceList(prev => prev.filter(e => e.id !== evidenceId));
     setEvents(prev => prev.filter(evt => evt.evidence_id !== evidenceId));
     logAuditAction('EVIDENCE_DELETED', 'evidence', evidenceId);
+    evidenceApi.delete(evidenceId).catch(err => console.warn('Backend delete evidence notice:', err));
   };
 
   // Action: Toggle False Positive (FR-DET-6)
@@ -678,6 +795,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           false_positive: nextFP,
           reason: reason || 'Analyst discretion'
         });
+        detectionsApi.toggleFalsePositive(detectionId, nextFP, reason).catch(err => console.warn('Backend FP notice:', err));
         return {
           ...d,
           false_positive: nextFP,

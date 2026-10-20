@@ -37,6 +37,9 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ events }) => {
     );
   }, [sortedEvents, searchFilter]);
 
+  // Limit to 3 events
+  const displayEvents = filteredEvents.slice(0, 3);
+
   // Export Timeline as CSV or JSON (FR-TIME-6)
   const exportTimeline = (format: 'csv' | 'json') => {
     let content = '';
@@ -99,7 +102,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ events }) => {
           </div>
           <span className="text-[#57534e]">·</span>
           <span className="font-mono text-[#a8a29e] tabular-nums">
-            {filteredEvents.length} chronological milestones
+            {displayEvents.length} chronological milestones
           </span>
         </div>
 
@@ -154,7 +157,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ events }) => {
 
       {/* Visual Interactive Chronological Timeline Stream */}
       <div className="relative pl-6 sm:pl-8 before:absolute before:left-2 sm:before:left-3 before:top-3 before:bottom-3 before:w-0.5 before:bg-[#2b2523] space-y-4">
-        {filteredEvents.map((evt) => {
+        {displayEvents.map((evt) => {
           const isCritical = evt.severity === 'critical';
           const isHigh = evt.severity === 'high';
           const isAttack = evt.is_attack_path;

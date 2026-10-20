@@ -9,3 +9,37 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+
+# Databases & local data
+*.db
+*.sqlite
+*.sqlite3
+dcsre.db
+backend/dcsre.db
+
+# Uploads & local storage
+backend/uploads/
+uploads/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Miscellaneous
+backend/package-lock.json
+

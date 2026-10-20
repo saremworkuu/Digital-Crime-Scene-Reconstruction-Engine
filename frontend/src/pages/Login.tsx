@@ -17,6 +17,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { UserRole } from '../types';
+import { authApi, apiClient } from '../api';
 
 export const Login: React.FC = () => {
   const {
@@ -68,7 +69,7 @@ export const Login: React.FC = () => {
   };
 
   // Sign In submit (for both Investigator and Admin modes)
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -91,23 +92,38 @@ export const Login: React.FC = () => {
       }
     }
 
+    // Call Backend API Authentication
+    let backendUser: any = null;
+    try {
+      const res = await authApi.login(normalizedEmail, password);
+      if (res.data?.token) {
+        apiClient.setToken(res.data.token);
+        backendUser = res.data.user;
+      } else if (res.error) {
+        console.warn('Backend login response:', res.error);
+      }
+    } catch (err) {
+      console.warn('Backend authentication unreachable, proceeding with fallback:', err);
+    }
+
     const matched = users.find(u =>
       u.email.toLowerCase() === normalizedEmail ||
       (normalizedEmail === 'admin@dcsre.corp' && u.role === 'admin') ||
       (normalizedEmail === 'saremworkuu@gmail.com' && u.role === 'admin')
     );
 
-    if (!matched) {
+    if (!matched && !backendUser) {
       setFailedAttempts(prev => prev + 1);
       setErrorMsg(`No account found for "${email}". Please verify your email or register a new account.`);
       return;
     }
 
     // Password verification
-    const expectedPassword = matched.password || (matched.role === 'admin' ? 'Admin@2026!' : 'Investigator#2026');
+    const expectedPassword = matched?.password || (matched?.role === 'admin' ? 'Admin@2026!' : 'Investigator#2026');
     const isPasswordValid =
+      Boolean(backendUser) ||
       password === expectedPassword ||
-      (matched.role === 'admin' && (password === 'Admin@2026!' || password === 'admin' || password === '••••••••••••')) ||
+      (matched?.role === 'admin' && (password === 'Admin@2026!' || password === 'admin' || password === '••••••••••••')) ||
       password === 'Investigator#2026' ||
       password === '••••••••••••';
 
@@ -117,15 +133,26 @@ export const Login: React.FC = () => {
       return;
     }
 
-    setCurrentUser(matched);
+    const authenticatedUser = backendUser ? {
+      id: String(backendUser.id),
+      name: backendUser.full_name || backendUser.username || matched?.name || 'Administrator',
+      email: backendUser.email,
+      role: backendUser.role as UserRole,
+      department: backendUser.department || matched?.department || 'DFIR Operations',
+      badgeId: backendUser.badge_id || matched?.badgeId || 'ADMIN-001',
+      badge_id: backendUser.badge_id || matched?.badge_id || 'ADMIN-001',
+      password: matched?.password || password
+    } : matched!;
+
+    setCurrentUser(authenticatedUser);
     const wasEvidenceAttempt = authNotice && authNotice.toLowerCase().includes('evidence');
     setAuthNotice(null);
     logAuditAction(
       'USER_LOGIN',
       'user',
-      matched.id,
-      { email: matched.email, role: matched.role, portal: activeTab.toUpperCase() },
-      { id: matched.id, name: matched.name, role: matched.role }
+      authenticatedUser.id,
+      { email: authenticatedUser.email, role: authenticatedUser.role, portal: activeTab.toUpperCase() },
+      { id: authenticatedUser.id, name: authenticatedUser.name, role: authenticatedUser.role }
     );
 
     if (wasEvidenceAttempt) {

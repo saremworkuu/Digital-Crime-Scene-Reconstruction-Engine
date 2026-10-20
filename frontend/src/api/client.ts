@@ -9,23 +9,33 @@ export interface ApiResponse<T> {
 }
 
 class ApiClient {
-  private token: string | null = null;
+  private token: string | null = (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
   private baseUrl = '/api/v1';
 
   setToken(token: string | null) {
     this.token = token;
+    if (typeof window !== 'undefined') {
+      if (token) localStorage.setItem('token', token);
+      else localStorage.removeItem('token');
+    }
   }
 
   getToken(): string | null {
+    if (!this.token && typeof window !== 'undefined') {
+      this.token = localStorage.getItem('token');
+    }
     return this.token;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     const headers = new Headers(options.headers || {});
-    headers.set('Content-Type', 'application/json');
+    if (!(options.body instanceof FormData)) {
+      headers.set('Content-Type', 'application/json');
+    }
 
-    if (this.token) {
-      headers.set('Authorization', `Bearer ${this.token}`);
+    const token = this.getToken();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
     }
 
     try {

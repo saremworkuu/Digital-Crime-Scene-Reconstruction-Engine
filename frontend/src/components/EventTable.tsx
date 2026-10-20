@@ -3,7 +3,7 @@ import { NormalizedEvent } from '../types';
 import { SeverityTag } from './SeverityTag';
 import { MitreBadge } from './MitreBadge';
 import { RawEventModal } from './RawEventModal';
-import { Eye, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Eye, ArrowUpDown } from 'lucide-react';
 
 interface EventTableProps {
   events: NormalizedEvent[];
@@ -13,8 +13,6 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
   const [sortField, setSortField] = useState<'timestamp' | 'severity' | 'host'>('timestamp');
   const [sortAsc, setSortAsc] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
 
   const sortedEvents = useMemo(() => {
     return [...events].sort((a, b) => {
@@ -32,11 +30,8 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
     });
   }, [events, sortField, sortAsc]);
 
-  const totalPages = Math.ceil(sortedEvents.length / pageSize) || 1;
-  const pagedEvents = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return sortedEvents.slice(start, start + pageSize);
-  }, [sortedEvents, currentPage, pageSize]);
+  // Limit to 3 events
+  const displayEvents = sortedEvents.slice(0, 3);
 
   const toggleSort = (field: 'timestamp' | 'severity' | 'host') => {
     if (sortField === field) {
@@ -91,7 +86,7 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#282321]">
-            {pagedEvents.length === 0 ? (
+            {displayEvents.length === 0 ? (
               <tr>
                 <td colSpan={9} className="py-12 text-center text-[#78716c]">
                   <div className="space-y-1">
@@ -101,8 +96,7 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
                 </td>
               </tr>
             ) : (
-              pagedEvents.map((evt, idx) => {
-                const rowIndex = (currentPage - 1) * pageSize + idx + 1;
+              displayEvents.map((evt, idx) => {
                 return (
                   <tr
                     key={evt.id}

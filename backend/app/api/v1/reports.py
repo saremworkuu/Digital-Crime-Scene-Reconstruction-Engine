@@ -1,44 +1,129 @@
-from fastapi import APIRouter, HTTPException, Depends
+import uuid
+from typing import Any
+from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi.responses import HTMLResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.db.session import get_db
-from app.db.models import Case, Evidence, Event, Detection
-from app.schemas.report import ForensicReportResponse
-from app.services.report import generate_forensic_report_data
 
-router = APIRouter(prefix="/cases", tags=["reports"])
+from app.core.dependencies import get_current_user
+from app.db.session import get_db
+from app.db.models.case import Case
+from app.db.models.evidence import Evidence
+from app.db.models.events import Event
+from app.db.models.detection import Detection
+from app.db.models.user import User
+from app.schemas.report import ForensicReportResponse
+from app.services.report import generate_forensic_report_data, render_report_html
+from app.core.permissions import get_authorized_case
+
+router = APIRouter(tags=["reports"])
+
+
+def _compile_case_report(case_id: uuid.UUID | str, current_user: User, db: Session) -> dict[str, Any]:
+    case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
+
+    evidence_records = db.execute(
+        select(Evidence).where(Evidence.case_id == case.id)
+    ).scalars().all()
+
+    events = db.execute(
+        select(Event).where(Event.case_id == case.id).order_by(Event.timestamp.asc())
+    ).scalars().all()
+
+    detections = db.execute(
+        select(Detection).where(Detection.case_id == case.id)
+    ).scalars().all()
+
+    evidence_list = [
+        {
+            "filename": e.filename,
+            "sha256_hash": e.sha256_hash,
+            "size_bytes": e.file_size,
+            "event_count": len([ev for ev in events if ev.evidence_id == e.id]),
+            "uploaded_at": e.uploaded_at.isoformat() if hasattr(e.uploaded_at, "isoformat") else str(e.uploaded_at),
+        }
+        for e in evidence_records
+    ]
+
+    event_dicts = [
+        {
+            "id": str(ev.id),
+            "timestamp": ev.timestamp.isoformat() if hasattr(ev.timestamp, "isoformat") else str(ev.timestamp),
+            "event_type": ev.event_type,
+            "source": ev.source,
+            "host": (ev.details or {}).get("host") or (ev.details or {}).get("Computer") or "host01.local",
+            "user": (ev.details or {}).get("user") or (ev.details or {}).get("username") or "SYSTEM",
+            "action": (ev.details or {}).get("action") or (ev.details or {}).get("message") or ev.event_type,
+            "severity": (ev.details or {}).get("severity") or "low",
+            "is_attack_path": bool((ev.details or {}).get("is_attack_path")),
+            "attack_phase": (ev.details or {}).get("attack_phase"),
+            "src_ip": (ev.details or {}).get("source_ip") or (ev.details or {}).get("src_ip"),
+            "dst_ip": (ev.details or {}).get("destination_ip") or (ev.details or {}).get("dst_ip"),
+        }
+        for ev in events
+    ]
+
+    detection_dicts = [
+        {
+            "rule_name": d.rule_name,
+            "mitre_technique": d.mitre_technique or "T1059",
+            "mitre_tactic": (d.rule_information or {}).get("tactic", "Execution"),
+            "severity": d.severity.value if hasattr(d.severity, "value") else str(d.severity),
+            "description": d.description,
+        }
+        for d in detections
+    ]
+
+    return generate_forensic_report_data(
+        case_dict={"id": str(case.id), "name": case.name},
+        evidence_list=evidence_list,
+        events=event_dicts,
+        detections=detection_dicts,
+        generator_user=current_user,
+    )
+
 
 @router.post("/{case_id}/reports/generate", response_model=ForensicReportResponse)
-def generate_report(case_id: str, db: Session = Depends(get_db)):
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    evidence = db.query(Evidence).filter(Evidence.case_id == case_id).all()
-    events = db.query(Event).filter(Event.case_id == case_id).all()
-    detections = db.query(Detection).filter(Detection.case_id == case_id).all()
-
-    report_data = generate_forensic_report_data(
-        case_dict={"id": case.id, "name": case.name},
-        evidence_list=[{"filename": e.filename, "sha256_hash": e.sha256_hash, "size_bytes": e.size_bytes, "event_count": e.event_count, "uploaded_at": e.uploaded_at} for e in evidence],
-        events=[{"action": ev.action, "host": ev.host, "user": ev.user, "src_ip": ev.src_ip, "timestamp": ev.timestamp, "severity": ev.severity, "is_attack_path": ev.is_attack_path, "attack_phase": ev.attack_phase} for ev in events],
-        detections=[{"mitre_tactic": d.mitre_tactic, "mitre_technique": d.mitre_technique, "rule_name": d.rule_name, "severity": d.severity} for d in detections]
-    )
+@router.post("/cases/{case_id}/reports/generate", response_model=ForensicReportResponse)
+@router.get("/{case_id}/reports/generate", response_model=ForensicReportResponse)
+@router.get("/cases/{case_id}/reports/generate", response_model=ForensicReportResponse)
+@router.get("/{case_id}/report", response_model=ForensicReportResponse)
+@router.get("/cases/{case_id}/report", response_model=ForensicReportResponse)
+def generate_report(
+    case_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    report_data = _compile_case_report(case_id, current_user, db)
     return report_data
 
-@router.get("/{case_id}/reports/pdf")
-def export_pdf(case_id: str, db: Session = Depends(get_db)):
-    # Placeholder for PDF generation
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    return {"message": "PDF export not yet implemented", "case_id": case_id}
 
-@router.get("/{case_id}/reports/html")
-def export_html(case_id: str, db: Session = Depends(get_db)):
-    # Placeholder for HTML export
-    case = db.query(Case).filter(Case.id == case_id).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    return {"message": "HTML export not yet implemented", "case_id": case_id}
+@router.get("/{case_id}/reports/html", response_class=HTMLResponse)
+@router.get("/cases/{case_id}/reports/html", response_class=HTMLResponse)
+def export_html(
+    case_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    report_data = _compile_case_report(case_id, current_user, db)
+    html_content = render_report_html(report_data)
+    return HTMLResponse(content=html_content)
+
+
+@router.get("/{case_id}/reports/pdf")
+@router.get("/cases/{case_id}/reports/pdf")
+def export_pdf(
+    case_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Returns the HTML printable report format with appropriate headers
+    report_data = _compile_case_report(case_id, current_user, db)
+    html_content = render_report_html(report_data)
+    return Response(
+        content=html_content.encode("utf-8"),
+        media_type="text/html",
+        headers={
+            "Content-Disposition": f'attachment; filename="report_{str(case_id)[:8]}.html"'
+        },
+    )
