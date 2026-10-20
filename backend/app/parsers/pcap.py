@@ -2,16 +2,30 @@
 from pathlib import Path
 from typing import Any
 
-from scapy.all import IP, IPv6, TCP, UDP, ICMP, PcapReader
+from scapy.all import (
+    IP,
+    IPv6,
+    TCP,
+    UDP,
+    ICMP,
+    DNS,
+    DNSQR,
+    PcapReader,
+)
 
 from app.parsers.base_parser import BaseParser
 
 
 class PCAPParser(BaseParser):
-    """Extract network-flow metadata without processing payloads."""
+    """Extract network flows and DNS metadata from packet captures."""
 
-    def parse(self, file_path: Path,original_filename: str | None = None,) -> list[dict[str, Any]]:
+    def parse(
+        self,
+        file_path: Path,
+        original_filename: str | None = None,
+    ) -> list[dict[str, Any]]:
         flows: dict[tuple, dict[str, Any]] = {}
+        dns_events: list[dict[str, Any]] = []
 
         with PcapReader(str(file_path)) as packets:
             for packet in packets:
@@ -42,13 +56,13 @@ class PCAPParser(BaseParser):
                 timestamp = float(packet.time)
                 packet_bytes = len(packet)
 
+                # Preserve the existing bidirectional flow aggregation.
                 source_endpoint = (source_ip, source_port)
                 destination_endpoint = (
                     destination_ip,
                     destination_port,
                 )
 
-                # Sort endpoints so both directions share one flow.
                 endpoints = tuple(
                     sorted(
                         (source_endpoint, destination_endpoint),
@@ -86,4 +100,47 @@ class PCAPParser(BaseParser):
                     flow["last_timestamp"], timestamp
                 )
 
-        return list(flows.values())
+                # Extract DNS metadata separately from network flows.
+                if DNS not in packet or DNSQR not in packet:
+                    continue
+
+                dns = packet[DNS]
+                question = dns.qd
+
+                if question is None:
+                    continue
+
+                raw_name = question.qname
+
+                if isinstance(raw_name, bytes):
+                    query_name = raw_name.decode(
+                        "ascii", errors="replace"
+                    )
+                else:
+                    query_name = str(raw_name)
+
+                query_name = query_name.rstrip(".").lower()
+
+                if not query_name:
+                    continue
+
+                # QR=0 means query; QR=1 means response.
+                is_response = bool(dns.qr)
+
+                dns_events.append({
+                    "event_type": (
+                        "dns_response" if is_response else "dns_query"
+                    ),
+                    "source": "pcap",
+                    "source_ip": source_ip,
+                    "destination_ip": destination_ip,
+                    "source_port": source_port,
+                    "destination_port": destination_port,
+                    "query_name": query_name,
+                    "query_type": int(question.qtype),
+                    "timestamp": timestamp,
+                    "transaction_id": int(dns.id),
+                })
+
+        # Keep existing flow events and add the DNS events.
+        return list(flows.values()) + dns_events

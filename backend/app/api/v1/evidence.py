@@ -23,6 +23,8 @@ from app.db.models.evidence import Evidence,ParsingStatus
 from app.db.models.user import User,UserRole
 from app.db.session import get_db
 from app.parsers.registry import get_parser
+from app.services.correlation import correlate_case_events
+
 
 from app.schemas.evidence import (
     EvidenceResponse,
@@ -36,6 +38,7 @@ from app.services.normalizer import normalize_records
 from app.services.event_service import save_normalized_events
 from app.services.audit import log_audit_event
 from app.core.permissions import get_authorized_case
+from app.services.correlation import correlate_case_events
 
 
 router = APIRouter()
@@ -245,7 +248,44 @@ def _create_single_evidence(
                     evidence_id,
                 )
 
+       
+        # Commit the evidence, parsing status, events, and event-evidence
+        # associations before attempting graph correlation.
         db.commit()
+        db.refresh(evidence)
+
+        # Correlation is a separate operation. A correlation failure
+        # must not mark successfully parsed evidence as failed.
+        if evidence.parsing_status == ParsingStatus.PARSED:
+            try:
+                correlation_result = correlate_case_events(
+                    db=db,
+                    case_id=evidence.case_id,
+                )
+
+                db.commit()
+
+                logging.info(
+                    "Case correlation completed: %s",
+                    correlation_result,
+                )
+
+            except Exception:
+                db.rollback()
+
+                logging.exception(
+                    "Correlation failed for case_id=%s, "
+                    "evidence_id=%s",
+                    evidence.case_id,
+                    evidence.id,
+                )
+
+                # The evidence and parsed events were committed earlier.
+                evidence = db.get(Evidence, evidence_id)
+
+                if evidence is None:
+                    raise
+
         db.refresh(evidence)
         
         return evidence
