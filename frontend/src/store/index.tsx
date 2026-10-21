@@ -28,6 +28,7 @@ import {
   authApi,
   apiClient
 } from '../api';
+import { validateRealEmail } from '../utils/emailValidator';
 
 export const DEMO_USERS: User[] = [
   {
@@ -415,6 +416,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     pgpKey?: string;
   }) => {
     const normalizedEmail = userData.email.trim().toLowerCase();
+
+    // Strict Real Email Enforcement:
+    const emailValidation = validateRealEmail(normalizedEmail);
+    if (!emailValidation.isValid) {
+      return {
+        success: false,
+        message: emailValidation.error || 'A legitimate, non-disposable email address is required.'
+      };
+    }
+
     const existing = users.find(u => u.email.toLowerCase() === normalizedEmail);
     if (existing) {
       return { success: false, message: 'An examiner account with this email address is already enrolled.' };

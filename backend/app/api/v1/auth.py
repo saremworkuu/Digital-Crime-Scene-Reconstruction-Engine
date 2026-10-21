@@ -50,6 +50,65 @@ def to_user_response(user: User) -> UserResponse:
     )
 
 
+DISPOSABLE_EMAIL_DOMAINS = {
+    "tempmail.com", "temp-mail.org", "temp-mail.io", "10minutemail.com", "10minutemail.net",
+    "mailinator.com", "guerrillamail.com", "guerrillamail.net", "guerrillamail.org",
+    "sharklasers.com", "grr.la", "yopmail.com", "yopmail.fr", "trashmail.com",
+    "trashmail.net", "throwawaymail.com", "dispostable.com", "maildrop.cc",
+    "getairmail.com", "mohmal.com", "crazymailing.com", "fakemailgenerator.com",
+    "inboxkitten.com", "burnermail.io", "tempinbox.com", "fakeinbox.com",
+}
+
+FAKE_EMAIL_DOMAINS = {
+    "example.com", "example.org", "example.net", "test.com", "testing.com",
+    "fake.com", "dummy.com", "sample.com", "asdf.com", "qwerty.com",
+    "foo.com", "bar.com", "none.com", "nowhere.com", "invalid.com",
+    "fakeemail.com", "testmail.com", "temp.com", "xyz.com", "abc.com"
+}
+
+FAKE_USERNAMES = {
+    "test", "testing", "fake", "dummy", "asdf", "qwerty", "12345", "123456",
+    "user", "username", "noone", "nobody", "sample", "null", "undefined"
+}
+
+
+def validate_real_email(email: str) -> None:
+    cleaned = email.strip().lower()
+    if "@" not in cleaned or cleaned.count("@") != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format. A valid email address is required.",
+        )
+    user_part, domain_part = cleaned.split("@", 1)
+    if len(user_part) < 2 or user_part in FAKE_USERNAMES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Placeholder or test username '{user_part}' is not permitted. Please use your real email.",
+        )
+    if "." not in domain_part:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email domain must include a valid top-level domain (e.g. .com, .gov).",
+        )
+    domain_labels = domain_part.split(".")
+    tld = domain_labels[-1]
+    if len(domain_labels[0]) < 2 or len(tld) < 2 or not tld.isalpha():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email domain structure is invalid. Please enter a legitimate email address.",
+        )
+    if domain_part in DISPOSABLE_EMAIL_DOMAINS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Temporary or disposable email addresses are not permitted. Please provide a real email.",
+        )
+    if domain_part in FAKE_EMAIL_DOMAINS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Test or placeholder domain '{domain_part}' is not allowed. Please enter your real email.",
+        )
+
+
 @router.post(
     "/signup",
     response_model=UserResponse,
@@ -59,9 +118,12 @@ def signup(
     signup_data: SignupRequest,
     db: Session = Depends(get_db),
 ):
+    email_clean = str(signup_data.email).lower().strip()
+    validate_real_email(email_clean)
+
     result = db.execute(
         select(User).where(
-            (User.email == str(signup_data.email).lower())
+            (User.email == email_clean)
             | (User.username == signup_data.username)
         )
     )
@@ -74,7 +136,7 @@ def signup(
         )
     new_user = User(
         username=signup_data.username,
-        email=str(signup_data.email).lower(),
+        email=email_clean,
         hashed_password=hash_password(signup_data.password),
         role=UserRole.INVESTIGATOR,
         is_active=True,
@@ -110,7 +172,9 @@ def register(
     register_data: RegisterRequest,
     db: Session = Depends(get_db),
 ):
-    email_clean = str(register_data.email).lower()
+    email_clean = str(register_data.email).lower().strip()
+    validate_real_email(email_clean)
+
     username = register_data.username or register_data.name or email_clean.split("@")[0]
 
     result = db.execute(

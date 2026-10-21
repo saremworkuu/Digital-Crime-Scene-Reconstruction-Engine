@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Sparkles
 } from 'lucide-react';
+import { validateRealEmail } from '../utils/emailValidator';
 
 export const Register: React.FC = () => {
   const { registerUser, setCurrentPage, theme } = useApp();
@@ -23,22 +24,26 @@ export const Register: React.FC = () => {
 
   // Validation & Submission States
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Email format validation matching Picture 1 alert design
+  // Strict real email validation
   const validateEmail = (val: string) => {
     setEmail(val);
-    if (!val) {
+    if (!val.trim()) {
       setEmailError(null);
+      setIsEmailVerified(false);
       return;
     }
-    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
-    if (!isValid) {
-      setEmailError('Enter a valid Email');
+    const check = validateRealEmail(val);
+    if (!check.isValid) {
+      setEmailError(check.error || 'Please enter a valid, real email.');
+      setIsEmailVerified(false);
     } else {
       setEmailError(null);
+      setIsEmailVerified(true);
     }
   };
 
@@ -47,6 +52,7 @@ export const Register: React.FC = () => {
     setLastName('Brown');
     setEmail('felixbrown27@gmail.com');
     setEmailError(null);
+    setIsEmailVerified(true);
     setPhoneNumber('271 250 0701');
     setPassword('ForensicAuth#2026');
     setDepartment('Host Forensics & Malware Analysis');
@@ -63,9 +69,11 @@ export const Register: React.FC = () => {
       return;
     }
 
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setEmailError('Enter a valid Email');
-      setGeneralError('A valid email address is required.');
+    const emailCheck = validateRealEmail(email);
+    if (!emailCheck.isValid) {
+      setEmailError(emailCheck.error || 'A valid real email address is required.');
+      setGeneralError(emailCheck.error || 'Registration requires a legitimate, non-disposable email address.');
+      setIsEmailVerified(false);
       return;
     }
 
@@ -213,15 +221,23 @@ export const Register: React.FC = () => {
               </div>
             </div>
 
-            {/* Row 2: Email (With Red Error State matching Picture 1) */}
+            {/* Row 2: Email (With Real Email Verification & Error State) */}
             <div className="space-y-1.5">
-              <label
-                htmlFor="reg-email"
-                className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                  }`}
-              >
-                Email
-              </label>
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="reg-email"
+                  className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                    }`}
+                >
+                  Email Address
+                </label>
+                {isEmailVerified && !emailError && (
+                  <span className="flex items-center gap-1 text-[11px] font-sans font-medium text-emerald-400">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Verified Real Email
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <input
                   id="reg-email"
@@ -234,9 +250,13 @@ export const Register: React.FC = () => {
                     ? isLight
                       ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
                       : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
-                    : isLight
-                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
-                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                    : isEmailVerified
+                      ? isLight
+                        ? 'bg-emerald-50/30 border border-emerald-500/70 text-slate-900 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                        : 'bg-[#0e1d15] border border-emerald-500/50 text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                      : isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
                     }`}
                 />
 
@@ -245,11 +265,21 @@ export const Register: React.FC = () => {
                     <AlertCircle className="w-4 h-4" />
                   </div>
                 )}
+                {!emailError && isEmailVerified && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                )}
               </div>
 
-              {emailError && (
-                <p className="text-[11px] text-red-500 font-sans mt-1">
-                  {emailError}
+              {emailError ? (
+                <p className="text-[11px] text-red-500 font-sans mt-1 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{emailError}</span>
+                </p>
+              ) : (
+                <p className={`text-[11px] font-sans mt-1 ${isLight ? 'text-slate-400' : 'text-[#877e7b]'}`}>
+                  Must be an active, legitimate email address (e.g. Gmail, agency, or corporate domain). Temporary or disposable emails are blocked.
                 </p>
               )}
             </div>
