@@ -65,7 +65,7 @@ def _get_events_core(
         .offset(offset)
     ).scalars().all()
 
-    return events
+    return [EventResponse.model_validate(e) for e in events]
 
 
 # Query-param based events lookup (?case_id=...)

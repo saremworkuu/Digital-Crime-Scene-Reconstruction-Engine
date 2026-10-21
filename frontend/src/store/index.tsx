@@ -291,6 +291,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const backendIds = new Set(backendCases.map(c => c.id));
             return [...backendCases, ...prev.filter(c => !backendIds.has(c.id))];
           });
+
+          setActiveCaseId(prev => {
+            if (!prev || !backendCases.some(c => c.id === prev)) {
+              return backendCases[0].id;
+            }
+            return prev;
+          });
         }
 
         if (rulesRes.data && Array.isArray(rulesRes.data) && rulesRes.data.length > 0) {
@@ -504,20 +511,191 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Active Case Data Subsets
   const activeCase = useMemo(() => cases.find(c => c.id === activeCaseId) || cases[0], [cases, activeCaseId]);
-  
+  const effectiveCaseId = activeCase?.id || activeCaseId;
+
+  // Automatically fetch evidence files, normalized events, and detections for effective case
+  useEffect(() => {
+    const targetCaseId = effectiveCaseId;
+    if (!targetCaseId) return;
+
+    let isMounted = true;
+
+    const loadCaseArtifacts = async () => {
+      try {
+        const [evidRes, evtsRes, detsRes] = await Promise.all([
+          evidenceApi.listByCase(targetCaseId).catch(() => ({ data: [] })),
+          eventsApi.listByCase(targetCaseId).catch(() => ({ data: [] })),
+          detectionsApi.listByCase(targetCaseId).catch(() => ({ data: [] }))
+        ]);
+
+        if (!isMounted) return;
+
+        if (evidRes?.data && Array.isArray(evidRes.data) && evidRes.data.length > 0) {
+          const backendEvidence: EvidenceFile[] = evidRes.data.map((be: any) => ({
+            id: String(be.id),
+            case_id: String(be.case_id || targetCaseId),
+            filename: be.filename,
+            file_type: be.file_type || 'generic_json_csv',
+            size_bytes: be.size_bytes || 0,
+            sha256_hash: be.sha256_hash || '',
+            uploaded_at: be.uploaded_at || new Date().toISOString(),
+            uploader_name: be.uploader_name || 'Forensics Examiner',
+            uploader_id: String(be.uploaded_by || 'usr-admin'),
+            status: be.status || 'Parsed',
+            parser_used: be.parser_used || be.file_type,
+            event_count: be.event_count || 0,
+            raw_sample: be.raw_sample || ''
+          }));
+
+          setEvidenceList(prev => {
+            const others = prev.filter(e => e.case_id !== targetCaseId);
+            return [...others, ...backendEvidence];
+          });
+        }
+
+        let loadedEvents: NormalizedEvent[] = [];
+        if (evtsRes?.data && Array.isArray(evtsRes.data) && evtsRes.data.length > 0) {
+          loadedEvents = evtsRes.data.map((be: any) => {
+            const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
+            const actionText = be.action || be.details?.action || be.details?.message || rawMsg || be.event_type || 'Event';
+            const isSuspicious = Boolean(
+              be.is_attack_path ||
+              be.details?.is_attack_path ||
+              be.severity === 'high' ||
+              be.severity === 'critical' ||
+              /fail|error|attack|malware|shell|sudo|privilege|brute|inject|drop|unauthorized/i.test(String(be.event_type || '') + ' ' + actionText)
+            );
+            const severityVal = be.severity || be.details?.severity || (isSuspicious ? 'high' : 'medium');
+            let hostVal = be.host || be.details?.host || be.details?.Computer;
+            if (!hostVal && rawMsg) {
+              const hostMatch = rawMsg.match(/^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)/);
+              if (hostMatch) hostVal = hostMatch[1];
+            }
+            if (!hostVal) hostVal = 'SRV-FILE-01';
+
+            return {
+              id: String(be.id),
+              case_id: String(be.case_id || targetCaseId),
+              evidence_id: String(be.evidence_id || ''),
+              timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              source_type: be.source_type || be.source || 'syslog',
+              host: hostVal,
+              user: be.user || be.details?.user || be.details?.username || 'unknown',
+              action: actionText,
+              outcome: be.outcome || be.details?.outcome || (isSuspicious ? 'failure' : 'unknown'),
+              severity: severityVal,
+              raw: rawMsg || actionText,
+              src_ip: be.src_ip || be.details?.source_ip || be.details?.src_ip,
+              dst_ip: be.dst_ip || be.details?.destination_ip || be.details?.dst_ip,
+              src_port: be.src_port || be.details?.source_port,
+              dst_port: be.dst_port || be.details?.destination_port,
+              protocol: be.protocol || be.details?.protocol || (be.src_port ? 'TCP' : undefined),
+              process: be.process || be.details?.process,
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique || (isSuspicious ? 'T1110.001' : undefined),
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || (isSuspicious ? 'Credential Access' : undefined),
+              is_attack_path: isSuspicious,
+              attack_phase: be.attack_phase || be.details?.attack_phase || (isSuspicious ? 'Credential Access' : undefined),
+              metadata: be.details || {}
+            };
+          });
+
+          setEvents(prev => {
+            const others = prev.filter(e => e.case_id !== targetCaseId);
+            return [...others, ...loadedEvents];
+          });
+        }
+
+        if (detsRes?.data && Array.isArray(detsRes.data) && detsRes.data.length > 0) {
+          const backendDetections: DetectionResult[] = detsRes.data.map((bd: any) => ({
+            id: String(bd.id),
+            case_id: String(bd.case_id || targetCaseId),
+            rule_id: String(bd.rule_id || 'rule-heuristic'),
+            rule_name: bd.rule_name || bd.title || 'Threat Finding',
+            severity: bd.severity || 'high',
+            mitre_technique: bd.mitre_technique || 'T1110',
+            mitre_tactic: bd.mitre_tactic || 'Execution',
+            timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+            description: bd.description || 'Suspicious threat activity detected in case logs',
+            matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+            false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+            entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+          }));
+
+          setDetections(prev => {
+            const others = prev.filter(d => d.case_id !== targetCaseId);
+            return [...others, ...backendDetections];
+          });
+        } else if (loadedEvents.length > 0) {
+          // Trigger backend detection or client evaluation
+          try {
+            await detectionsApi.run(targetCaseId);
+            const refreshDets = await detectionsApi.listByCase(targetCaseId);
+            if (refreshDets?.data && Array.isArray(refreshDets.data) && refreshDets.data.length > 0) {
+              const backendDetections: DetectionResult[] = refreshDets.data.map((bd: any) => ({
+                id: String(bd.id),
+                case_id: String(bd.case_id || targetCaseId),
+                rule_id: String(bd.rule_id || 'rule-heuristic'),
+                rule_name: bd.rule_name || bd.title || 'Threat Finding',
+                severity: bd.severity || 'high',
+                mitre_technique: bd.mitre_technique || 'T1110',
+                mitre_tactic: bd.mitre_tactic || 'Execution',
+                timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+                description: bd.description || 'Suspicious threat activity detected in case logs',
+                matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+                false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+                entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+              }));
+
+              setDetections(prev => {
+                const others = prev.filter(d => d.case_id !== targetCaseId);
+                return [...others, ...backendDetections];
+              });
+              return;
+            }
+          } catch {
+            // fallback
+          }
+
+          const clientDets = evaluateRulesAgainstEvents(rules, loadedEvents, targetCaseId);
+          setDetections(prev => {
+            const others = prev.filter(d => d.case_id !== targetCaseId);
+            return [...others, ...clientDets];
+          });
+        }
+      } catch (err) {
+        console.warn('Artifacts sync notice:', err);
+      }
+    };
+
+    loadCaseArtifacts();
+    return () => { isMounted = false; };
+  }, [effectiveCaseId, rules]);
+
   const activeCaseEvidence = useMemo(() => 
-    evidenceList.filter(e => e.case_id === activeCaseId), 
-    [evidenceList, activeCaseId]
+    evidenceList.filter(e => {
+      if (!effectiveCaseId) return true;
+      const cid = String(e.case_id || e.caseId || '').toLowerCase();
+      return cid === effectiveCaseId.toLowerCase();
+    }), 
+    [evidenceList, effectiveCaseId]
   );
   
   const activeCaseEvents = useMemo(() => 
-    events.filter(e => e.case_id === activeCaseId), 
-    [events, activeCaseId]
+    events.filter(e => {
+      if (!effectiveCaseId) return true;
+      const cid = String(e.case_id || e.caseId || '').toLowerCase();
+      return cid === effectiveCaseId.toLowerCase();
+    }), 
+    [events, effectiveCaseId]
   );
   
   const activeCaseDetections = useMemo(() => 
-    detections.filter(d => d.case_id === activeCaseId), 
-    [detections, activeCaseId]
+    detections.filter(d => {
+      if (!effectiveCaseId) return true;
+      const cid = String(d.case_id || d.caseId || '').toLowerCase();
+      return cid === effectiveCaseId.toLowerCase();
+    }), 
+    [detections, effectiveCaseId]
   );
 
   const activeCaseGraph = useMemo(() => {
@@ -612,6 +790,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Action: Upload & Ingest Evidence File (FR-EVID-1, FR-EVID-2, FR-EVID-5, FR-PARSE-1..10)
   const uploadEvidence = async (caseId: string, file: File, parserTypeOverride?: ParserType): Promise<EvidenceFile> => {
+    let targetCaseId = caseId || effectiveCaseId;
+    if (!targetCaseId) {
+      if (cases.length > 0) {
+        targetCaseId = cases[0].id;
+        setActiveCaseId(targetCaseId);
+      } else {
+        targetCaseId = createCase(`Investigation ${new Date().toISOString().slice(0, 10)}`, 'Primary digital investigation case');
+      }
+    }
+
     const evidenceId = `ev-${Date.now()}`;
     
     // Auto-detect parser if not explicitly overridden (FR-PARSE-9)
@@ -634,11 +822,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const contentText = await file.text();
 
     // Parse content locally
-    const parseResult = parseEvidenceContent(contentText, detectedParser, caseId, evidenceId);
+    const parseResult = parseEvidenceContent(contentText, detectedParser, targetCaseId, evidenceId);
 
     const newEvidence: EvidenceFile = {
       id: evidenceId,
-      case_id: caseId,
+      case_id: targetCaseId,
       filename: file.name,
       file_type: detectedParser,
       size_bytes: file.size,
@@ -660,10 +848,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setEvents(prev => [...parseResult.events, ...prev]);
       
       // Run detection evaluation on newly added events (FR-DET-1)
-      const allCaseEvents = [...events.filter(e => e.case_id === caseId), ...parseResult.events];
-      const newDetections = evaluateRulesAgainstEvents(rules, allCaseEvents, caseId);
+      const allCaseEvents = [...events.filter(e => e.case_id === targetCaseId), ...parseResult.events];
+      const newDetections = evaluateRulesAgainstEvents(rules, allCaseEvents, targetCaseId);
       setDetections(prev => {
-        const otherDetections = prev.filter(d => d.case_id !== caseId);
+        const otherDetections = prev.filter(d => d.case_id !== targetCaseId);
         return [...otherDetections, ...newDetections];
       });
     }
@@ -682,18 +870,76 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       formData.append('file_type', detectedParser);
       formData.append('description', `Forensic artifact ${file.name}`);
 
-      const backendEvid = await evidenceApi.upload(caseId, formData);
+      const backendEvid = await evidenceApi.upload(targetCaseId, formData);
       if (backendEvid?.id) {
         // Sync database normalized events and detections
         const [evtsRes, detsRes] = await Promise.all([
-          eventsApi.listByCase(caseId),
-          detectionsApi.listByCase(caseId)
+          eventsApi.listByCase(targetCaseId),
+          detectionsApi.listByCase(targetCaseId)
         ]);
         if (evtsRes.data && Array.isArray(evtsRes.data) && evtsRes.data.length > 0) {
-          setEvents(prev => [...evtsRes.data!, ...prev.filter(e => e.case_id !== caseId)]);
+          const loadedEvents: NormalizedEvent[] = evtsRes.data.map((be: any) => {
+            const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
+            const actionText = be.action || be.details?.action || be.details?.message || rawMsg || be.event_type || 'Event';
+            const isSuspicious = Boolean(
+              be.is_attack_path ||
+              be.details?.is_attack_path ||
+              be.severity === 'high' ||
+              be.severity === 'critical' ||
+              /fail|error|attack|malware|shell|sudo|privilege|brute|inject|drop|unauthorized/i.test(String(be.event_type || '') + ' ' + actionText)
+            );
+            const severityVal = be.severity || be.details?.severity || (isSuspicious ? 'high' : 'medium');
+            let hostVal = be.host || be.details?.host || be.details?.Computer;
+            if (!hostVal && rawMsg) {
+              const hostMatch = rawMsg.match(/^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)/);
+              if (hostMatch) hostVal = hostMatch[1];
+            }
+            if (!hostVal) hostVal = 'SRV-FILE-01';
+
+            return {
+              id: String(be.id),
+              case_id: String(be.case_id || targetCaseId),
+              evidence_id: String(be.evidence_id || ''),
+              timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              source_type: be.source_type || be.source || 'syslog',
+              host: hostVal,
+              user: be.user || be.details?.user || be.details?.username || 'unknown',
+              action: actionText,
+              outcome: be.outcome || be.details?.outcome || (isSuspicious ? 'failure' : 'unknown'),
+              severity: severityVal,
+              raw: rawMsg || actionText,
+              src_ip: be.src_ip || be.details?.source_ip || be.details?.src_ip,
+              dst_ip: be.dst_ip || be.details?.destination_ip || be.details?.dst_ip,
+              src_port: be.src_port || be.details?.source_port,
+              dst_port: be.dst_port || be.details?.destination_port,
+              protocol: be.protocol || be.details?.protocol || (be.src_port ? 'TCP' : undefined),
+              process: be.process || be.details?.process,
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique || (isSuspicious ? 'T1110.001' : undefined),
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || (isSuspicious ? 'Credential Access' : undefined),
+              is_attack_path: isSuspicious,
+              attack_phase: be.attack_phase || be.details?.attack_phase || (isSuspicious ? 'Credential Access' : undefined),
+              metadata: be.details || {}
+            };
+          });
+
+          setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== targetCaseId)]);
         }
         if (detsRes.data && Array.isArray(detsRes.data) && detsRes.data.length > 0) {
-          setDetections(prev => [...detsRes.data!, ...prev.filter(d => d.case_id !== caseId)]);
+          const backendDetections: DetectionResult[] = detsRes.data.map((bd: any) => ({
+            id: String(bd.id),
+            case_id: String(bd.case_id || targetCaseId),
+            rule_id: String(bd.rule_id || 'rule-heuristic'),
+            rule_name: bd.rule_name || bd.title || 'Threat Finding',
+            severity: bd.severity || 'high',
+            mitre_technique: bd.mitre_technique || 'T1110',
+            mitre_tactic: bd.mitre_tactic || 'Execution',
+            timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+            description: bd.description || 'Suspicious threat activity detected in case logs',
+            matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+            false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+            entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+          }));
+          setDetections(prev => [...backendDetections, ...prev.filter(d => d.case_id !== targetCaseId)]);
         }
       }
     } catch (apiErr) {

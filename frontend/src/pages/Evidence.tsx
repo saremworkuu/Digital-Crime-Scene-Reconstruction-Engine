@@ -309,8 +309,7 @@ export const Evidence: React.FC = () => {
 
 
       {/* Upload Dropzone (FR-EVID-1..4) with Concern Heatmap Matrix */}
-
-      <UploadDropzone caseId={activeCaseId} />
+      <UploadDropzone caseId={activeCase?.id || activeCaseId} />
 
 
 

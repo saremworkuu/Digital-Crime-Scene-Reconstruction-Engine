@@ -6,7 +6,7 @@ mitre_technique: T1110
 
 detection:
   group_by: source_ip
-  threshold: 5
+  threshold: 3
   window_minutes: 30
   failed_statuses:
     - failed

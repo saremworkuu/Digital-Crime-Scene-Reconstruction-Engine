@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -431,15 +432,18 @@ from app.api.v1.timeline import get_case_timeline
 from app.api.v1.graph import get_attack_graph
 from app.api.v1.detections import get_case_detections, run_detection
 from app.api.v1.reports import generate_report, export_html, export_pdf
+from app.schemas.events import EventResponse
+from app.schemas.detection import DetectionResponse
+from app.schemas.graph import AttackGraphData
 
 router.add_api_route("/{case_id}/evidence", list_case_evidence, methods=["GET"])
 router.add_api_route("/{case_id}/evidence/upload", upload_case_evidence, methods=["POST"], status_code=status.HTTP_201_CREATED)
 router.add_api_route("/{case_id}/evidence", upload_case_evidence, methods=["POST"], status_code=status.HTTP_201_CREATED)
-router.add_api_route("/{case_id}/events", get_case_events, methods=["GET"])
-router.add_api_route("/{case_id}/timeline", get_case_timeline, methods=["GET"])
-router.add_api_route("/{case_id}/graph", get_attack_graph, methods=["GET"])
-router.add_api_route("/{case_id}/detections", get_case_detections, methods=["GET"])
-router.add_api_route("/{case_id}/run", run_detection, methods=["POST"])
+router.add_api_route("/{case_id}/events", get_case_events, methods=["GET"], response_model=List[EventResponse])
+router.add_api_route("/{case_id}/timeline", get_case_timeline, methods=["GET"], response_model=List[EventResponse])
+router.add_api_route("/{case_id}/graph", get_attack_graph, methods=["GET"], response_model=AttackGraphData)
+router.add_api_route("/{case_id}/detections", get_case_detections, methods=["GET"], response_model=List[DetectionResponse])
+router.add_api_route("/{case_id}/run", run_detection, methods=["POST"], response_model=List[DetectionResponse])
 router.add_api_route("/{case_id}/reports/generate", generate_report, methods=["POST"])
 router.add_api_route("/{case_id}/reports/html", export_html, methods=["GET"])
 router.add_api_route("/{case_id}/reports/pdf", export_pdf, methods=["GET"])

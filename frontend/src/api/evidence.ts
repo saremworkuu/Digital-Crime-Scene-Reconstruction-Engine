@@ -12,7 +12,7 @@ export const evidenceApi = {
         const loginRes = await fetch('/api/v1/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'investigator@dcsre.corp', password: 'Investigator#2026' }),
+          body: JSON.stringify({ email: 'saremworkuu@gmail.com', password: 'Admin@2026!' }),
         });
         const loginData = await loginRes.json();
         if (loginData?.token) {

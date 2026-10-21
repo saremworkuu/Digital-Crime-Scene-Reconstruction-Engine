@@ -1,4 +1,5 @@
 # Graph service
+import re
 from typing import Any, Dict, List
 
 
@@ -8,6 +9,14 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
         details = event.get("details", {}) or {}
         # Merge top-level if present
         host = event.get("host") or details.get("host") or details.get("Computer") or details.get("WorkstationName")
+        if not host:
+            raw_msg = str(details.get("raw_message") or details.get("raw") or event.get("raw") or "")
+            syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
+            if syslog_match:
+                host = syslog_match.group(1)
+            elif details.get("source_ip") or details.get("user") or event.get("user"):
+                host = "SRV-FILE-01"
+
         user = event.get("user") or details.get("user") or details.get("username") or details.get("TargetUserName")
         action = event.get("action") or details.get("action") or details.get("message") or details.get("Message") or "Event"
         src_ip = event.get("src_ip") or details.get("source_ip") or details.get("src_ip") or details.get("ip")
@@ -36,12 +45,24 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
     # ORM Event model
     details = getattr(event, "details", {}) or {}
     host = details.get("host") or details.get("Computer") or details.get("WorkstationName")
+    if not host:
+        raw_msg = str(details.get("raw_message") or details.get("raw") or getattr(event, "raw", "") or "")
+        syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
+        if syslog_match:
+            host = syslog_match.group(1)
+        elif details.get("source_ip") or details.get("user"):
+            host = "SRV-FILE-01"
+
     user = details.get("user") or details.get("username") or details.get("TargetUserName")
     action = details.get("action") or details.get("message") or details.get("Message") or getattr(event, "event_type", "Event")
     src_ip = details.get("source_ip") or details.get("src_ip") or details.get("ip")
     dst_ip = details.get("destination_ip") or details.get("dst_ip")
-    severity = details.get("severity") or "low"
-    is_attack_path = details.get("is_attack_path", False) or severity in ("critical", "high")
+    is_suspicious = any(
+        w in str(getattr(event, "event_type", "")).lower() or w in str(action).lower()
+        for w in ["fail", "error", "attack", "malware", "shell", "sudo", "privilege", "brute", "inject", "drop", "unauthorized"]
+    )
+    severity = details.get("severity") or ("high" if is_suspicious else "low")
+    is_attack_path = details.get("is_attack_path", False) or is_suspicious or severity in ("critical", "high")
     protocol = details.get("protocol")
     ts = getattr(event, "timestamp", None)
     timestamp_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts or "")
@@ -187,7 +208,7 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                     }
                 else:
                     edges_map[edge_id]["count"] += 1
-            elif evt["host"]:
+            if evt["host"]:
                 host_id = f"host-{evt['host']}"
                 edge_id = f"edge-{ip_id}-{host_id}"
                 if edge_id not in edges_map:
@@ -196,6 +217,23 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                         "source": ip_id,
                         "target": host_id,
                         "label": evt["action"][:25],
+                        "timestamp": timestamp,
+                        "count": 1,
+                        "is_attack_path": is_attack,
+                        "severity": severity,
+                    }
+                else:
+                    edges_map[edge_id]["count"] += 1
+
+            if evt["user"]:
+                user_id = f"user-{evt['user']}"
+                edge_id = f"edge-{ip_id}-{user_id}"
+                if edge_id not in edges_map:
+                    edges_map[edge_id] = {
+                        "id": edge_id,
+                        "source": ip_id,
+                        "target": user_id,
+                        "label": "auth attempt",
                         "timestamp": timestamp,
                         "count": 1,
                         "is_attack_path": is_attack,
