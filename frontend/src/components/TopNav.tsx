@@ -254,7 +254,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                         }`}
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Reset Scenario Data</span>
+                      <span>Clear Workspace Data</span>
                     </button>
 
                     <div className={`border-t my-1 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`} />

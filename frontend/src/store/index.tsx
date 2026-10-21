@@ -41,19 +41,9 @@ export const DEMO_USERS: User[] = [
     badgeId: 'ADMIN-001',
     badge_id: 'ADMIN-001',
     created_at: '2026-01-15T00:00:00Z'
-  },
-  {
-    id: 'usr-sarah',
-    name: 'Sarah Chen',
-    email: 'investigator@dcsre.corp',
-    role: 'investigator',
-    department: 'Host Forensics & Malware Analysis',
-    password: 'Investigator#2026',
-    badgeId: 'DFIR-4821',
-    badge_id: 'DFIR-4821',
-    created_at: '2026-02-01T00:00:00Z'
   }
 ];
+
 
 interface AppContextType {
   currentUser: User | null;
@@ -256,55 +246,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<string>('home');
-  const [activeCaseId, setActiveCaseId] = useState<string>('case-cobalt-shadow');
+  const [activeCaseId, setActiveCaseId] = useState<string>('');
 
-  // Core Data Stores
-  const [cases, setCases] = useState<Case[]>(() => INITIAL_SCENARIOS.map(s => s.caseData));
-  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>(() => 
-    INITIAL_SCENARIOS.flatMap(s => s.evidenceFiles)
-  );
-  const [events, setEvents] = useState<NormalizedEvent[]>(() => 
-    INITIAL_SCENARIOS.flatMap(s => s.events)
-  );
+  // Core Data Stores (Clean empty state for real investigation files)
+  const [cases, setCases] = useState<Case[]>([]);
+  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>([]);
+  const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [rules, setRules] = useState<DetectionRule[]>(INITIAL_SIGMA_RULES);
-  const [detections, setDetections] = useState<DetectionResult[]>(() =>
-    INITIAL_SCENARIOS.flatMap(s => s.detections)
-  );
+  const [detections, setDetections] = useState<DetectionResult[]>([]);
 
   // Audit Log store (Tamper-evident chain-of-custody) (FR-AUDIT-1..5)
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([
-    {
-      id: 'audit-init-01',
-      user_id: 'usr-sarah',
-      user_name: 'Sarah Chen',
-      user_role: 'investigator',
-      case_id: 'case-cobalt-shadow',
-      action: 'CASE_CREATED',
-      target_type: 'case',
-      target_id: 'case-cobalt-shadow',
-      timestamp: '2026-09-22T08:00:00Z',
-      ip_address: '10.14.8.45',
-      user_agent: 'Mozilla/5.0 (X11; Linux x86_64) DCSRE-Forensics/2.0',
-      details: { case_name: 'Operation Cobalt Shadow' }
-    },
-    {
-      id: 'audit-init-02',
-      user_id: 'usr-sarah',
-      user_name: 'Sarah Chen',
-      user_role: 'investigator',
-      case_id: 'case-cobalt-shadow',
-      action: 'EVIDENCE_UPLOADED',
-      target_type: 'evidence',
-      target_id: 'ev-cs-01',
-      timestamp: '2026-09-22T08:15:30Z',
-      ip_address: '10.14.8.45',
-      user_agent: 'Mozilla/5.0 (X11; Linux x86_64) DCSRE-Forensics/2.0',
-      details: {
-        filename: 'nginx_access_2026-09-22.log',
-        sha256_hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'
-      }
-    }
-  ]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+
 
   // Synchronize cases, rules, and audit logs with FastAPI backend
   useEffect(() => {
@@ -568,12 +521,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
 
   const activeCaseGraph = useMemo(() => {
-    const precomputed = INITIAL_SCENARIOS.find(s => s.caseData.id === activeCaseId)?.graphData;
-    if (precomputed && activeCaseEvents.length <= 15) {
-      return precomputed;
-    }
     return buildGraphFromEvents(activeCaseEvents);
-  }, [activeCaseId, activeCaseEvents]);
+  }, [activeCaseEvents]);
+
 
   // Recalculate Case summary metrics
   useEffect(() => {
@@ -602,9 +552,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: 'Open',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      owner_id: currentUser?.id || 'usr-sarah',
-      owner_name: currentUser?.name || 'Sarah Chen',
-      assigned_users: [currentUser?.name || 'Sarah Chen'],
+      owner_id: currentUser?.id || 'usr-admin',
+      owner_name: currentUser?.name || 'Administrator',
+      assigned_users: [currentUser?.name || 'Administrator'],
+
       evidence_count: 0,
       event_count: 0,
       detection_count: 0,
@@ -694,7 +645,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       sha256_hash: fileHash,
       uploaded_at: new Date().toISOString(),
       uploader_name: currentUser?.name || 'Forensics Examiner',
-      uploader_id: currentUser?.id || 'usr-sarah',
+      uploader_id: currentUser?.id || 'usr-admin',
+
       status: parseResult.errors.length > 0 && parseResult.events.length === 0 ? 'Failed' : 'Parsed',
       parser_used: detectedParser,
       parse_errors: parseResult.errors.length > 0 ? parseResult.errors : undefined,
@@ -840,14 +792,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const resetToInitialScenarios = () => {
-    setCases(INITIAL_SCENARIOS.map(s => s.caseData));
-    setEvidenceList(INITIAL_SCENARIOS.flatMap(s => s.evidenceFiles));
-    setEvents(INITIAL_SCENARIOS.flatMap(s => s.events));
-    setDetections(INITIAL_SCENARIOS.flatMap(s => s.detections));
+    setCases([]);
+    setEvidenceList([]);
+    setEvents([]);
+    setDetections([]);
     setRules(INITIAL_SIGMA_RULES);
-    setActiveCaseId('case-cobalt-shadow');
-    logAuditAction('CASE_UPDATED', 'system', 'all', { message: 'Reset all state to initial scenarios' });
+    setActiveCaseId('');
+    setAuditLogs([]);
+    logAuditAction('CASE_UPDATED', 'system', 'all', { message: 'Workspace cleared of temporary data' });
   };
+
 
   return (
     <AppContext.Provider

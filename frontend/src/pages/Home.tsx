@@ -84,73 +84,101 @@ export const Home: React.FC = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {cases.slice(0, 2).map((c) => {
-            const caseEvidence = evidenceList.filter((e) => e.case_id === c.id);
-            const caseEvents = events.filter((e) => e.case_id === c.id);
-            const caseDetections = detections.filter((d) => d.case_id === c.id);
-
-            return (
-              <div
-                key={c.id}
-                className="p-5 rounded-2xl bg-[#141211] border border-[#2e2825] hover:border-[#f95721]/60 transition-all space-y-4 shadow-lg"
+        {cases.length === 0 ? (
+          <div className="p-8 rounded-2xl bg-[#141211] border border-[#2e2825] text-center space-y-3 shadow-lg">
+            <div className="w-10 h-10 rounded-full bg-[#27130b] border border-[#ea580c]/40 flex items-center justify-center mx-auto text-[#f95721]">
+              <FolderLock className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-[#fafaf9]">Ready for Live Forensic Investigations</h3>
+            <p className="text-xs text-[#a8a29e] max-w-md mx-auto leading-relaxed">
+              All mock data has been purged. Create a new investigation case or ingest your real forensic evidence files.
+            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!currentUser) {
+                    setAuthNotice('Please sign in to manage cases and ingest forensic evidence.');
+                    setCurrentPage('login');
+                  } else {
+                    setCurrentPage('cases');
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#ea580c] to-[#f95721] text-white text-xs font-semibold hover:brightness-110 shadow-lg shadow-[#ea580c]/20 transition-all cursor-pointer"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold">
-                        {c.status}
-                      </span>
-                      <span className="text-[11px] font-mono text-[#a8a29e]">{c.id}</span>
+                Go to Cases
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {cases.slice(0, 2).map((c) => {
+              const caseEvidence = evidenceList.filter((e) => e.case_id === c.id);
+              const caseEvents = events.filter((e) => e.case_id === c.id);
+              const caseDetections = detections.filter((d) => d.case_id === c.id);
+
+              return (
+                <div
+                  key={c.id}
+                  className="p-5 rounded-2xl bg-[#141211] border border-[#2e2825] hover:border-[#f95721]/60 transition-all space-y-4 shadow-lg"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold">
+                          {c.status}
+                        </span>
+                        <span className="text-[11px] font-mono text-[#a8a29e]">{c.id}</span>
+                      </div>
+                      <h3 className="text-base font-bold text-[#fafaf9]">{c.name}</h3>
                     </div>
-                    <h3 className="text-base font-bold text-[#fafaf9]">{c.name}</h3>
+                    <FolderLock className="w-5 h-5 text-[#f95721] shrink-0" />
                   </div>
-                  <FolderLock className="w-5 h-5 text-[#f95721] shrink-0" />
-                </div>
 
-                <p className="text-xs text-[#a8a29e] line-clamp-2 leading-relaxed">
-                  {c.description}
-                </p>
+                  <p className="text-xs text-[#a8a29e] line-clamp-2 leading-relaxed">
+                    {c.description}
+                  </p>
 
-                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#26201e] text-[11px] font-mono text-[#a8a29e]">
-                  <div>
-                    <span className="text-[#78716c] block text-[10px]">Evidence</span>
-                    <strong className="text-[#fafaf9]">{caseEvidence.length} files</strong>
+                  <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#26201e] text-[11px] font-mono text-[#a8a29e]">
+                    <div>
+                      <span className="text-[#78716c] block text-[10px]">Evidence</span>
+                      <strong className="text-[#fafaf9]">{caseEvidence.length} files</strong>
+                    </div>
+                    <div>
+                      <span className="text-[#78716c] block text-[10px]">Events</span>
+                      <strong className="text-[#fafaf9]">{caseEvents.length}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[#78716c] block text-[10px]">Threats</span>
+                      <strong className="text-red-400">{caseDetections.length} alerts</strong>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-[#78716c] block text-[10px]">Events</span>
-                    <strong className="text-[#fafaf9]">{caseEvents.length}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[#78716c] block text-[10px]">Threats</span>
-                    <strong className="text-red-400">{caseDetections.length} alerts</strong>
+
+                  <div className="pt-1 flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-[#78716c]">
+                      Lead: {c.lead_investigator || 'DFIR Team'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!currentUser) {
+                          setAuthNotice(`Please sign in to inspect case "${c.name}".`);
+                          setCurrentPage('login');
+                        } else {
+                          setCurrentPage('cases');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#22130c] hover:bg-[#30160d] text-[#ff8d60] border border-[#ea580c]/40 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <span>Open Case</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
-
-                <div className="pt-1 flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-[#78716c]">
-                    Lead: {c.lead_investigator || 'DFIR Team'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!currentUser) {
-                        setAuthNotice(`Please sign in to inspect case "${c.name}".`);
-                        setCurrentPage('login');
-                      } else {
-                        setCurrentPage('cases');
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-[#22130c] hover:bg-[#30160d] text-[#ff8d60] border border-[#ea580c]/40 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                  >
-                    <span>Open Case</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </div>
   );

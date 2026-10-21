@@ -8,6 +8,6 @@ export const SUPPORTED_LOG_EXTENSIONS = [
 ];
 
 export const DEMO_PERSONAS = [
-  { id: 'usr-admin', name: 'Sarem Worku (System Administrator)', email: 'saremworkuu@gmail.com', role: 'admin', department: 'DFIR Command' },
-  { id: 'usr-sarah', name: 'Sarah Chen', email: 'investigator@dcsre.corp', role: 'investigator', department: 'Forensics' }
+  { id: 'usr-admin', name: 'Sarem Worku (System Administrator)', email: 'saremworkuu@gmail.com', role: 'admin', department: 'DFIR Command' }
 ];
+
