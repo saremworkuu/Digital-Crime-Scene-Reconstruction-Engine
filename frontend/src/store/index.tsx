@@ -242,15 +242,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [theme]);
 
   // Admin-Only Sign-In Lock (guarantees only admin can sign in when active)
-  const [adminOnlyMode, setAdminOnlyModeState] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('dcsre_admin_only_mode');
-      if (saved !== null) return saved === 'true';
-    } catch {
-      // ignore
-    }
-    return true; // Default to true so user can sign in as Admin only
-  });
+  const [adminOnlyMode, setAdminOnlyModeState] = useState<boolean>(false);
 
   const setAdminOnlyMode = (enforce: boolean) => {
     setAdminOnlyModeState(enforce);
@@ -506,12 +498,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    if (adminOnlyMode && matched.role !== 'admin') {
-      return {
-        success: false,
-        message: 'Access Restricted: Terminal is locked in Admin-Only Mode. Only System Administrator credentials (saremworkuu@gmail.com) are authorized.'
-      };
-    }
 
     // Verify password if provided
     if (matched.password && password && password !== '••••••••••••') {

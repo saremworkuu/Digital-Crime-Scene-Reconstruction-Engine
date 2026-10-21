@@ -3,7 +3,7 @@
  * Forensic Investigation Platform with 3D Cyber Threat Visualizer
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './store';
 import { TopNav } from './components/TopNav';
 import { SidebarNav } from './components/SidebarNav';
@@ -21,7 +21,6 @@ import { AuditLog } from './pages/AuditLog';
 import { About } from './pages/About';
 import { Contact } from './pages/Contact';
 import { Login } from './pages/Login';
-import { AdminLogin } from './pages/AdminLogin';
 import { Register } from './pages/Register';
 import { Home } from './pages/Home';
 import { Shield, X } from 'lucide-react';
@@ -30,8 +29,15 @@ const MainLayout: React.FC = () => {
   const { currentUser, currentPage, theme } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Guarantee every page transition starts cleanly from the top of the viewport
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [currentPage]);
+
   const renderPage = () => {
-    // Unauthenticated visitors can ONLY view Home, About, Contact, and auth pages (Login, AdminLogin, Register)
+    // Unauthenticated visitors can ONLY view Home, About, Contact, and auth pages (Login, Register)
     if (!currentUser) {
       if (currentPage === 'home') {
         return <Home />;
@@ -45,9 +51,6 @@ const MainLayout: React.FC = () => {
       if (currentPage === 'login') {
         return <Login />;
       }
-      if (currentPage === 'admin_login') {
-        return <AdminLogin />;
-      }
       if (currentPage === 'register') {
         return <Register />;
       }
@@ -58,8 +61,6 @@ const MainLayout: React.FC = () => {
     switch (currentPage) {
       case 'home':
         return <Home />;
-      case 'admin_login':
-        return <AdminLogin />;
       case 'dashboard':
         return <Dashboard />;
       case 'cases':
@@ -93,7 +94,7 @@ const MainLayout: React.FC = () => {
     }
   };
 
-  const isAuthPage = !currentUser || currentPage === 'home' || currentPage === 'about' || currentPage === 'contact' || currentPage === 'login' || currentPage === 'admin_login' || currentPage === 'register';
+  const isAuthPage = !currentUser || currentPage === 'home' || currentPage === 'about' || currentPage === 'contact' || currentPage === 'login' || currentPage === 'register';
 
   return (
     <div className={`min-h-screen pt-[61px] ${theme === 'light' ? 'bg-[#f8fafc] text-[#0f172a]' : 'bg-[#0e0d0d] text-[#e7e5e4]'} flex flex-col font-sans selection:bg-[#f95721]/30 selection:text-[#ff936b] relative overflow-x-hidden transition-colors duration-200`}>

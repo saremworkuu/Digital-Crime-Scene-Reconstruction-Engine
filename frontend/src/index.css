@@ -69,6 +69,47 @@ body::-webkit-scrollbar {
   animation: pulseGlow 2.5s infinite ease-in-out;
 }
 
+/* Continuous Infinite Carousel Sliding Animations */
+@keyframes slideCircleRTL {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes slideCircleLTR {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-circle-rtl,
+.animate-slide-rtl {
+  animation: slideCircleRTL 28s linear infinite;
+  will-change: transform;
+}
+
+.animate-slide-circle-rtl:hover,
+.animate-slide-rtl:hover {
+  animation-play-state: paused;
+}
+
+.animate-slide-circle-ltr,
+.animate-slide-ltr {
+  animation: slideCircleLTR 28s linear infinite;
+  will-change: transform;
+}
+
+.animate-slide-circle-ltr:hover,
+.animate-slide-ltr:hover {
+  animation-play-state: paused;
+}
+
 /* Print styles for Forensic Reports */
 @media print {
   body {

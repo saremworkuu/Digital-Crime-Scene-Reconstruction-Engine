@@ -174,16 +174,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
                 <button
                   onClick={() => {
                     setProfileDropdownOpen(false);
-                    setCurrentPage('admin_login');
-                  }}
-                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-[#ff936b] hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
-                >
-                  <Shield className="w-3.5 h-3.5 text-[#f95721]" />
-                  <span>Admin Login Page</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setProfileDropdownOpen(false);
                     setCurrentPage('about');
                   }}
                   className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
