@@ -76,9 +76,10 @@ def signup(
         username=signup_data.username,
         email=str(signup_data.email).lower(),
         hashed_password=hash_password(signup_data.password),
-        role=UserRole.VIEWER,
+        role=UserRole.INVESTIGATOR,
         is_active=True,
     )
+
 
     try:
         db.add(new_user)
@@ -123,11 +124,12 @@ def register(
             detail="Email or username is already registered.",
         )
 
-    role_val = register_data.role or "viewer"
+    role_val = register_data.role or "investigator"
     try:
         role_enum = UserRole(role_val.lower())
     except ValueError:
-        role_enum = UserRole.VIEWER
+        role_enum = UserRole.INVESTIGATOR
+
 
     new_user = User(
         username=username,

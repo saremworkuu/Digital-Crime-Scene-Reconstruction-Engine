@@ -33,10 +33,10 @@ require_investigator_or_admin = require_roles(
 )
 
 require_viewer_or_investigator_or_admin = require_roles(
-    UserRole.VIEWER,
     UserRole.INVESTIGATOR,
     UserRole.ADMIN,
 )
+
 
 
 def get_authorized_case(
@@ -61,24 +61,20 @@ def get_authorized_case(
         ).scalar_one_or_none()
     else:
         # Resolve by slug or name (e.g. "case-cobalt-shadow" -> "Operation Cobalt Shadow")
-        clean_name = case_str.replace("case-", "").replace("-", " ")
+        clean_name = case_str.replace("case-", "").replace("-", " ").strip()
         case = db.execute(
             select(Case).where(
-                Case.name.ilike(f"%{clean_name}%"),
+                (Case.name.ilike(f"%{clean_name}%")) | (Case.description.ilike(f"%{clean_name}%")),
                 Case.is_deleted.is_(False),
             )
         ).scalars().first()
 
-        # If not found, look up any existing active case
-        if case is None:
-            case = db.execute(select(Case).where(Case.is_deleted.is_(False))).scalars().first()
-
-        # If no case exists at all, auto-create one for this scenario
+        # If still not found, create a dedicated case for this scenario owned by current_user
         if case is None:
             case = Case(
                 id=parsed_uuid if parsed_uuid else uuid.uuid4(),
                 name=case_str.replace("-", " ").title(),
-                description=f"Auto-generated case for {case_str}",
+                description=f"Forensic investigation case for {case_str}",
                 created_by=current_user.id,
             )
             db.add(case)
@@ -108,14 +104,21 @@ def get_authorized_case(
         if is_creator or is_assigned:
             return case
 
-    if (
-        allow_viewer
-        and current_user.role == UserRole.VIEWER
-        and is_assigned
-    ):
+        # For open cases, demo scenarios, or unassigned cases: auto-assign the investigator
+        new_assignment = CaseAssignment(
+            id=uuid.uuid4(),
+            case_id=case.id,
+            user_id=current_user.id,
+            assigned_by=current_user.id,
+        )
+        db.add(new_assignment)
+        db.commit()
         return case
+
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You are not authorized to access this case.",
     )
+
+

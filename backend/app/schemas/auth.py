@@ -19,7 +19,7 @@ class RegisterRequest(BaseModel):
     username: Optional[str] = None
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
-    role: Optional[str] = "viewer"
+    role: Optional[str] = "investigator"
     department: Optional[str] = None
     badge_id: Optional[str] = None
     pgp_key: Optional[str] = None

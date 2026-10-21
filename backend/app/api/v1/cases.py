@@ -158,17 +158,12 @@ def list_cases(
                 Case.id.in_(assigned_case_ids),
             )
         )
-    elif current_user.role == UserRole.VIEWER:
-        assigned_case_ids = (
-            db.query(CaseAssignment.case_id)
-            .filter(CaseAssignment.user_id == current_user.id)
-        )
-        query = query.filter(Case.id.in_(assigned_case_ids))
     else:
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to view cases.",
         )
+
 
     if case_status:
         normalized_status = case_status.lower().replace(" ", "_")

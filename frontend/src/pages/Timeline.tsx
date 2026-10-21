@@ -8,15 +8,21 @@ import { TimelineView } from '../components/TimelineView';
 
 import { EventTable } from '../components/EventTable';
 
+import { correlateAttackChains } from '../services/correlation';
+
 import {
 
   Clock,
 
   Table,
 
-  GitCommit
+  GitCommit,
+
+  Sparkles
 
 } from 'lucide-react';
+
+import { SeverityTag } from '../components/SeverityTag';
 
 
 
@@ -138,6 +144,16 @@ export const Timeline: React.FC = () => {
 
 
 
+  // Compute automated correlated attack chains (FR-CORR-1, FR-CORR-2, FR-CORR-3)
+
+  const attackChains = useMemo(() => {
+
+    return correlateAttackChains(activeCaseEvents, 45);
+
+  }, [activeCaseEvents]);
+
+
+
   return (
 
     <div className="space-y-6">
@@ -217,7 +233,94 @@ export const Timeline: React.FC = () => {
           </button>
 
         </div>
+
       </div>
+
+
+
+      {/* Correlated Attack Chains Highlight Banner (FR-CORR-1..3) */}
+
+      {attackChains.length > 0 && (
+
+        <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-5 space-y-3.5 shadow-xl backdrop-blur-xl">
+
+          <div className="flex items-center justify-between">
+
+            <div className="flex items-center gap-2">
+
+              <Sparkles className="w-4 h-4 text-[#f95721]" />
+
+              <h3 className="text-xs font-semibold text-[#fafaf9] uppercase font-mono tracking-wider">
+
+                Automated Correlation Engine: {attackChains.length} Reconstructed Attack Chains
+
+              </h3>
+
+            </div>
+
+            <span className="text-[11px] font-mono text-[#a8a29e]">
+
+              Confidence Score ≥ 0.70 (FR-CORR-3)
+
+            </span>
+
+          </div>
+
+
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+            {attackChains.map((chain) => (
+
+              <div
+
+                key={chain.id}
+
+                className="p-3.5 bg-[#100f0e] border border-[#282321] rounded-xl text-xs space-y-2"
+
+              >
+
+                <div className="flex items-center justify-between">
+
+                  <div className="flex items-center gap-2">
+
+                    <SeverityTag severity={chain.highestSeverity} />
+
+                    <span className="font-semibold text-[#fafaf9] truncate max-w-[240px]">
+
+                      {chain.name}
+
+                    </span>
+
+                  </div>
+
+                  <span className="font-mono text-[11px] text-[#f95721] bg-[#2a140d] px-2 py-0.5 rounded border border-[#ea580c]/30 font-medium">
+
+                    Confidence: {(chain.confidenceScore * 100).toFixed(0)}%
+
+                  </span>
+
+                </div>
+
+
+
+                <div className="text-[11px] font-mono text-[#a8a29e] flex items-center justify-between">
+
+                  <span>{chain.events.length} chained forensic events</span>
+
+                  <span>{chain.startTime.slice(11, 19)} → {chain.endTime.slice(11, 19)} UTC</span>
+
+                </div>
+
+              </div>
+
+            ))}
+
+          </div>
+
+        </div>
+
+      )}
 
 
 

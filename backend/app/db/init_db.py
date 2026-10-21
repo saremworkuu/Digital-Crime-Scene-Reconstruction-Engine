@@ -4,6 +4,7 @@ from app.db.session import engine, SessionLocal
 from app.db.base import Base
 from app.db.models.user import User, UserRole
 from app.db.models.case import Case, CaseStatus
+from app.db.models.case_assignment import CaseAssignment
 from app.core.security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -49,16 +50,43 @@ def init_db():
         if case_count == 0 and admin:
             sample_case = Case(
                 id=uuid.uuid4(),
-                name="Scenario 1: APT Intrusion Analysis",
+                name="Operation Cobalt Shadow (APT Intrusion Analysis)",
                 description="Forensic investigation into enterprise unauthorized access, privilege escalation, and lateral movement.",
                 status=CaseStatus.OPEN,
                 created_by=admin.id,
             )
             db.add(sample_case)
+            db.flush()
+            if investigator:
+                assignment = CaseAssignment(
+                    id=uuid.uuid4(),
+                    case_id=sample_case.id,
+                    user_id=investigator.id,
+                    assigned_by=admin.id,
+                )
+                db.add(assignment)
             db.commit()
-            logger.info("Seeded initial case: Scenario 1: APT Intrusion Analysis")
+            logger.info("Seeded initial case: Operation Cobalt Shadow")
+        elif investigator and admin:
+            # Ensure investigator is assigned to all active cases for testing
+            all_cases = db.query(Case).filter(Case.is_deleted == False).all()
+            for c in all_cases:
+                existing_assign = db.query(CaseAssignment).filter(
+                    CaseAssignment.case_id == c.id,
+                    CaseAssignment.user_id == investigator.id,
+                ).first()
+                if not existing_assign:
+                    db.add(CaseAssignment(
+                        id=uuid.uuid4(),
+                        case_id=c.id,
+                        user_id=investigator.id,
+                        assigned_by=admin.id,
+                    ))
+            db.commit()
+
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     init_db()

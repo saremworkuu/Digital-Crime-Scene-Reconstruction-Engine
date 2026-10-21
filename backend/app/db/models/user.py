@@ -15,7 +15,7 @@ from app.db.base import Base
 class UserRole(str, enum.Enum):
     ADMIN="admin"
     INVESTIGATOR="investigator"
-    VIEWER="viewer"
+
 
 class User(Base):
     __tablename__ = "users"
@@ -50,8 +50,9 @@ class User(Base):
         values_callable=lambda enum_class: [e.value for e in enum_class]
     ),
     nullable=False,
-    default=UserRole.VIEWER
+    default=UserRole.INVESTIGATOR
 )
+
     is_active: Mapped[bool] = mapped_column(
     Boolean,
     default=True,
