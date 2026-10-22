@@ -140,13 +140,6 @@ export const Login: React.FC = () => {
             >
               Sign In Account
             </h1>
-            <p
-              className={`text-xs sm:text-sm font-sans ${
-                isLight ? 'text-slate-500' : 'text-[#a8a29e]'
-              }`}
-            >
-              Enter your forensic credentials to access the reconstruction ledger
-            </p>
           </div>
 
           {/* Success Banner */}
@@ -176,7 +169,7 @@ export const Login: React.FC = () => {
                   isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
                 }`}
               >
-                Forensic Email or Username
+                Email or Username
               </label>
               <div className="relative">
                 <input
@@ -244,21 +237,6 @@ export const Login: React.FC = () => {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
-
-            {/* Remember Me */}
-            <div className="flex items-center justify-between text-xs pt-1">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-[#382f2c] bg-[#141211] text-[#f95721] focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                />
-                <span className={isLight ? 'text-slate-600' : 'text-[#a8a29e]'}>
-                  Keep active session
-                </span>
-              </label>
             </div>
 
             {/* Submit Button */}
