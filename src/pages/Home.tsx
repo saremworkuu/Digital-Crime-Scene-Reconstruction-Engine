@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../store';
 import {
-  ArrowRight,
-  Shield,
   FileText,
   Calendar,
   AlertTriangle
@@ -74,13 +72,16 @@ export const Home: React.FC = () => {
   const darklockDetections = detections.filter((d) => d.case_id === darklockCase?.id);
 
   // Sequences of images that rotate with smooth seamless crossfade motion
+  // Row 1 Image Box: starts with the subway hacker artwork
   const row1Images = [
-    '/assets/aistudio/image_2400764a.png',
-    '/assets/aistudio/image_3ca514a7.png',
-    '/assets/aistudio/image_967ec523.png'
+    '/assets/mr_robot_subway.png',
+    '/assets/fsociety_times_square.jpg',
+    '/assets/mr_robot_crt.png'
   ];
 
+  // Row 2 Image Box: displays the fsociety mask logo 1st on page load
   const row2Images = [
+    '/assets/fsociety_mask_logo.png',
     '/assets/hacker_mask_1.png',
     '/assets/hacker_mask_2.png',
     '/assets/hacker_mask_3.png'
@@ -133,33 +134,12 @@ export const Home: React.FC = () => {
       {/* CURRENT INVESTIGATIONS (Visual 2x2 Staggered Case & Cyber Imagery Grid)     */}
       {/* ========================================================================= */}
       <section className="space-y-6 max-w-7xl mx-auto">
-        {/* Section Header */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1 rounded-lg bg-[#f95721]/10 text-[#f95721]">
-              <Shield className="w-5 h-5" />
-            </div>
-            <h2 className={`text-xl sm:text-2xl font-bold tracking-tight ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'
-              }`}>
-              Current Investigations
-            </h2>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (!currentUser) {
-                setAuthNotice('Please sign in to inspect all active case investigations.');
-                setCurrentPage('login');
-              } else {
-                setCurrentPage('cases');
-              }
-            }}
-            className="text-sm font-semibold text-[#f95721] hover:text-[#fb923c] flex items-center gap-1.5 transition-colors cursor-pointer group"
-          >
-            <span>View All Cases</span>
-            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-          </button>
+        {/* Section Header: Clean title without logo and without View All Cases */}
+        <div className="flex items-center">
+          <h2 className={`text-xl sm:text-2xl font-bold tracking-tight ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'
+            }`}>
+            Current Investigations
+          </h2>
         </div>
 
         {/* 2x2 Staggered Rows with visible height difference (Images taller, Case cards smaller, generous gap):
@@ -363,3 +343,4 @@ export const Home: React.FC = () => {
     </div>
   );
 };
+

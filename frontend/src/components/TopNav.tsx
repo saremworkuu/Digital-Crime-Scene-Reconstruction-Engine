@@ -220,10 +220,9 @@ export const TopNav: React.FC<TopNavProps> = ({
                     </div>
                   </div>
 
-                  <div className={`px-3 py-2 border-b flex items-center justify-between text-[11px] font-mono ${isLight ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-[#121110] border-[#2e2926] text-[#a8a29e]'
+                  <div className={`px-3 py-2 border-b flex items-center justify-center text-[11px] font-mono ${isLight ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-[#121110] border-[#2e2926] text-[#a8a29e]'
                     }`}>
-                    <span>Clearance:</span>
-                    <span className={`font-semibold uppercase tracking-wider text-[10px] px-1.5 py-0.5 rounded ${currentUser?.role === 'admin'
+                    <span className={`w-full text-center font-semibold uppercase tracking-wider text-[10px] px-2 py-0.5 rounded ${currentUser?.role === 'admin'
                         ? (isLight ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-[#3b1219] text-[#fca5a5] border border-[#ef4444]/40')
                         : (isLight ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'bg-[#2a140d] text-[#fb923c] border border-[#ea580c]/50')
                       }`}>
@@ -242,7 +241,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                         }`}
                     >
                       <RefreshCw className="w-3.5 h-3.5 text-[#f95721]" />
-                      <span>Reset Case / Mock Data</span>
+                      <span>Reset Case</span>
                     </button>
 
                     <div className={`border-t my-1 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`} />
@@ -256,7 +255,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                         }`}
                     >
                       <LogOut className="w-3.5 h-3.5" />
-                      <span>Sign Out / Lock Terminal</span>
+                      <span>Sign Out</span>
                     </button>
                   </div>
                 </div>

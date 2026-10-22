@@ -530,6 +530,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const logout = () => {
+    const roleLabel = currentUser?.role === 'admin' ? 'Administrator' : 'Investigator';
+    const userName = currentUser?.name || 'User';
     if (currentUser) {
       logAuditAction('USER_LOGOUT', 'user', currentUser.id, {
         email: currentUser.email,
@@ -539,6 +541,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     apiClient.setToken(null);
     setCurrentUser(null);
     setCurrentPage('home');
+    toast.success(`${roleLabel} ${userName} has signed out successfully. Session closed.`);
   };
 
   // Active Case Data Subsets
