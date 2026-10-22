@@ -79,12 +79,11 @@ export const Home: React.FC = () => {
     '/assets/mr_robot_crt.png'
   ];
 
-  // Row 2 Image Box: displays the fsociety mask logo 1st on page load
+  // Row 2 Image Box: displays the fsociety mask logo 1st on page load, followed by Anonymous artworks
   const row2Images = [
     '/assets/fsociety_mask_logo.png',
     '/assets/hacker_mask_1.png',
-    '/assets/hacker_mask_2.png',
-    '/assets/hacker_mask_3.png'
+    '/assets/anonymous_parchment.png'
   ];
 
   return (
