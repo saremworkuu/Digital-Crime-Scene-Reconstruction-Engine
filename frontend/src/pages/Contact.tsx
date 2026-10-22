@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
-import { AuthHeroCard } from '../components/AuthHeroCard';
 import {
   CheckCircle2,
-  AlertCircle,
-  Sparkles
+  AlertCircle
 } from 'lucide-react';
+import { toast } from '../components/Toast';
 
 export const Contact: React.FC = () => {
   const { theme } = useApp();
@@ -15,7 +14,6 @@ export const Contact: React.FC = () => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
   const [organization, setOrganization] = useState('');
   const [message, setMessage] = useState('');
 
@@ -39,28 +37,23 @@ export const Contact: React.FC = () => {
     }
   };
 
-  const handlePreloadDemo = () => {
-    setFirstName('Marcus');
-    setLastName('Vance');
-    setEmail('m.vance@defense-grid.org');
-    setEmailError(null);
-    setPhoneNumber('271 250 0701');
-    setOrganization('Cyber Defense Command');
-    setMessage('Requesting consultation on incident reconstruction telemetry.');
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setGeneralError(null);
 
     if (!firstName.trim() || !lastName.trim()) {
-      setGeneralError('Please enter both your First Name and Last Name.');
+      const err = 'Please enter both your First Name and Last Name.';
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
     if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const err = 'A valid official email is required.';
       setEmailError('Enter a valid Email');
-      setGeneralError('A valid official email is required.');
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
@@ -71,6 +64,7 @@ export const Contact: React.FC = () => {
       const generatedTicket = `DCSRE-${Date.now().toString().slice(-6)}`;
       setTicketId(generatedTicket);
       setIsSubmitting(false);
+      toast.success(`Message received! Reference ticket #${generatedTicket}`);
     }, 500);
   };
 
@@ -90,10 +84,15 @@ export const Contact: React.FC = () => {
           {/* Sized proportionally so you don't have to scroll down               */}
           {/* =================================================================== */}
           <div className="lg:col-span-6 flex flex-col justify-center">
-            <AuthHeroCard
-              imageSrc="/assets/contact_art.png"
-              imageAlt="Person casting eagle shadow artwork"
-            />
+            <div className="relative w-full h-[400px] sm:h-[460px] lg:h-[500px] rounded-2xl overflow-hidden bg-[#0d0c0c] border border-[#2b2523] flex items-center justify-center shadow-2xl">
+              <img
+                src="/assets/contact_art.png"
+                alt="Person casting eagle shadow artwork"
+                className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
+                loading="eager"
+                decoding="sync"
+              />
+            </div>
           </div>
 
           {/* =================================================================== */}
@@ -103,29 +102,12 @@ export const Contact: React.FC = () => {
 
             {/* Header */}
             <div className="space-y-1 mb-5">
-              <div className="flex items-center justify-between">
-                <h1
-                  className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${isLight ? 'text-slate-900' : 'text-white'
-                    }`}
-                >
-                  Contact Us
-                </h1>
-
-                {/* Demo Quick Fill Button */}
-                <button
-                  type="button"
-                  onClick={handlePreloadDemo}
-                  className={`text-xs font-mono px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1.5 cursor-pointer ${isLight
-                      ? 'border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100'
-                      : 'border-[#ea580c]/40 bg-[#24130d] text-[#ff936b] hover:bg-[#34170f]'
-                    }`}
-                  title="Prefill sample details"
-                >
-                  <Sparkles className="w-3 h-3 text-[#f95721]" />
-                  <span>Sample Data</span>
-                </button>
-              </div>
-
+              <h1
+                className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${isLight ? 'text-slate-900' : 'text-white'
+                  }`}
+              >
+                Contact Us
+              </h1>
               <p
                 className={`text-xs sm:text-sm font-sans ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'
                   }`}
@@ -248,38 +230,6 @@ export const Contact: React.FC = () => {
                 )}
               </div>
 
-              {/* Row 3: Phone Number matching Picture 1 */}
-              <div className="space-y-1">
-                <label
-                  htmlFor="contact-phone"
-                  className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                    }`}
-                >
-                  Phone Number
-                </label>
-                <div className="flex gap-2">
-                  <div
-                    className={`flex items-center gap-1.5 px-3 py-2 sm:py-2.5 rounded-xl border shrink-0 transition-colors ${isLight
-                        ? 'bg-slate-50 border-slate-300 text-slate-700'
-                        : 'bg-[#141211] border-[#2b2523] text-[#d6d3d1]'
-                      }`}
-                  >
-                    <span className="text-base leading-none">🇺🇸</span>
-                    <span className="text-xs font-mono font-medium">+1</span>
-                  </div>
-                  <input
-                    id="contact-phone"
-                    type="tel"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    placeholder="271 250 0701"
-                    className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans ${isLight
-                        ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
-                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
-                      }`}
-                  />
-                </div>
-              </div>
 
               {/* Row 4: Clean, Compact Message Field */}
               <div className="space-y-1">

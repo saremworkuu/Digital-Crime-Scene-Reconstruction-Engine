@@ -12,7 +12,8 @@ import {
   ChevronDown, 
   LogOut, 
   Shield, 
-  UserCheck 
+  UserCheck,
+  RefreshCw 
 } from 'lucide-react';
 import { UserRole } from '../../types';
 
@@ -26,7 +27,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
     setCurrentPage, 
     currentUser, 
     setCurrentUser, 
-    logAuditAction 
+    logAuditAction,
+    resetToInitialScenarios
   } = useApp();
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -172,16 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
 
               <div className="space-y-1">
                 <button
-                  onClick={() => {
-                    setProfileDropdownOpen(false);
-                    setCurrentPage('admin_login');
-                  }}
-                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-[#ff936b] hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
-                >
-                  <Shield className="w-3.5 h-3.5 text-[#f95721]" />
-                  <span>Admin Login Page</span>
-                </button>
-                <button
+                  type="button"
                   onClick={() => {
                     setProfileDropdownOpen(false);
                     setCurrentPage('about');
@@ -189,6 +182,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
                   className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
                 >
                   About DCSRE Engine
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetToInitialScenarios();
+                    setProfileDropdownOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-[#f95721] hover:bg-[#24130d] hover:text-[#fb923c] transition-colors cursor-pointer font-medium"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Reset Case / Mock Data</span>
                 </button>
               </div>
 

@@ -9,16 +9,17 @@ import {
   Shield,
   ArrowRight
 } from 'lucide-react';
+import { toast } from '../components/Toast';
 
 export const Login: React.FC = () => {
   const { loginUser, setCurrentPage, theme } = useApp();
   const isLight = theme === 'light';
 
-  // Form Fields - default to designated Administrator credentials
-  const [email, setEmail] = useState('saremworkuu@gmail.com');
-  const [password, setPassword] = useState('Admin@2026!');
+  // Form Fields - clean inputs for security
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
 
   // States
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -32,9 +33,10 @@ export const Login: React.FC = () => {
       setEmailError(null);
       return;
     }
-    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
-    if (!isValid) {
-      setEmailError('Enter a valid Email');
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+    const isUsername = /^[a-zA-Z0-9_.-]{3,}$/.test(val);
+    if (!isEmail && !isUsername) {
+      setEmailError('Enter a valid email or username');
     } else {
       setEmailError(null);
     }
@@ -45,16 +47,23 @@ export const Login: React.FC = () => {
     setGeneralError(null);
     setSuccessMsg(null);
 
-    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedInput = email.trim();
 
-    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setEmailError('Enter a valid Email');
-      setGeneralError('A valid email address is required.');
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedInput);
+    const isUsername = /^[a-zA-Z0-9_.-]{3,}$/.test(trimmedInput);
+
+    if (!trimmedInput || (!isEmail && !isUsername)) {
+      const err = 'Please enter a valid credential email or username.';
+      setEmailError('Enter a valid email or username');
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
     if (!password) {
-      setGeneralError('Please enter your password.');
+      const err = 'Please enter your password.';
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
@@ -63,7 +72,7 @@ export const Login: React.FC = () => {
     try {
       // 1. Attempt backend JWT login to obtain live bearer token
       try {
-        const res = await authApi.login(trimmedEmail, password);
+        const res = await authApi.login(trimmedInput.toLowerCase(), password);
         const tokenString = res?.data?.token || (res?.data as any)?.access_token;
         if (tokenString) {
           apiClient.setToken(tokenString);
@@ -73,18 +82,25 @@ export const Login: React.FC = () => {
       }
 
       // 2. Perform application store authentication
-      const result = loginUser(trimmedEmail, password);
+      const result = loginUser(trimmedInput, password);
 
       if (result.success) {
         setSuccessMsg(result.message);
+        const welcome = result.user?.role === 'admin'
+          ? `Welcome back, Administrator ${result.user.name.split(' ')[0]}!`
+          : `Signed in as ${result.user?.name || 'Examiner'}!`;
+        toast.success(welcome);
         setTimeout(() => {
           setCurrentPage('dashboard');
         }, 600);
       } else {
         setGeneralError(result.message);
+        toast.error(result.message || 'Authentication failed. Please check credentials.');
       }
     } catch (err: any) {
-      setGeneralError(err.message || 'An unexpected authentication error occurred.');
+      const msg = err.message || 'An unexpected authentication error occurred.';
+      setGeneralError(msg);
+      toast.error(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -103,24 +119,10 @@ export const Login: React.FC = () => {
         <img
           src="/assets/auth_art.png"
           alt="Puppet on strings artwork"
-          referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center"
+          loading="eager"
+          decoding="sync"
         />
-        {/* Subtle Ambient Decorative Glow and Title for artwork container */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none flex flex-col justify-end p-8 sm:p-12">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#f95721]/20 border border-[#f95721]/40 text-[#ff936b] text-xs font-mono">
-              <Shield className="w-3.5 h-3.5 text-[#f95721]" />
-              <span>DCSRE FORENSIC LEDGER</span>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight drop-shadow-md">
-              Reconstruct Attack Chains with Cryptographic Integrity
-            </h2>
-            <p className="text-xs sm:text-sm text-[#d6d3d1]/90 max-w-lg leading-relaxed drop-shadow">
-              Ingest multi-source evidence, correlate MITRE ATT&CK techniques, and visualize interactive 3D attack paths.
-            </p>
-          </div>
-        </div>
       </div>
 
       {/* =================================================================== */}
@@ -174,16 +176,16 @@ export const Login: React.FC = () => {
                   isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
                 }`}
               >
-                Forensic Email
+                Forensic Email or Username
               </label>
               <div className="relative">
                 <input
                   id="login-email"
-                  type="email"
+                  type="text"
                   required
                   value={email}
                   onChange={(e) => validateEmail(e.target.value)}
-                  placeholder="saremworkuu@gmail.com"
+                  placeholder="saremworkuu@gmail.com or admin"
                   className={`w-full px-3.5 py-2.5 sm:py-3 pr-10 rounded-xl text-sm transition-all outline-none font-sans ${
                     emailError
                       ? isLight
@@ -281,31 +283,19 @@ export const Login: React.FC = () => {
             </div>
 
             {/* Footer link to Register */}
-            <div className="text-center pt-2 space-y-2">
-              <div>
-                <span
-                  className={`text-xs font-sans ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}
-                >
-                  Don't have an enrolled account?{' '}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage('register')}
-                  className="text-xs font-bold text-white hover:text-[#f95721] transition-colors cursor-pointer"
-                >
-                  Sign Up Account
-                </button>
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setCurrentPage('home')}
-                  className="text-[11px] text-[#78716c] hover:text-[#a8a29e] transition-colors cursor-pointer underline underline-offset-2"
-                >
-                  Back to DCSRE Home
-                </button>
-              </div>
+            <div className="text-center pt-2">
+              <span
+                className={`text-xs font-sans ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}
+              >
+                Don't have an enrolled account?{' '}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage('register')}
+                className="text-xs font-bold text-white hover:text-[#f95721] transition-colors cursor-pointer"
+              >
+                Sign Up Account
+              </button>
             </div>
 
           </form>

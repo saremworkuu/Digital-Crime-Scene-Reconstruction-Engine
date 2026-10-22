@@ -23,6 +23,7 @@ import { Contact } from './pages/Contact';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Home } from './pages/Home';
+import { ToastContainer } from './components/Toast';
 import { Shield, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -106,6 +107,9 @@ const MainLayout: React.FC = () => {
         onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
         mobileMenuOpen={mobileMenuOpen}
       />
+
+      {/* Global Toastify Notification Layer */}
+      <ToastContainer />
 
       {/* Main Body with Vertical Navigation Sidebar */}
       <div className="flex-1 flex w-full relative z-10">

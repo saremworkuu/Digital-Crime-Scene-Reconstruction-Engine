@@ -10,8 +10,10 @@ import {
   Edit2,
   X,
   ChevronDown,
-  ArrowUpDown
+  ArrowUpDown,
+  RefreshCw
 } from 'lucide-react';
+import { toast } from '../components/Toast';
 
 export const Cases: React.FC = () => {
   const {
@@ -23,7 +25,8 @@ export const Cases: React.FC = () => {
     updateCaseDetails,
     deleteCase,
     setCurrentPage,
-    currentUser
+    currentUser,
+    resetToInitialScenarios
   } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<'All' | CaseStatus>('All');
@@ -77,6 +80,7 @@ export const Cases: React.FC = () => {
       .filter(t => t.length > 0);
 
     const newId = createCase(newCaseName.trim(), newCaseDesc.trim(), tags);
+    toast.success(`Investigation case "${newCaseName.trim()}" created!`);
     setIsCreateModalOpen(false);
     setNewCaseName('');
     setNewCaseDesc('');
@@ -88,6 +92,7 @@ export const Cases: React.FC = () => {
     e.preventDefault();
     if (!editingCase) return;
     updateCaseDetails(editingCase.id, editName.trim(), editDesc.trim());
+    toast.success('Investigation case details updated.');
     setEditingCase(null);
   };
 
@@ -169,13 +174,23 @@ export const Cases: React.FC = () => {
           </div>
 
           <div className="text-xs text-[#a8a29e] font-mono tabular-nums px-2">
-            {filteredCases.length} cases
+            {Math.min(filteredCases.length, 2)} cases
           </div>
+
+          <button
+            type="button"
+            onClick={resetToInitialScenarios}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#2b2523] bg-[#0d0c0c] hover:bg-[#1a1715] text-[#a8a29e] hover:text-[#f95721] text-xs font-mono transition-colors cursor-pointer"
+            title="Reset cases to default 2 mock scenarios"
+          >
+            <RefreshCw className="w-3 h-3 text-[#f95721]" />
+            <span>Reset Mock Cases</span>
+          </button>
         </div>
 
       </div>
 
-      {/* Case Grid (FR-CASE-2, FR-CASE-4) */}
+      {/* Case Grid (FR-CASE-2, FR-CASE-4) - Strictly 2 Mock Cases */}
       {filteredCases.length === 0 ? (
         <div className="p-12 rounded-2xl bg-[#161413]/90 border border-[#2b2523] text-center space-y-4 shadow-xl">
           <div className="w-12 h-12 rounded-full bg-[#27130b] border border-[#ea580c]/40 flex items-center justify-center mx-auto text-[#f95721]">
@@ -195,7 +210,7 @@ export const Cases: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredCases.map((c) => {
+          {filteredCases.slice(0, 2).map((c) => {
             const isActive = c.id === activeCaseId;
 
           return (
@@ -298,6 +313,7 @@ export const Cases: React.FC = () => {
                       onClick={() => {
                         if (confirm(`Are you sure you want to delete case "${c.name}"?`)) {
                           deleteCase(c.id);
+                          toast.info(`Investigation case "${c.name}" deleted.`);
                         }
                       }}
                       className="p-1.5 text-[#a8a29e] hover:text-[#ef4444] hover:bg-[#25201e] rounded-lg transition-colors cursor-pointer"

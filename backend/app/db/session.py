@@ -18,24 +18,41 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 def compile_jsonb_sqlite(type_, compiler, **kw):
     return "JSON"
 
+import socket
+from urllib.parse import urlparse
+
 db_url = settings.DATABASE_URL
 connect_args = {}
 
 if db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 else:
-    # Test PostgreSQL connection; if unavailable on localhost, fallback to SQLite
+    # Test socket availability before engine connect to avoid blocking on Windows TCP timeout
+    postgres_available = False
     try:
-        test_engine = create_engine(
-            db_url,
-            connect_args={"connect_timeout": 2} if "postgresql" in db_url else {}
-        )
-        with test_engine.connect() as conn:
-            pass
-        test_engine.dispose()
-    except Exception as e:
+        parsed = urlparse(db_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 5432
+        with socket.create_connection((host, port), timeout=0.3):
+            postgres_available = True
+    except Exception:
+        postgres_available = False
+
+    if postgres_available:
+        try:
+            test_engine = create_engine(
+                db_url,
+                connect_args={"connect_timeout": 1} if "postgresql" in db_url else {}
+            )
+            with test_engine.connect() as conn:
+                pass
+            test_engine.dispose()
+        except Exception as e:
+            postgres_available = False
+
+    if not postgres_available:
         logger.warning(
-            f"PostgreSQL connection to {db_url} failed ({e}). Falling back to local SQLite database (sqlite:///dcsre.db)."
+            f"PostgreSQL server not detected at {db_url}. Using high-performance local SQLite database (sqlite:///dcsre.db)."
         )
         db_url = "sqlite:///dcsre.db"
         connect_args = {"check_same_thread": False}

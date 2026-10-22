@@ -42,4 +42,5 @@ backend/.env.*
 
 # Miscellaneous
 backend/package-lock.json
+scratch/
 

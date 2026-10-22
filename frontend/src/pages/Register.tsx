@@ -4,10 +4,10 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
-  CheckCircle2,
-  Sparkles
+  CheckCircle2
 } from 'lucide-react';
 import { validateRealEmail } from '../utils/emailValidator';
+import { toast } from '../components/Toast';
 
 export const Register: React.FC = () => {
   const { registerUser, setCurrentPage, theme } = useApp();
@@ -17,7 +17,6 @@ export const Register: React.FC = () => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [department, setDepartment] = useState('Digital Forensics & Incident Response (DFIR)');
   const [showPassword, setShowPassword] = useState(false);
@@ -47,16 +46,6 @@ export const Register: React.FC = () => {
     }
   };
 
-  const handlePreloadDemo = () => {
-    setFirstName('Felix');
-    setLastName('Brown');
-    setEmail('felixbrown27@gmail.com');
-    setEmailError(null);
-    setIsEmailVerified(true);
-    setPhoneNumber('271 250 0701');
-    setPassword('ForensicAuth#2026');
-    setDepartment('Host Forensics & Malware Analysis');
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,20 +54,26 @@ export const Register: React.FC = () => {
 
     const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
     if (!firstName.trim() || !lastName.trim()) {
-      setGeneralError('Please enter both your First Name and Last Name.');
+      const err = 'Please enter both your First Name and Last Name.';
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
     const emailCheck = validateRealEmail(email);
     if (!emailCheck.isValid) {
-      setEmailError(emailCheck.error || 'A valid real email address is required.');
-      setGeneralError(emailCheck.error || 'Registration requires a legitimate, non-disposable email address.');
+      const err = emailCheck.error || 'A valid real email address is required.';
+      setEmailError(err);
+      setGeneralError(err);
+      toast.error(err);
       setIsEmailVerified(false);
       return;
     }
 
     if (password.length < 8) {
-      setGeneralError('Password must be at least 8 characters long.');
+      const err = 'Password must be at least 8 characters long.';
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
@@ -98,11 +93,13 @@ export const Register: React.FC = () => {
 
     if (result.success) {
       setSuccessMsg(result.message);
+      toast.success(result.message || 'Examiner account registered successfully!');
       setTimeout(() => {
         setCurrentPage('dashboard');
       }, 1200);
     } else {
       setGeneralError(result.message);
+      toast.error(result.message || 'Registration failed. Please check your details.');
     }
   };
 
@@ -118,8 +115,9 @@ export const Register: React.FC = () => {
         <img
           src="/assets/auth_art.png"
           alt="Puppet on strings artwork"
-          referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center"
+          loading="eager"
+          decoding="sync"
         />
       </div>
 
@@ -131,28 +129,12 @@ export const Register: React.FC = () => {
 
           {/* Header */}
           <div className="space-y-1.5 mb-6">
-            <div className="flex items-center justify-between">
-              <h1
-                className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${isLight ? 'text-slate-900' : 'text-white'
-                  }`}
-              >
-                Sign Up Account
-              </h1>
-
-              {/* Demo Quick Fill Button */}
-              <button
-                type="button"
-                onClick={handlePreloadDemo}
-                className={`text-xs font-mono px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1.5 cursor-pointer ${isLight
-                  ? 'border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100'
-                  : 'border-[#ea580c]/40 bg-[#24130d] text-[#ff936b] hover:bg-[#34170f]'
-                  }`}
-                title="Prefill sample examiner details"
-              >
-                <Sparkles className="w-3 h-3 text-[#f95721]" />
-                <span>Sample Data</span>
-              </button>
-            </div>
+            <h1
+              className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${isLight ? 'text-slate-900' : 'text-white'
+                }`}
+            >
+              Sign Up Account
+            </h1>
           </div>
 
           {/* Success Banner */}
@@ -272,50 +254,14 @@ export const Register: React.FC = () => {
                 )}
               </div>
 
-              {emailError ? (
+              {emailError && (
                 <p className="text-[11px] text-red-500 font-sans mt-1 flex items-center gap-1.5">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span>{emailError}</span>
                 </p>
-              ) : (
-                <p className={`text-[11px] font-sans mt-1 ${isLight ? 'text-slate-400' : 'text-[#877e7b]'}`}>
-                  Must be an active, legitimate email address (e.g. Gmail, agency, or corporate domain). Temporary or disposable emails are blocked.
-                </p>
               )}
             </div>
 
-            {/* Row 3: Phone Number matching Picture 1 */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="reg-phone"
-                className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                  }`}
-              >
-                Phone Number
-              </label>
-              <div className="flex gap-2">
-                <div
-                  className={`flex items-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl border shrink-0 transition-colors ${isLight
-                    ? 'bg-white border-slate-300 text-slate-700'
-                    : 'bg-[#141211] border-[#2b2523] text-[#d6d3d1]'
-                    }`}
-                >
-                  <span className="text-base leading-none">🇺🇸</span>
-                  <span className="text-xs font-mono font-medium">+1</span>
-                </div>
-                <input
-                  id="reg-phone"
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="271 250 0701"
-                  className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${isLight
-                    ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
-                    : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
-                    }`}
-                />
-              </div>
-            </div>
 
             {/* Row 4: Password Field */}
             <div className="space-y-1.5">

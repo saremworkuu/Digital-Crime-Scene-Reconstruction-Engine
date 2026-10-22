@@ -9,21 +9,21 @@ export interface ApiResponse<T> {
 }
 
 class ApiClient {
-  private token: string | null = (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
+  private token: string | null = null;
   private baseUrl = '/api/v1';
 
   setToken(token: string | null) {
     this.token = token;
     if (typeof window !== 'undefined') {
-      if (token) localStorage.setItem('token', token);
-      else localStorage.removeItem('token');
+      try {
+        localStorage.removeItem('token');
+      } catch {
+        // ignore
+      }
     }
   }
 
   getToken(): string | null {
-    if (!this.token && typeof window !== 'undefined') {
-      this.token = localStorage.getItem('token');
-    }
     return this.token;
   }
 

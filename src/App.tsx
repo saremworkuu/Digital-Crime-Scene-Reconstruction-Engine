@@ -25,6 +25,7 @@ import { AdminLogin } from './pages/AdminLogin';
 import { Register } from './pages/Register';
 import { Home } from './pages/Home';
 import { Shield, X } from 'lucide-react';
+import { ToastContainer } from './components/Toast';
 
 const MainLayout: React.FC = () => {
   const { currentUser, currentPage, theme } = useApp();
@@ -166,6 +167,7 @@ export default function App() {
   return (
     <AppProvider>
       <MainLayout />
+      <ToastContainer />
     </AppProvider>
   );
 }

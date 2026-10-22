@@ -12,6 +12,7 @@ export const AuthHeroCard: React.FC<AuthHeroCardProps> = ({
   imageAlt,
   className = ''
 }) => {
+  const [currentSrc, setCurrentSrc] = useState(imageSrc);
   const [imgError, setImgError] = useState(false);
 
   return (
@@ -20,9 +21,15 @@ export const AuthHeroCard: React.FC<AuthHeroCardProps> = ({
     >
       {!imgError ? (
         <img
-          src={imageSrc}
+          src={currentSrc}
           alt={imageAlt}
-          onError={() => setImgError(true)}
+          onError={() => {
+            if (currentSrc !== '/assets/contact_art.png') {
+              setCurrentSrc('/assets/contact_art.png');
+            } else {
+              setImgError(true);
+            }
+          }}
           referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
         />

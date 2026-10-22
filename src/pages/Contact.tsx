@@ -1,361 +1,272 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
 import {
-  Mail,
-  Phone,
-  MapPin,
-  Send,
   CheckCircle2,
-  Copy,
-  Check,
-  Lock,
-  Building,
-  User
+  AlertCircle
 } from 'lucide-react';
-import { Forensic3DCore } from '../components/Forensic3DCore';
+import { toast } from '../components/Toast';
 
 export const Contact: React.FC = () => {
-  const { setCurrentPage, theme } = useApp();
+  const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [name, setName] = useState('');
+  // Form Fields
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [organization, setOrganization] = useState('');
-  const [inquiryType, setInquiryType] = useState('emergency_breach');
-  const [priority, setPriority] = useState<'critical' | 'high' | 'normal'>('critical');
   const [message, setMessage] = useState('');
+
+  // States
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
-  const [copiedFingerprint, setCopiedFingerprint] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const pgpFingerprint = 'E4B2 91A0 39F8 D82C 7E10 B149 2C87 F320 9D1A 4E02';
-
-  const handleCopyFingerprint = () => {
-    navigator.clipboard.writeText(pgpFingerprint);
-    setCopiedFingerprint(true);
-    setTimeout(() => setCopiedFingerprint(false), 2000);
+  const validateEmail = (val: string) => {
+    setEmail(val);
+    if (!val) {
+      setEmailError(null);
+      return;
+    }
+    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+    if (!isValid) {
+      setEmailError('Enter a valid Email');
+    } else {
+      setEmailError(null);
+    }
   };
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setGeneralError(null);
+
+    if (!firstName.trim() || !lastName.trim()) {
+      const err = 'Please enter both your First Name and Last Name.';
+      setGeneralError(err);
+      toast.error(err);
+      return;
+    }
+
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const err = 'A valid official email is required.';
+      setEmailError('Enter a valid Email');
+      setGeneralError(err);
+      toast.error(err);
+      return;
+    }
+
     setIsSubmitting(true);
 
-    // Simulate cryptographic ticket issuance
+    // Simulate sending message
     setTimeout(() => {
       const generatedTicket = `DCSRE-${Date.now().toString().slice(-6)}`;
       setTicketId(generatedTicket);
       setIsSubmitting(false);
-    }, 700);
+      toast.success(`Message received! Reference ticket #${generatedTicket}`);
+    }, 500);
   };
 
   return (
-    <div className="space-y-10 pb-16 max-w-5xl mx-auto px-2 sm:px-4">
-      {/* Header Banner */}
-      <div className={`relative rounded-3xl overflow-hidden border ${
-        isLight
-          ? 'border-slate-200 bg-gradient-to-b from-white via-slate-50 to-slate-100 shadow-xl'
-          : 'border-[#2b2523] bg-gradient-to-b from-[#181514] via-[#121110] to-[#0d0c0c] shadow-2xl'
-      } p-6 sm:p-10 transition-colors`}>
-        <div className="absolute top-0 right-0 w-80 h-80 bg-[#f95721]/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-[calc(100vh-4.5rem)] py-4 sm:py-6 flex items-center justify-center px-3 sm:px-6">
+      {/* Outer Card Shell Container matching Picture 1 */}
+      <div
+        className={`w-full max-w-5xl rounded-[28px] border transition-colors shadow-2xl p-4 sm:p-5 lg:p-6 ${isLight
+            ? 'bg-white border-slate-200 shadow-slate-200/50'
+            : 'bg-[#090807] border-[#24201e] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)]'
+          }`}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-center">
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-2xl">
-            <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-[#fafaf9]">
-              Contact Forensic Triage
-            </h1>
-
-            <p className="text-xs sm:text-sm text-[#a8a29e] leading-relaxed">
-              Direct dispatch for active incident response, evidence handoff, and forensic support.
-            </p>
-          </div>
-
-          <div className="shrink-0 flex items-center justify-center">
-            <div className={`p-3 rounded-2xl ${isLight ? 'bg-white border-slate-200' : 'bg-[#161413] border-[#2c2624]'} border shadow-lg`}>
-              <Forensic3DCore size={72} interactive={true} />
+          {/* =================================================================== */}
+          {/* LEFT PANEL: Widened Proportional Image Box (Picture 1: Eagle art)   */}
+          {/* Sized proportionally so you don't have to scroll down               */}
+          {/* =================================================================== */}
+          <div className="lg:col-span-6 flex flex-col justify-center">
+            <div className="relative w-full h-[400px] sm:h-[460px] lg:h-[500px] rounded-2xl overflow-hidden bg-[#0d0c0c] border border-[#2b2523] flex items-center justify-center shadow-2xl">
+              <img
+                src="/assets/contact_art.png"
+                alt="Person casting eagle shadow artwork"
+                className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
+                loading="eager"
+                decoding="sync"
+              />
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Ticket Success Confirmation Modal / Banner */}
-      {ticketId && (
-        <div className="p-6 rounded-2xl bg-[#1a1411] border-2 border-[#f95721] shadow-2xl space-y-4 animate-fadeIn">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-[#2b130a] border border-[#ea580c]/60 flex items-center justify-center text-[#f95721] shrink-0">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
-            <div className="space-y-1 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-bold">
-                  Dispatch Recorded
-                </span>
-                <span className="text-xs font-mono text-[#a8a29e]">Ref: {ticketId}</span>
-              </div>
-              <h3 className="text-base font-bold text-[#fafaf9]">
-                Forensic Incident Triage Request Acknowledged
-              </h3>
-              <p className="text-xs text-[#d6d3d1] leading-relaxed">
-                Your dispatch ticket <strong className="text-[#f95721] font-mono">{ticketId}</strong> has been logged to the DCSRE on-call duty queue. Our standby digital forensics examiner will contact <strong className="text-[#fafaf9]">{email}</strong> within {priority === 'critical' ? '15 minutes' : '2 hours'}.
+          {/* =================================================================== */}
+          {/* RIGHT PANEL: Clean Modern Form (matching Picture 1 layout)          */}
+          {/* =================================================================== */}
+          <div className="lg:col-span-6 flex flex-col justify-center px-2 sm:px-4 lg:px-6 py-2">
+
+            {/* Header */}
+            <div className="space-y-1 mb-5">
+              <h1
+                className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${isLight ? 'text-slate-900' : 'text-white'
+                  }`}
+              >
+                Contact Us
+              </h1>
+              <p
+                className={`text-xs sm:text-sm font-sans ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'
+                  }`}
+              >
+                Send us a message and our team will get back to you shortly
               </p>
             </div>
-          </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#2d221e]">
-            <button
-              type="button"
-              onClick={() => {
-                setTicketId(null);
-                setMessage('');
-              }}
-              className="px-4 py-2 bg-[#27130b] hover:bg-[#38180e] border border-[#ea580c]/50 text-[#ff8d60] rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Submit Another Inquiry
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentPage('home')}
-              className="px-4 py-2 bg-[#f95721] hover:bg-[#ea580c] text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Return to Home
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Main Grid: Contact Cards & Form */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Column: Direct Channels & Information (5 cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Rapid Response Hotline */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-              <Phone className="w-4 h-4 text-[#f95721]" />
-              <span>Incident Hotline</span>
-            </div>
-            <div className="text-xl font-bold font-mono text-[#fafaf9] tracking-tight">
-              +1 (800) 555-DFIR (3347)
-            </div>
-          </div>
-
-          {/* Secure Email */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-              <Mail className="w-4 h-4 text-[#f95721]" />
-              <span>Forensic Inboxes</span>
-            </div>
-            <div className="space-y-1 text-xs font-mono">
-              <div className="flex justify-between items-center text-[#fafaf9]">
-                <span className="text-[#a8a29e]">Incident Response:</span>
-                <span className="text-[#f95721]">triage@dcsre.corp</span>
+            {/* Confirmation Banner */}
+            {ticketId && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-emerald-950/70 border border-emerald-600/70 text-emerald-200 space-y-1.5 animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="text-sm font-bold text-white font-sans">
+                    Message Received — Ref: <span className="font-mono text-emerald-300">{ticketId}</span>
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-200/90 leading-relaxed font-sans">
+                  Thank you! We will reach out to <strong className="text-white">{email}</strong> shortly.
+                </p>
               </div>
-              <div className="flex justify-between items-center text-[#fafaf9]">
-                <span className="text-[#a8a29e]">Evidence Custody:</span>
-                <span>evidence@dcsre.corp</span>
+            )}
+
+            {/* General Error Notification */}
+            {generalError && (
+              <div className="mb-4 p-3 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs flex items-center gap-2 animate-fadeIn">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{generalError}</span>
               </div>
-              <div className="flex justify-between items-center text-[#fafaf9]">
-                <span className="text-[#a8a29e]">Admin Command:</span>
-                <span>saremworkuu@gmail.com</span>
-              </div>
-            </div>
-          </div>
+            )}
 
-          {/* PGP Fingerprint Card */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-                <Lock className="w-4 h-4 text-[#f95721]" />
-                <span>PGP Fingerprint</span>
-              </div>
-              <button
-                type="button"
-                onClick={handleCopyFingerprint}
-                className="text-[11px] font-mono text-[#a8a29e] hover:text-[#fafaf9] flex items-center gap-1 transition-colors cursor-pointer"
-              >
-                {copiedFingerprint ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
-            <div className="p-3 bg-[#0d0c0c] border border-[#282321] rounded-xl text-[11px] font-mono text-[#d6d3d1] break-all leading-relaxed select-all">
-              {pgpFingerprint}
-            </div>
-          </div>
+            {/* Form */}
+            <form onSubmit={handleSubmit} className="space-y-3.5">
 
-          {/* Physical Enclave Location */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-              <MapPin className="w-4 h-4 text-[#f95721]" />
-              <span>Laboratory Location</span>
-            </div>
-            <div className="text-xs text-[#d6d3d1] space-y-0.5">
-              <div className="font-semibold text-[#fafaf9]">DCSRE Secure Forensics Laboratory</div>
-              <div>Intake Bay 4 · Incident Defense Center</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Interactive Dispatch Form (7 cols) */}
-        <div className="lg:col-span-7 bg-[#141211] border border-[#2b2523] rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
-          <div>
-            <h2 className="text-lg font-bold text-[#fafaf9] tracking-tight">
-              Submit Incident Dispatch / Inquiry
-            </h2>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-            {/* Name & Email */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">
-                  Full Name <span className="text-[#f95721]">*</span>
-                </label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
+              {/* Row 1: First Name & Last Name (Side by Side matching Picture 1) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label
+                    htmlFor="contact-firstName"
+                    className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                      }`}
+                  >
+                    First Name
+                  </label>
                   <input
+                    id="contact-firstName"
                     type="text"
                     required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Inspector Alex Thorne"
-                    className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Felix"
+                    className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans ${isLight
+                        ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                      }`}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label
+                    htmlFor="contact-lastName"
+                    className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                      }`}
+                  >
+                    Last Name
+                  </label>
+                  <input
+                    id="contact-lastName"
+                    type="text"
+                    required
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Brown"
+                    className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans ${isLight
+                        ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                      }`}
                   />
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">
-                  Email Address <span className="text-[#f95721]">*</span>
+              {/* Row 2: Email (With Red Error State matching Picture 1) */}
+              <div className="space-y-1">
+                <label
+                  htmlFor="contact-email"
+                  className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                    }`}
+                >
+                  Email
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
+                    id="contact-email"
                     type="email"
                     required
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="e.g. athorne@agency.gov"
-                    className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors"
+                    onChange={(e) => validateEmail(e.target.value)}
+                    placeholder="felixbrown27@gmail.com"
+                    className={`w-full px-3.5 py-2 sm:py-2.5 pr-10 rounded-xl text-sm transition-all outline-none font-sans ${emailError
+                        ? isLight
+                          ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                          : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                        : isLight
+                          ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
+                          : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                      }`}
                   />
+
+                  {emailError && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
+                      <AlertCircle className="w-4 h-4" />
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
 
-            {/* Organization & Inquiry Type */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Organization / Agency</label>
-                <div className="relative">
-                  <Building className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={organization}
-                    onChange={(e) => setOrganization(e.target.value)}
-                    placeholder="e.g. State Cyber Bureau / Corp SOC"
-                    className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors"
-                  />
-                </div>
+                {emailError && (
+                  <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                    {emailError}
+                  </p>
+                )}
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Inquiry Classification</label>
-                <select
-                  value={inquiryType}
-                  onChange={(e) => setInquiryType(e.target.value)}
-                  className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg px-3 py-2.5 text-[#fafaf9] focus:outline-none focus:border-[#f95721] transition-colors cursor-pointer font-mono"
+
+              {/* Row 4: Clean, Compact Message Field */}
+              <div className="space-y-1">
+                <label
+                  htmlFor="contact-msg"
+                  className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                    }`}
                 >
-                  <option value="emergency_breach">Active Breach / Ransomware Triage</option>
-                  <option value="evidence_intake">Evidence Ingestion & Verification</option>
-                  <option value="expert_testimony">Courtroom Forensic Attestation</option>
-                  <option value="general_inquiry">General Question / Partnership</option>
-                </select>
+                  Message
+                </label>
+                <textarea
+                  id="contact-msg"
+                  rows={2}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="How can we assist you?"
+                  className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans resize-none ${isLight
+                      ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                    }`}
+                />
               </div>
-            </div>
 
-            {/* Severity / Priority */}
-            <div className="space-y-1.5">
-              <label className="text-[#d6d3d1] font-medium block">Priority Level</label>
-              <div className="grid grid-cols-3 gap-2">
+              {/* Submit Button (matching Picture 1) */}
+              <div className="pt-1.5">
                 <button
-                  type="button"
-                  onClick={() => setPriority('critical')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    priority === 'critical'
-                      ? 'bg-red-950/80 border-red-700 text-red-300 shadow-md ring-1 ring-red-500'
-                      : 'bg-[#0d0c0c] border-[#2b2523] text-[#a8a29e] hover:text-[#fafaf9]'
-                  }`}
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-3 px-6 rounded-xl font-bold text-sm text-white bg-[#f95721] hover:bg-[#ea580c] active:scale-[0.99] transition-all shadow-lg hover:shadow-[0_0_20px_rgba(249,87,33,0.4)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
                 >
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span>P1 Critical (Active)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPriority('high')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    priority === 'high'
-                      ? 'bg-[#29160d] border-[#ea580c] text-[#ff8d60] shadow-md ring-1 ring-[#f95721]'
-                      : 'bg-[#0d0c0c] border-[#2b2523] text-[#a8a29e] hover:text-[#fafaf9]'
-                  }`}
-                >
-                  <span>P2 High</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPriority('normal')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    priority === 'normal'
-                      ? 'bg-[#181615] border-[#443c39] text-[#fafaf9] shadow-md'
-                      : 'bg-[#0d0c0c] border-[#2b2523] text-[#a8a29e] hover:text-[#fafaf9]'
-                  }`}
-                >
-                  <span>P3 Standard</span>
+                  {isSubmitting ? 'Sending Message...' : 'Send Message'}
                 </button>
               </div>
-            </div>
 
-            {/* Message Body */}
-            <div className="space-y-1.5">
-              <label className="text-[#d6d3d1] font-medium block">
-                Incident Summary / Message <span className="text-[#f95721]">*</span>
-              </label>
-              <textarea
-                required
-                rows={4}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Describe the affected hosts, observable IOCs, timeline constraints, or request details..."
-                className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg p-3 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors font-sans text-xs resize-y"
-              />
-            </div>
+            </form>
+          </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3 px-4 bg-gradient-to-r from-[#f95721] to-[#ea580c] hover:from-[#ea580c] hover:to-[#c2410c] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Logging Dispatch Record...</span>
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  <span>Dispatch Incident Request</span>
-                </>
-              )}
-            </button>
-          </form>
         </div>
       </div>
     </div>

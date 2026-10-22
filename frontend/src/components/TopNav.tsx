@@ -5,7 +5,6 @@ import {
   ChevronDown,
   RefreshCw,
   LogOut,
-  UserPlus,
   Sun,
   Moon,
   Menu,
@@ -234,27 +233,16 @@ export const TopNav: React.FC<TopNavProps> = ({
 
                   <div className={`border-t mt-1 pt-1 space-y-0.5 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`}>
                     <button
-                      onClick={() => {
-                        setRoleDropdownOpen(false);
-                        setCurrentPage('register');
-                      }}
-                      className={`w-full text-left px-3 py-1.5 text-xs text-[#f95721] flex items-center gap-1.5 transition-colors font-medium cursor-pointer ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'
-                        }`}
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      <span>Register New Examiner</span>
-                    </button>
-
-                    <button
+                      type="button"
                       onClick={() => {
                         resetToInitialScenarios();
                         setRoleDropdownOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-1.5 text-xs text-[#f59e0b] flex items-center gap-1.5 transition-colors cursor-pointer ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'
+                      className={`w-full text-left px-3 py-2 text-xs text-[#f95721] hover:text-[#fb923c] flex items-center gap-2 transition-colors cursor-pointer font-medium ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'
                         }`}
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Clear Workspace Data</span>
+                      <RefreshCw className="w-3.5 h-3.5 text-[#f95721]" />
+                      <span>Reset Case / Mock Data</span>
                     </button>
 
                     <div className={`border-t my-1 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`} />
