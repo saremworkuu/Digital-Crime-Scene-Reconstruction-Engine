@@ -87,7 +87,7 @@ export const Contact: React.FC = () => {
             <div className="relative w-full h-[400px] sm:h-[460px] lg:h-[500px] rounded-2xl overflow-hidden bg-[#0d0c0c] border border-[#2b2523] flex items-center justify-center shadow-2xl">
               <img
                 src="/assets/contact_art.png"
-                alt="Person casting eagle shadow artwork"
+                alt="Chess knight casting rearing horse shadow artwork"
                 className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
                 loading="eager"
                 decoding="sync"
