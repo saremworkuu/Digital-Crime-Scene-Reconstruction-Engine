@@ -81,9 +81,9 @@ export const Home: React.FC = () => {
   ];
 
   const row2Images = [
-    '/assets/aistudio/image_5acf6412.png',
-    '/assets/aistudio/image_15f7ee5d.png',
-    '/assets/aistudio/image_6bc9e093.png'
+    '/assets/hacker_mask_1.png',
+    '/assets/hacker_mask_2.png',
+    '/assets/hacker_mask_3.png'
   ];
 
   return (
@@ -172,83 +172,89 @@ export const Home: React.FC = () => {
           {/* ROW 1: Cobalt Shadow Case (Smaller) + Command Center Artwork (Taller)  */}
           {/* ===================================================================== */}
           <div className="flex flex-col lg:flex-row items-center justify-center gap-8 sm:gap-10 lg:gap-14">
-            {cobaltCase && (
-              <div
-                className={`w-full max-w-lg lg:max-w-[480px] p-5 sm:p-6 rounded-2xl border transition-all duration-300 shadow-lg relative group ${isLight
-                  ? 'bg-white border-slate-200 hover:border-[#ea580c]/50 hover:shadow-xl'
-                  : 'bg-[#141211] border-[#2e2825] hover:border-[#f95721]/50 hover:shadow-[0_0_25px_rgba(249,87,33,0.12)]'
-                  }`}
-              >
-                <div className="space-y-2.5">
-                  {/* Header row: badge + ID (folder logo removed) */}
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-md bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold tracking-wider">
-                      {(cobaltCase.status || 'IN PROGRESS').toUpperCase()}
-                    </span>
-                    <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
-                      {cobaltCase.id}
-                    </span>
-                  </div>
-
-                  {/* Case Title */}
-                  <h3 className={`text-base font-bold tracking-tight leading-snug ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#ff8d60]'
-                    } transition-colors`}>
-                    {cobaltCase.name}
-                  </h3>
-
-                  {/* Case Description */}
-                  <p className={`text-xs leading-relaxed line-clamp-3 ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'
-                    }`}>
-                    {cobaltCase.description}
-                  </p>
+            {/* Box 1: Operation Cobalt Shadow */}
+            <div
+              onClick={() => {
+                if (!currentUser) {
+                  setAuthNotice('Please sign in to inspect all active case investigations.');
+                  setCurrentPage('login');
+                } else {
+                  setCurrentPage('cases');
+                }
+              }}
+              className={`w-full max-w-lg lg:max-w-[480px] p-5 sm:p-6 rounded-2xl border transition-all duration-300 shadow-lg relative group cursor-pointer ${isLight
+                ? 'bg-white border-slate-200 hover:border-[#ea580c]/50 hover:shadow-xl'
+                : 'bg-[#141211] border-[#2e2825] hover:border-[#f95721]/50 hover:shadow-[0_0_25px_rgba(249,87,33,0.12)]'
+                }`}
+            >
+              <div className="space-y-2.5">
+                {/* Header row: badge + ID */}
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-md bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold tracking-wider">
+                    {(cobaltCase?.status || 'IN PROGRESS').toUpperCase()}
+                  </span>
+                  <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                    {cobaltCase?.id || 'case-cobalt-shadow'}
+                  </span>
                 </div>
 
-                <div className="space-y-3.5 pt-4">
-                  {/* 3-Column Metrics with icons */}
-                  <div className={`grid grid-cols-3 gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-[#26201e]'
-                    }`}>
-                    <div>
-                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
-                        }`}>
-                        Evidence
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <FileText className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
-                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
-                          {cobaltEvidence.length || 4} files
-                        </strong>
-                      </div>
-                    </div>
+                {/* Case Title */}
+                <h3 className={`text-base font-bold tracking-tight leading-snug ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#ff8d60]'
+                  } transition-colors`}>
+                  {cobaltCase?.name || 'Operation Cobalt Shadow: DMZ Web Exploit to Domain Controller Compromise'}
+                </h3>
 
-                    <div>
-                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
-                        }`}>
-                        Events
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
-                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
-                          {cobaltEvents.length || 10}
-                        </strong>
-                      </div>
-                    </div>
+                {/* Case Description: Exactly as specified in 4th image */}
+                <p className={`text-xs leading-relaxed ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'}`}>
+                  Complex multi-stage advanced threat investigation. Initial perimeter breach via web shell on Linux DMZ server web01, local privilege escalation to root via sudo caching, harvesting of domain backup operator credentials, lateral movement into core...
+                </p>
+              </div>
 
-                    <div>
-                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
-                        }`}>
-                        Threats
-                      </span>
-                      <div className="flex items-center gap-1.5 text-red-500">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
-                        <strong className="text-xs font-semibold text-red-500">
-                          {cobaltDetections.length || 4} alerts
-                        </strong>
-                      </div>
+              <div className="space-y-3.5 pt-4">
+                {/* 3-Column Metrics with icons */}
+                <div className={`grid grid-cols-3 gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-[#26201e]'
+                  }`}>
+                  <div>
+                    <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                      }`}>
+                      Evidence
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <FileText className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                      <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                        {cobaltEvidence.length || 4} files
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                      }`}>
+                      Events
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                      <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                        {cobaltEvents.length || 10}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                      }`}>
+                      Threats
+                    </span>
+                    <div className="flex items-center gap-1.5 text-red-500">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                      <strong className="text-xs font-semibold text-red-500">
+                        {cobaltDetections.length || 4} alerts
+                      </strong>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
+            </div>
 
             {/* First Image Box: Smooth seamless motion transition */}
             <MotionImageSequence
@@ -261,91 +267,96 @@ export const Home: React.FC = () => {
           {/* ROW 2: Motion Image Sequence + DarkLock Case                         */}
           {/* ===================================================================== */}
           <div className="flex flex-col lg:flex-row items-center justify-center gap-8 sm:gap-10 lg:gap-14">
-            {/* Second Image Box: Smooth seamless motion transition */}
+            {/* Second Image Box: Smooth seamless motion transition with user's uploaded images */}
             <MotionImageSequence
               images={row2Images}
-              alt="fsociety adversary emblem"
+              alt="fsociety adversary and mask investigation"
               className="order-2 lg:order-1"
             />
 
-            {/* DarkLock Ransomware Outbreak Case Card (Smaller) */}
-            {darklockCase && (
-              <div
-                className={`order-1 lg:order-2 w-full max-w-lg lg:max-w-[480px] p-5 sm:p-6 rounded-2xl border transition-all duration-300 shadow-lg relative group ${isLight
-                  ? 'bg-white border-slate-200 hover:border-[#ea580c]/50 hover:shadow-xl'
-                  : 'bg-[#141211] border-[#2e2825] hover:border-[#f95721]/50 hover:shadow-[0_0_25px_rgba(249,87,33,0.12)]'
-                  }`}
-              >
-                <div className="space-y-2.5">
-                  {/* Header row: badge + ID (folder logo removed) */}
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-md bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold tracking-wider">
-                      {(darklockCase.status || 'OPEN').toUpperCase()}
-                    </span>
-                    <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
-                      {darklockCase.id}
-                    </span>
-                  </div>
-
-                  {/* Case Title */}
-                  <h3 className={`text-base font-bold tracking-tight leading-snug ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#ff8d60]'
-                    } transition-colors`}>
-                    {darklockCase.name}
-                  </h3>
-
-                  {/* Case Description */}
-                  <p className={`text-xs leading-relaxed line-clamp-3 ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'
-                    }`}>
-                    {darklockCase.description}
-                  </p>
+            {/* Box 2: DarkLock Ransomware Outbreak Case Card */}
+            <div
+              onClick={() => {
+                if (!currentUser) {
+                  setAuthNotice('Please sign in to inspect all active case investigations.');
+                  setCurrentPage('login');
+                } else {
+                  setCurrentPage('cases');
+                }
+              }}
+              className={`order-1 lg:order-2 w-full max-w-lg lg:max-w-[480px] p-5 sm:p-6 rounded-2xl border transition-all duration-300 shadow-lg relative group cursor-pointer ${isLight
+                ? 'bg-white border-slate-200 hover:border-[#ea580c]/50 hover:shadow-xl'
+                : 'bg-[#141211] border-[#2e2825] hover:border-[#f95721]/50 hover:shadow-[0_0_25px_rgba(249,87,33,0.12)]'
+                }`}
+            >
+              <div className="space-y-2.5">
+                {/* Header row: badge + ID */}
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-md bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold tracking-wider">
+                    {(darklockCase?.status || 'OPEN').toUpperCase()}
+                  </span>
+                  <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                    {darklockCase?.id || 'case-darklock'}
+                  </span>
                 </div>
 
-                <div className="space-y-3.5 pt-4">
-                  {/* 3-Column Metrics with icons */}
-                  <div className={`grid grid-cols-3 gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-[#26201e]'
-                    }`}>
-                    <div>
-                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
-                        }`}>
-                        Evidence
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <FileText className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
-                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
-                          {darklockEvidence.length || 2} files
-                        </strong>
-                      </div>
-                    </div>
+                {/* Case Title */}
+                <h3 className={`text-base font-bold tracking-tight leading-snug ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#ff8d60]'
+                  } transition-colors`}>
+                  {darklockCase?.name || 'DarkLock Ransomware Outbreak: Finance Workstation to NAS'}
+                </h3>
 
-                    <div>
-                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
-                        }`}>
-                        Events
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
-                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
-                          {darklockEvents.length || 4}
-                        </strong>
-                      </div>
-                    </div>
+                {/* Case Description: Exactly as specified in 5th image */}
+                <p className={`text-xs leading-relaxed ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'}`}>
+                  Rapid-onset cryptographic ransomware infection originating from malicious invoice attachment on workstation WS-FIN-04. Volume shadow copies purged via vssadmin and administrative SMB encryption observed targeting network storage FS01.
+                </p>
+              </div>
 
-                    <div>
-                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
-                        }`}>
-                        Threats
-                      </span>
-                      <div className="flex items-center gap-1.5 text-red-500">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
-                        <strong className="text-xs font-semibold text-red-500">
-                          {darklockDetections.length || 2} alerts
-                        </strong>
-                      </div>
+              <div className="space-y-3.5 pt-4">
+                {/* 3-Column Metrics with icons */}
+                <div className={`grid grid-cols-3 gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-[#26201e]'
+                  }`}>
+                  <div>
+                    <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                      }`}>
+                      Evidence
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <FileText className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                      <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                        {darklockEvidence.length || 2} files
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                      }`}>
+                      Events
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                      <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                        {darklockEvents.length || 4}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                      }`}>
+                      Threats
+                    </span>
+                    <div className="flex items-center gap-1.5 text-red-500">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                      <strong className="text-xs font-semibold text-red-500">
+                        {darklockDetections.length || 2} alerts
+                      </strong>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </section>
