@@ -37,11 +37,18 @@ def get_parser(
     if extension == ".access":
         return WebAccessParser()
 
+    if extension == ".xml":
+        try:
+            from app.parsers.windows_evtx import WindowsEVTXParser
+            return WindowsEVTXParser()
+        except Exception:
+            return TextFileParser()
+
     if extension == ".pcap":
         try:
             from app.parsers.pcap import PCAPParser
             return PCAPParser()
-        except ImportError:
+        except Exception:
             # Fallback to generic log/txt parser if scapy is not installed
             return LogFileParser()
 
@@ -49,14 +56,14 @@ def get_parser(
         try:
             from app.parsers.pcapng import PCAPNGParser
             return PCAPNGParser()
-        except ImportError:
+        except Exception:
             return LogFileParser()
 
     if extension == ".evtx":
         try:
             from app.parsers.windows_evtx import WindowsEVTXParser
             return WindowsEVTXParser()
-        except ImportError:
+        except Exception:
             # Fallback to JSON/CSV if exported, or text
             return GenericCSVJSONParser()
 

@@ -76,6 +76,23 @@ ALLOWED_EXTENSIONS = {
 UPLOAD_DIR = Path("uploads") / "evidence"
 
 
+def _normalize_parser_slug(pname: Optional[str]) -> Optional[str]:
+    if not pname:
+        return None
+    low = pname.lower()
+    if "pcap" in low:
+        return "pcap_summary"
+    if "evtx" in low:
+        return "windows_evtx"
+    if "auth" in low or "syslog" in low:
+        return "linux_auth"
+    if "web" in low or "access" in low or "nginx" in low or "apache" in low:
+        return "web_server"
+    if "csv" in low or "json" in low or "txt" in low or "generic" in low:
+        return "generic_json_csv"
+    return pname
+
+
 def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
     """Enriches Evidence with event counts and display labels matching frontend."""
     evt_count = db.execute(
@@ -105,6 +122,8 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
     except Exception:
         pass
 
+    norm_parser = _normalize_parser_slug(evidence.parser_used)
+
     return EvidenceResponse(
         id=evidence.id,
         case_id=evidence.case_id,
@@ -117,7 +136,7 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
         uploaded_at=evidence.uploaded_at,
         parsing_status=evidence.parsing_status,
         parsing_error=evidence.parsing_error,
-        parser_used=evidence.parser_used,
+        parser_used=norm_parser or evidence.parser_used,
         size_bytes=evidence.file_size,
         status=status_str,
         uploader_name=uploader_name,
@@ -129,7 +148,38 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
 
 def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = None):
     """Dispatches to designated parser or auto-selects from registry."""
-    if parser_type:
+    ext = Path(filename).suffix.lower()
+
+    # 1. Format-accurate dispatch based on unambiguous file extensions
+    if ext in (".pcap", ".pcapng"):
+        try:
+            from app.parsers.pcap import PCAPParser
+            return PCAPParser()
+        except Exception:
+            return LogFileParser()
+
+    if ext == ".evtx":
+        try:
+            from app.parsers.windows_evtx import WindowsEVTXParser
+            return WindowsEVTXParser()
+        except Exception:
+            return GenericCSVJSONParser()
+
+    if ext in (".csv", ".json"):
+        return GenericCSVJSONParser()
+
+    if ext == ".txt":
+        return TextFileParser()
+
+    if ext == ".xml":
+        try:
+            from app.parsers.windows_evtx import WindowsEVTXParser
+            return WindowsEVTXParser()
+        except Exception:
+            return TextFileParser()
+
+    # 2. Manual parser override for logs / ambiguous text files
+    if parser_type and parser_type.lower() != "auto":
         ptype = parser_type.lower()
         if ptype in ("linux_auth", "auth"):
             return AuthLogParser()
@@ -141,13 +191,13 @@ def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = 
             try:
                 from app.parsers.windows_evtx import WindowsEVTXParser
                 return WindowsEVTXParser()
-            except ImportError:
+            except Exception:
                 return GenericCSVJSONParser()
         if ptype in ("pcap_summary", "pcap"):
             try:
                 from app.parsers.pcap import PCAPParser
                 return PCAPParser()
-            except ImportError:
+            except Exception:
                 return LogFileParser()
 
     return get_parser(file_path, original_filename=filename)

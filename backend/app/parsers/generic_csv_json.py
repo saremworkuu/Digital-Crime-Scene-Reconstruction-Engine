@@ -39,6 +39,10 @@ class GenericCSVJSONParser(BaseParser):
             if first_char in {"{", "["}:
                 return self._parse_json(file_path)
 
+        if extension == ".txt":
+            from app.parsers.txt_parser import TextFileParser
+            return TextFileParser().parse(file_path, original_filename=original_filename)
+
         raise ValueError(f"Unsupported file extension or content: {extension}")
 
 

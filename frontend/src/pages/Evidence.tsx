@@ -40,7 +40,23 @@ import {
 
 } from 'lucide-react';
 
-
+const getEffectiveParser = (ev: EvidenceFile): string => {
+  if (ev.parser_used) {
+    const p = ev.parser_used.toLowerCase();
+    if (p.includes('pcap')) return 'pcap_summary';
+    if (p.includes('evtx') || p.includes('windows')) return 'windows_evtx';
+    if (p.includes('web') || p.includes('access') || p.includes('nginx') || p.includes('apache')) return 'web_server';
+    if (p.includes('auth') || p.includes('syslog') || p.includes('secure')) return 'linux_auth';
+    if (p.includes('csv') || p.includes('json') || p.includes('txt') || p.includes('generic')) return 'generic_json_csv';
+    return ev.parser_used;
+  }
+  const name = ev.filename.toLowerCase();
+  if (name.endsWith('.pcap') || name.endsWith('.pcapng')) return 'pcap_summary';
+  if (name.endsWith('.evtx')) return 'windows_evtx';
+  if (name.includes('nginx') || name.includes('access') || name.includes('web') || name.includes('apache')) return 'web_server';
+  if (name.includes('auth') || name.includes('syslog') || name.includes('secure')) return 'linux_auth';
+  return 'generic_json_csv';
+};
 
 export const Evidence: React.FC = () => {
 
@@ -511,7 +527,7 @@ export const Evidence: React.FC = () => {
 
                         <select
 
-                          value={ev.parser_used}
+                          value={getEffectiveParser(ev)}
 
                           onChange={(e) => reparseEvidence(ev.id, e.target.value as ParserType)}
 

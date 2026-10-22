@@ -805,16 +805,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Auto-detect parser if not explicitly overridden (FR-PARSE-9)
     let detectedParser: ParserType = parserTypeOverride || 'generic_json_csv';
     const lowerName = file.name.toLowerCase();
-    if (lowerName.includes('auth') || lowerName.includes('syslog') || lowerName.includes('secure')) {
+    if (lowerName.endsWith('.pcap') || lowerName.endsWith('.pcapng')) {
+      detectedParser = 'pcap_summary';
+    } else if (lowerName.endsWith('.evtx')) {
+      detectedParser = 'windows_evtx';
+    } else if (lowerName.endsWith('.csv') || lowerName.endsWith('.json') || lowerName.endsWith('.txt')) {
+      detectedParser = 'generic_json_csv';
+    } else if (lowerName.includes('auth') || lowerName.includes('syslog') || lowerName.includes('secure')) {
       detectedParser = 'linux_auth';
     } else if (lowerName.includes('nginx') || lowerName.includes('access') || lowerName.includes('apache') || lowerName.includes('web')) {
       detectedParser = 'web_server';
-    } else if (lowerName.includes('evtx') || lowerName.includes('sysmon') || lowerName.includes('security') || lowerName.endsWith('.evtx')) {
+    } else if (lowerName.includes('evtx') || lowerName.includes('sysmon') || lowerName.includes('security')) {
       detectedParser = 'windows_evtx';
-    } else if (lowerName.includes('pcap') || lowerName.endsWith('.pcap') || lowerName.endsWith('.pcapng')) {
+    } else if (lowerName.includes('pcap')) {
       detectedParser = 'pcap_summary';
-    } else if (lowerName.endsWith('.csv') || lowerName.endsWith('.json')) {
-      detectedParser = 'generic_json_csv';
     }
 
     // Compute cryptographic SHA-256 (FR-EVID-2)
@@ -952,25 +956,72 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Action: Reparse Evidence (FR-PARSE-9)
   const reparseEvidence = (evidenceId: string, parserType: ParserType) => {
     const evidence = evidenceList.find(e => e.id === evidenceId);
-    if (!evidence || !evidence.raw_sample) return;
+    if (!evidence) return;
 
-    const parseResult = parseEvidenceContent(evidence.raw_sample || '', parserType, evidence.case_id || evidence.caseId || '', evidence.id);
-    
-    setEvidenceList(prev => prev.map(e => e.id === evidenceId ? {
-      ...e,
-      parser_used: parserType,
-      status: 'Parsed',
-      event_count: parseResult.events.length,
-      parse_errors: parseResult.errors
-    } : e));
+    if (evidence.raw_sample) {
+      const parseResult = parseEvidenceContent(evidence.raw_sample || '', parserType, evidence.case_id || evidence.caseId || '', evidence.id);
+      
+      setEvidenceList(prev => prev.map(e => e.id === evidenceId ? {
+        ...e,
+        parser_used: parserType,
+        status: 'Parsed',
+        event_count: parseResult.events.length,
+        parse_errors: parseResult.errors
+      } : e));
 
-    // Update events
-    setEvents(prev => {
-      const filtered = prev.filter(evt => evt.evidence_id !== evidenceId);
-      return [...filtered, ...parseResult.events];
-    });
+      // Update events
+      if (parseResult.events.length > 0) {
+        setEvents(prev => {
+          const filtered = prev.filter(evt => evt.evidence_id !== evidenceId);
+          return [...filtered, ...parseResult.events];
+        });
+      }
+    }
 
     logAuditAction('EVIDENCE_PARSED', 'evidence', evidenceId, { parser: parserType });
+
+    // Also trigger backend reparse to update database records & normalized events
+    evidenceApi.reparse(evidenceId, parserType).then(res => {
+      if (res?.data) {
+        setEvidenceList(prev => prev.map(e => e.id === evidenceId ? {
+          ...e,
+          parser_used: res.data!.parser_used || parserType,
+          status: res.data!.status || 'Parsed',
+          event_count: res.data!.event_count ?? e.event_count
+        } : e));
+      }
+      const targetCaseId = evidence.case_id || evidence.caseId || effectiveCaseId;
+      if (targetCaseId) {
+        eventsApi.listByCase(targetCaseId).then(evts => {
+          if (evts?.data && Array.isArray(evts.data) && evts.data.length > 0) {
+            const loadedEvents: NormalizedEvent[] = evts.data.map((be: any) => ({
+              id: String(be.id),
+              case_id: String(be.case_id || targetCaseId),
+              evidence_id: String(be.evidence_id || ''),
+              timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              source_type: be.source_type || be.source || 'syslog',
+              host: be.host || be.details?.host || 'SRV-FILE-01',
+              user: be.user || be.details?.user || 'unknown',
+              action: be.action || be.details?.action || be.event_type || 'Event',
+              outcome: be.outcome || be.details?.outcome || 'unknown',
+              severity: be.severity || be.details?.severity || 'medium',
+              raw: be.raw || be.details?.raw || '',
+              src_ip: be.src_ip || be.details?.source_ip,
+              dst_ip: be.dst_ip || be.details?.destination_ip,
+              src_port: be.src_port || be.details?.source_port,
+              dst_port: be.dst_port || be.details?.destination_port,
+              protocol: be.protocol || be.details?.protocol,
+              process: be.process || be.details?.process,
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique,
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic,
+              is_attack_path: Boolean(be.is_attack_path),
+              metadata: be.details || {}
+            }));
+            setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== targetCaseId)]);
+          }
+        }).catch(() => {});
+      }
+    }).catch(err => console.warn('Backend reparse notice:', err));
   };
 
   // Action: Delete Evidence (FR-EVID-9)
