@@ -1,31 +1,90 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../store';
 import {
-  ChevronRight,
-  FolderLock,
-  ArrowRight
+  ArrowRight,
+  Shield,
+  FileText,
+  Calendar,
+  AlertTriangle
 } from 'lucide-react';
 import { ThreatHeroGlobe } from '../components/ThreatHeroGlobe';
 
-import { INITIAL_SCENARIOS } from '../sample-data/scenarios';
+interface MotionImageSequenceProps {
+  images: string[];
+  alt: string;
+  className?: string;
+}
+
+const MotionImageSequence: React.FC<MotionImageSequenceProps> = ({ images, alt, className = '' }) => {
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    if (images.length <= 1) return;
+    const timer = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % images.length);
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [images.length]);
+
+  return (
+    <div className={`relative w-full max-w-[340px] sm:max-w-[360px] h-[460px] sm:h-[500px] lg:h-[520px] rounded-2xl overflow-hidden shrink-0 shadow-lg ${className}`}>
+      {images.map((src, index) => {
+        const isActive = index === currentIndex;
+        return (
+          <img
+            key={src}
+            src={src}
+            alt={`${alt} ${index + 1}`}
+            className={`absolute inset-0 w-full h-full object-cover rounded-2xl transition-all duration-1000 ease-in-out ${isActive
+              ? 'opacity-100 scale-100 z-10'
+              : 'opacity-0 scale-105 z-0 pointer-events-none'
+              }`}
+            loading="lazy"
+          />
+        );
+      })}
+    </div>
+  );
+};
 
 export const Home: React.FC = () => {
   const {
     currentUser,
     setCurrentPage,
-    setActiveCaseId,
     cases,
     evidenceList,
     events,
     detections,
-    setAuthNotice
+    setAuthNotice,
+    theme
   } = useApp();
 
-  // Guarantee 2 mock investigation cases are displayed on Home page as requested
-  const mockScenarios = INITIAL_SCENARIOS.slice(0, 2);
-  const displayCases = mockScenarios.length > 0
-    ? mockScenarios.map((s) => cases.find((c) => c.id === s.caseData.id) || s.caseData)
-    : cases.slice(0, 2);
+  const isLight = theme === 'light';
+
+  // Retrieve Cobalt Shadow and DarkLock cases with fallbacks
+  const cobaltCase = cases.find((c) => c.id === 'case-cobalt-shadow') || cases[0];
+  const darklockCase = cases.find((c) => c.id === 'case-darklock') || cases[1] || cases[0];
+
+  const cobaltEvidence = evidenceList.filter((e) => e.case_id === cobaltCase?.id);
+  const cobaltEvents = events.filter((e) => e.case_id === cobaltCase?.id);
+  const cobaltDetections = detections.filter((d) => d.case_id === cobaltCase?.id);
+
+  const darklockEvidence = evidenceList.filter((e) => e.case_id === darklockCase?.id);
+  const darklockEvents = events.filter((e) => e.case_id === darklockCase?.id);
+  const darklockDetections = detections.filter((d) => d.case_id === darklockCase?.id);
+
+  // Sequences of images that rotate with smooth seamless crossfade motion
+  const row1Images = [
+    '/assets/aistudio/image_2400764a.png',
+    '/assets/aistudio/image_3ca514a7.png',
+    '/assets/aistudio/image_967ec523.png'
+  ];
+
+  const row2Images = [
+    '/assets/aistudio/image_5acf6412.png',
+    '/assets/aistudio/image_15f7ee5d.png',
+    '/assets/aistudio/image_6bc9e093.png'
+  ];
 
   return (
     <div className="space-y-12 pb-16">
@@ -33,7 +92,8 @@ export const Home: React.FC = () => {
       {/* HERO HEADLINE & 1-LINE DESCRIPTION (With Kinetic Floating Text Motion)    */}
       {/* ========================================================================= */}
       <div className="pt-4 sm:pt-6 pb-2 text-center max-w-4xl mx-auto px-4 space-y-3 animate-kinetic-container">
-        <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-[32px] font-extrabold tracking-tight text-[#fafaf9] leading-snug">
+        <h1 className={`text-xl sm:text-2xl md:text-3xl lg:text-[32px] font-extrabold tracking-tight leading-snug ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'
+          }`}>
           <span className="inline-block animate-kinetic-word" style={{ animationDelay: '0s' }}>
             Reconstruct
           </span>{' '}
@@ -46,7 +106,7 @@ export const Home: React.FC = () => {
           <span className="inline-block animate-kinetic-word" style={{ animationDelay: '0.45s' }}>
             Scenes
           </span>{' '}
-          <span className="text-[#a8a29e] font-semibold inline-block animate-kinetic-word" style={{ animationDelay: '0.6s' }}>
+          <span className={`${isLight ? 'text-slate-500' : 'text-[#a8a29e]'} font-semibold inline-block animate-kinetic-word`} style={{ animationDelay: '0.6s' }}>
             with
           </span>{' '}
           <span
@@ -58,7 +118,8 @@ export const Home: React.FC = () => {
         </h1>
 
         {/* 1-Sentence Description of what the website does below the headline */}
-        <p className="text-sm sm:text-base text-[#a8a29e] font-sans max-w-2xl mx-auto leading-relaxed animate-subtle-pulse">
+        <p className={`text-sm sm:text-base font-sans max-w-2xl mx-auto leading-relaxed animate-subtle-pulse ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'
+          }`}>
           An intelligent digital forensics platform that ingests multi-source evidentiary logs, correlates forensic artifacts, and reconstructs complete cyber incident timelines.
         </p>
       </div>
@@ -69,13 +130,21 @@ export const Home: React.FC = () => {
       <ThreatHeroGlobe />
 
       {/* ========================================================================= */}
-      {/* ACTIVE CASES DIRECTORY PREVIEW (2 Mock Investigations)                     */}
+      {/* CURRENT INVESTIGATIONS (Visual 2x2 Staggered Case & Cyber Imagery Grid)     */}
       {/* ========================================================================= */}
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-xl font-bold tracking-tight text-[#fafaf9]">
-            Current Investigations
-          </h2>
+      <section className="space-y-6 max-w-7xl mx-auto">
+        {/* Section Header */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1 rounded-lg bg-[#f95721]/10 text-[#f95721]">
+              <Shield className="w-5 h-5" />
+            </div>
+            <h2 className={`text-xl sm:text-2xl font-bold tracking-tight ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'
+              }`}>
+              Current Investigations
+            </h2>
+          </div>
+
           <button
             type="button"
             onClick={() => {
@@ -86,87 +155,201 @@ export const Home: React.FC = () => {
                 setCurrentPage('cases');
               }
             }}
-            className="text-xs font-semibold text-[#f95721] hover:text-[#fb923c] flex items-center gap-1 transition-colors cursor-pointer"
+            className="text-sm font-semibold text-[#f95721] hover:text-[#fb923c] flex items-center gap-1.5 transition-colors cursor-pointer group"
           >
             <span>View All Cases</span>
-            <ChevronRight className="w-4 h-4" />
+            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {displayCases.map((c) => {
-            const scenario = INITIAL_SCENARIOS.find((s) => s.caseData.id === c.id);
-            const caseEvidence = evidenceList.filter((e) => e.case_id === c.id);
-            const caseEvents = events.filter((e) => e.case_id === c.id);
-            const caseDetections = detections.filter((d) => d.case_id === c.id);
+        {/* 2x2 Staggered Rows with visible height difference (Images taller, Case cards smaller, generous gap):
+            Row 1: Cobalt Shadow Case (Left - smaller) + Hacker Command Center Image (Right - tall 520px, decreased width)
+            Row 2: DarkLock Ransomware Image (Left - tall 520px, decreased width) + DarkLock Case (Right - smaller)
+        */}
+        <div className="space-y-10 sm:space-y-12">
 
-            const evidenceCount = caseEvidence.length || scenario?.evidenceFiles.length || c.evidence_count || 0;
-            const eventCount = caseEvents.length || scenario?.events.length || c.event_count || 0;
-            const threatCount = caseDetections.length || scenario?.detections.length || c.detection_count || 0;
-
-            return (
+          {/* ===================================================================== */}
+          {/* ROW 1: Cobalt Shadow Case (Smaller) + Command Center Artwork (Taller)  */}
+          {/* ===================================================================== */}
+          <div className="flex flex-col lg:flex-row items-center justify-center gap-8 sm:gap-10 lg:gap-14">
+            {cobaltCase && (
               <div
-                key={c.id}
-                className="p-5 rounded-2xl bg-[#141211] border border-[#2e2825] hover:border-[#f95721]/60 transition-all space-y-4 shadow-lg group"
+                className={`w-full max-w-lg lg:max-w-[480px] p-5 sm:p-6 rounded-2xl border transition-all duration-300 shadow-lg relative group ${isLight
+                  ? 'bg-white border-slate-200 hover:border-[#ea580c]/50 hover:shadow-xl'
+                  : 'bg-[#141211] border-[#2e2825] hover:border-[#f95721]/50 hover:shadow-[0_0_25px_rgba(249,87,33,0.12)]'
+                  }`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold">
-                        {c.status}
+                <div className="space-y-2.5">
+                  {/* Header row: badge + ID (folder logo removed) */}
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-md bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold tracking-wider">
+                      {(cobaltCase.status || 'IN PROGRESS').toUpperCase()}
+                    </span>
+                    <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                      {cobaltCase.id}
+                    </span>
+                  </div>
+
+                  {/* Case Title */}
+                  <h3 className={`text-base font-bold tracking-tight leading-snug ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#ff8d60]'
+                    } transition-colors`}>
+                    {cobaltCase.name}
+                  </h3>
+
+                  {/* Case Description */}
+                  <p className={`text-xs leading-relaxed line-clamp-3 ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'
+                    }`}>
+                    {cobaltCase.description}
+                  </p>
+                </div>
+
+                <div className="space-y-3.5 pt-4">
+                  {/* 3-Column Metrics with icons */}
+                  <div className={`grid grid-cols-3 gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-[#26201e]'
+                    }`}>
+                    <div>
+                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                        }`}>
+                        Evidence
                       </span>
-                      <span className="text-[11px] font-mono text-[#a8a29e]">{c.id}</span>
+                      <div className="flex items-center gap-1.5">
+                        <FileText className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                          {cobaltEvidence.length || 4} files
+                        </strong>
+                      </div>
                     </div>
-                    <h3 className="text-base font-bold text-[#fafaf9] group-hover:text-[#f95721] transition-colors">{c.name}</h3>
-                  </div>
-                  <FolderLock className="w-5 h-5 text-[#f95721] shrink-0" />
-                </div>
 
-                <p className="text-xs text-[#a8a29e] line-clamp-2 leading-relaxed">
-                  {c.description}
-                </p>
+                    <div>
+                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                        }`}>
+                        Events
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                          {cobaltEvents.length || 10}
+                        </strong>
+                      </div>
+                    </div>
 
-                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#26201e] text-[11px] font-mono text-[#a8a29e]">
-                  <div>
-                    <span className="text-[#78716c] block text-[10px]">Evidence</span>
-                    <strong className="text-[#fafaf9]">{evidenceCount} files</strong>
+                    <div>
+                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                        }`}>
+                        Threats
+                      </span>
+                      <div className="flex items-center gap-1.5 text-red-500">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                        <strong className="text-xs font-semibold text-red-500">
+                          {cobaltDetections.length || 4} alerts
+                        </strong>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-[#78716c] block text-[10px]">Events</span>
-                    <strong className="text-[#fafaf9]">{eventCount}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[#78716c] block text-[10px]">Threats</span>
-                    <strong className="text-red-400">{threatCount} alerts</strong>
-                  </div>
-                </div>
-
-                <div className="pt-1 flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-[#78716c]">
-                    Lead: {c.owner_name || c.lead_investigator || 'Lead Forensics'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!currentUser) {
-                        setAuthNotice(`Please sign in to inspect case "${c.name}".`);
-                        setCurrentPage('login');
-                      } else {
-                        setActiveCaseId(c.id);
-                        setCurrentPage('case_detail');
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-[#22130c] hover:bg-[#30160d] text-[#ff8d60] border border-[#ea580c]/40 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                  >
-                    <span>Open Case</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
                 </div>
               </div>
-            );
-          })}
+            )}
+
+            {/* First Image Box: Smooth seamless motion transition */}
+            <MotionImageSequence
+              images={row1Images}
+              alt="Digital forensics operative"
+            />
+          </div>
+
+          {/* ===================================================================== */}
+          {/* ROW 2: Motion Image Sequence + DarkLock Case                         */}
+          {/* ===================================================================== */}
+          <div className="flex flex-col lg:flex-row items-center justify-center gap-8 sm:gap-10 lg:gap-14">
+            {/* Second Image Box: Smooth seamless motion transition */}
+            <MotionImageSequence
+              images={row2Images}
+              alt="fsociety adversary emblem"
+              className="order-2 lg:order-1"
+            />
+
+            {/* DarkLock Ransomware Outbreak Case Card (Smaller) */}
+            {darklockCase && (
+              <div
+                className={`order-1 lg:order-2 w-full max-w-lg lg:max-w-[480px] p-5 sm:p-6 rounded-2xl border transition-all duration-300 shadow-lg relative group ${isLight
+                  ? 'bg-white border-slate-200 hover:border-[#ea580c]/50 hover:shadow-xl'
+                  : 'bg-[#141211] border-[#2e2825] hover:border-[#f95721]/50 hover:shadow-[0_0_25px_rgba(249,87,33,0.12)]'
+                  }`}
+              >
+                <div className="space-y-2.5">
+                  {/* Header row: badge + ID (folder logo removed) */}
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-md bg-[#27130b] text-[#ff8d60] border border-[#ea580c]/40 font-bold tracking-wider">
+                      {(darklockCase.status || 'OPEN').toUpperCase()}
+                    </span>
+                    <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                      {darklockCase.id}
+                    </span>
+                  </div>
+
+                  {/* Case Title */}
+                  <h3 className={`text-base font-bold tracking-tight leading-snug ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#ff8d60]'
+                    } transition-colors`}>
+                    {darklockCase.name}
+                  </h3>
+
+                  {/* Case Description */}
+                  <p className={`text-xs leading-relaxed line-clamp-3 ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'
+                    }`}>
+                    {darklockCase.description}
+                  </p>
+                </div>
+
+                <div className="space-y-3.5 pt-4">
+                  {/* 3-Column Metrics with icons */}
+                  <div className={`grid grid-cols-3 gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-[#26201e]'
+                    }`}>
+                    <div>
+                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                        }`}>
+                        Evidence
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <FileText className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                          {darklockEvidence.length || 2} files
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                        }`}>
+                        Events
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className={`w-3.5 h-3.5 ${isLight ? 'text-slate-600' : 'text-[#fafaf9]'}`} />
+                        <strong className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                          {darklockEvents.length || 4}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className={`block text-[10px] uppercase tracking-wider font-medium mb-0.5 ${isLight ? 'text-slate-500' : 'text-[#78716c]'
+                        }`}>
+                        Threats
+                      </span>
+                      <div className="flex items-center gap-1.5 text-red-500">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                        <strong className="text-xs font-semibold text-red-500">
+                          {darklockDetections.length || 2} alerts
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
     </div>
   );
 };
+
