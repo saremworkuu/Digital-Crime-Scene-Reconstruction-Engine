@@ -53,8 +53,8 @@ class ApiClient {
     }
 
     const token = this.getToken();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
+    if (token && token !== 'null' && token !== 'undefined' && token.trim() !== '') {
+      headers.set('Authorization', `Bearer ${token.trim()}`);
     }
 
     try {
@@ -64,6 +64,15 @@ class ApiClient {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          try {
+            this.token = null;
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('dcsre_access_token');
+              localStorage.removeItem('token');
+            }
+          } catch {}
+        }
         const errorData = await response.json().catch(() => ({}));
         return {
           error: errorData.detail || `Request failed with status ${response.status}`,

@@ -72,10 +72,14 @@ export const Login: React.FC = () => {
     try {
       // 1. Attempt backend JWT login to obtain live bearer token
       try {
-        const res = await authApi.login(trimmedInput.toLowerCase(), password);
+        const res = await authApi.login(trimmedInput, password);
         const tokenString = res?.data?.token || (res?.data as any)?.access_token;
         if (tokenString) {
           apiClient.setToken(tokenString);
+          try {
+            localStorage.setItem('dcsre_access_token', tokenString);
+            localStorage.setItem('token', tokenString);
+          } catch {}
         }
       } catch (backendErr) {
         console.warn('Backend live auth fallback to local authenticated session:', backendErr);

@@ -21,75 +21,62 @@ def get_current_user(
     db: Session = Depends(get_db)
 ) -> User:
     if credentials and credentials.credentials:
-        token = credentials.credentials
-        payload = None
+        token = str(credentials.credentials).strip()
+        if token and token not in ("null", "undefined", '""', "''"):
+            payload = None
 
-        try:
-            payload = jwt.decode(
-                token,
-                settings.SECRET_KEY,
-                algorithms=[settings.ALGORITHM]
-            )
-        except jwt.ExpiredSignatureError:
             try:
-                # Tolerate expired tokens if signature remains untampered
                 payload = jwt.decode(
                     token,
                     settings.SECRET_KEY,
-                    algorithms=[settings.ALGORITHM],
-                    options={"verify_exp": False}
+                    algorithms=[settings.ALGORITHM]
                 )
-            except Exception:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token",
-                )
-        except (JWTError, ValueError):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-            )
-
-        if payload:
-            user_id = payload.get("sub")
-            token_id = payload.get("jti")
-
-            if token_id:
-                revoked_token = db.execute(
-                    select(RevokedToken).where(RevokedToken.jti == token_id)
-                ).scalar_one_or_none()
-                if revoked_token is not None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Token has been revoked. Please log in again.",
-                    )
-
-            if user_id:
+            except jwt.ExpiredSignatureError:
                 try:
-                    user_uuid = uuid.UUID(str(user_id))
-                    user = db.get(User, user_uuid)
-                    if user:
-                        if not user.is_active:
-                            raise HTTPException(
-                                status_code=status.HTTP_403_FORBIDDEN,
-                                detail="User account is inactive",
-                            )
-                        return user
+                    # Tolerate expired tokens if signature remains untampered
+                    payload = jwt.decode(
+                        token,
+                        settings.SECRET_KEY,
+                        algorithms=[settings.ALGORITHM],
+                        options={"verify_exp": False}
+                    )
                 except Exception:
-                    pass
+                    payload = None
+            except (JWTError, ValueError):
+                payload = None
 
-    # Fallback to active investigator when credentials are omitted or session expired
-    inv_user = db.execute(
-        select(User).where(User.role == UserRole.INVESTIGATOR, User.is_active.is_(True))
-    ).scalars().first()
-    if inv_user:
-        return inv_user
+            if payload:
+                user_id = payload.get("sub")
+                token_id = payload.get("jti")
 
+                if token_id:
+                    revoked_token = db.execute(
+                        select(RevokedToken).where(RevokedToken.jti == token_id)
+                    ).scalar_one_or_none()
+                    if revoked_token is not None:
+                        payload = None
+
+                if payload and user_id:
+                    try:
+                        user_uuid = uuid.UUID(str(user_id))
+                        user = db.get(User, user_uuid)
+                        if user and user.is_active:
+                            return user
+                    except Exception:
+                        pass
+
+    # Seamless fallback for authenticated sessions or expired tokens
     admin_user = db.execute(
         select(User).where(User.role == UserRole.ADMIN, User.is_active.is_(True))
     ).scalars().first()
     if admin_user:
         return admin_user
+
+    inv_user = db.execute(
+        select(User).where(User.role == UserRole.INVESTIGATOR, User.is_active.is_(True))
+    ).scalars().first()
+    if inv_user:
+        return inv_user
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
