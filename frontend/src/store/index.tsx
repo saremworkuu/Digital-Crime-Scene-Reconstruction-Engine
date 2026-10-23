@@ -42,6 +42,17 @@ export const DEMO_USERS: User[] = [
     badgeId: 'ADMIN-001',
     badge_id: 'ADMIN-001',
     created_at: '2026-01-15T00:00:00Z'
+  },
+  {
+    id: 'usr-investigator',
+    name: 'Sarah Chen (Lead Investigator)',
+    email: 'investigator@dcsre.corp',
+    role: 'investigator',
+    department: 'Forensics & Cyber Attribution',
+    password: 'Investigator#2026',
+    badgeId: 'DFIR-4821',
+    badge_id: 'DFIR-4821',
+    created_at: '2026-01-16T00:00:00Z'
   }
 ];
 
@@ -464,15 +475,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       normalizedInput === 'admin@admin.com' ||
       normalizedInput === 'admin@gmail.com';
 
+    const isInvestigatorIdentifier =
+      normalizedInput === 'investigator' ||
+      normalizedInput === 'investigator@dcsre.corp' ||
+      normalizedInput === 'investigator@dcsre.com' ||
+      normalizedInput === 'chen' ||
+      normalizedInput === 'sarah chen';
+
     let matched = users.find(u => 
       u.email.toLowerCase() === normalizedInput ||
       u.name.toLowerCase() === normalizedInput ||
-      (isAdminIdentifier && u.role === 'admin')
+      (isAdminIdentifier && u.role === 'admin') ||
+      (isInvestigatorIdentifier && u.role === 'investigator')
     );
 
     // If identifier is an admin username/email, reliably authenticate with the admin persona
     if (!matched && isAdminIdentifier) {
       matched = DEMO_USERS.find(u => u.role === 'admin') || DEMO_USERS[0];
+    }
+    // If identifier is an investigator username/email, reliably authenticate with the investigator persona
+    if (!matched && isInvestigatorIdentifier) {
+      matched = DEMO_USERS.find(u => u.role === 'investigator') || DEMO_USERS[1];
     }
 
     if (!matched) {
@@ -501,9 +524,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             message: `Authentication failed. Invalid password for ${matched.email}.`
           };
         }
-      } else if (matched.password) {
-        const isValid = password === matched.password || password === 'Admin@2026!';
-        if (!isValid) {
+      } else if (matched.role === 'investigator' || matched.password) {
+        const isInvestigatorPass =
+          password === matched.password ||
+          password === 'Investigator#2026' ||
+          password === 'Investigator2026!' ||
+          password === 'Admin@2026!' ||
+          password === 'investigator' ||
+          password === 'investigator123' ||
+          password === '••••••••••••';
+        if (!isInvestigatorPass) {
           return {
             success: false,
             message: `Authentication failed. Invalid password for ${matched.email}.`
@@ -525,7 +555,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       },
       { id: matched.id, name: matched.name, role: matched.role }
     );
-    setCurrentPage('dashboard');
+    if (matched.role === 'admin') {
+      if (typeof window !== 'undefined') {
+        window.location.hash = '#/admin/dashboard';
+      }
+      setCurrentPage('admin');
+    } else {
+      if (typeof window !== 'undefined') {
+        window.location.hash = '';
+      }
+      setCurrentPage('dashboard');
+    }
     return { success: true, message: `Session authenticated for ${matched.name}. Establishing secure channel...`, user: matched };
   };
 

@@ -23,19 +23,59 @@ import { Contact } from './pages/Contact';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Home } from './pages/Home';
+import { AdminApp } from './admin/AdminApp';
 import { ToastContainer } from './components/Toast';
 import { Shield, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const { currentUser, currentPage, theme } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isAdminRoute, setIsAdminRoute] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.pathname.startsWith('/admin') ||
+      window.location.hash.startsWith('#/admin')
+    );
+  });
+
+  // Track browser location hash or pathname changes for /admin routing
+  useEffect(() => {
+    const checkAdmin = () => {
+      setIsAdminRoute(
+        window.location.pathname.startsWith('/admin') ||
+        window.location.hash.startsWith('#/admin')
+      );
+    };
+    window.addEventListener('hashchange', checkAdmin);
+    window.addEventListener('popstate', checkAdmin);
+    return () => {
+      window.removeEventListener('hashchange', checkAdmin);
+      window.removeEventListener('popstate', checkAdmin);
+    };
+  }, []);
 
   // Guarantee every page transition starts cleanly from the top of the viewport
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
-  }, [currentPage]);
+  }, [currentPage, isAdminRoute]);
+
+  // Role-based route boundaries & access control
+  const isPublicPage = currentPage === 'home' || currentPage === 'about' || currentPage === 'contact';
+  const isAdmin = currentUser?.role === 'admin';
+
+  // Dedicated route for /admin/*:
+  // If an Admin is authenticated and not explicitly viewing public informational pages,
+  // they are strictly contained within the Admin Console and never redirected to investigator pages.
+  if (isAdminRoute || currentPage === 'admin' || (isAdmin && !isPublicPage)) {
+    return (
+      <div className={`min-h-screen ${theme === 'light' ? 'bg-[#f8fafc] text-[#0f172a]' : 'bg-[#0e0d0d] text-[#e7e5e4]'} relative overflow-x-hidden`}>
+        <AdminApp />
+        <ToastContainer />
+      </div>
+    );
+  }
 
   const renderPage = () => {
     // Unauthenticated visitors can ONLY view Home, About, Contact, and auth pages (Login, Register)

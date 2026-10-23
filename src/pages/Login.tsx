@@ -91,8 +91,18 @@ export const Login: React.FC = () => {
           : `Signed in as ${result.user?.name || 'Examiner'}!`;
         toast.success(welcome);
         setTimeout(() => {
-          setCurrentPage('dashboard');
-        }, 600);
+          if (result.user?.role === 'admin') {
+            if (typeof window !== 'undefined') {
+              window.location.hash = '#/admin/dashboard';
+            }
+            setCurrentPage('admin');
+          } else {
+            if (typeof window !== 'undefined') {
+              window.location.hash = '';
+            }
+            setCurrentPage('dashboard');
+          }
+        }, 500);
       } else {
         setGeneralError(result.message);
         toast.error(result.message || 'Authentication failed. Please check credentials.');

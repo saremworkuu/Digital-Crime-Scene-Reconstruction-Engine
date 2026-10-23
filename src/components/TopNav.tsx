@@ -113,16 +113,41 @@ export const TopNav: React.FC<TopNavProps> = ({
                 Contact
               </button>
 
-              <button
-                type="button"
-                onClick={() => setCurrentPage(currentUser.role === 'admin' ? 'dashboard' : 'cases')}
-                className={`text-sm font-medium transition-colors cursor-pointer ${currentPage !== 'home' && currentPage !== 'about' && currentPage !== 'contact' && currentPage !== 'login' && currentPage !== 'register'
-                    ? (isLight ? 'text-[#ea580c] font-semibold' : 'text-[#f95721] font-semibold')
-                    : (isLight ? 'text-slate-800 hover:text-[#ea580c]' : 'text-[#e7e5e4] hover:text-[#f95721]')
+              {currentUser.role === 'admin' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      window.location.hash = '#/admin/dashboard';
+                    }
+                    setCurrentPage('admin');
+                  }}
+                  className={`text-sm font-medium transition-colors cursor-pointer ${
+                    currentPage === 'admin' || (typeof window !== 'undefined' && window.location.hash.startsWith('#/admin'))
+                      ? (isLight ? 'text-[#ea580c] font-semibold' : 'text-[#f95721] font-semibold')
+                      : (isLight ? 'text-slate-800 hover:text-[#ea580c]' : 'text-[#e7e5e4] hover:text-[#f95721]')
                   }`}
-              >
-                Workspace
-              </button>
+                >
+                  Admin Dashboard
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      window.location.hash = '';
+                    }
+                    setCurrentPage('dashboard');
+                  }}
+                  className={`text-sm font-medium transition-colors cursor-pointer ${
+                    currentPage !== 'home' && currentPage !== 'about' && currentPage !== 'contact' && currentPage !== 'login' && currentPage !== 'register'
+                      ? (isLight ? 'text-[#ea580c] font-semibold' : 'text-[#f95721] font-semibold')
+                      : (isLight ? 'text-slate-800 hover:text-[#ea580c]' : 'text-[#e7e5e4] hover:text-[#f95721]')
+                  }`}
+                >
+                  Investigator Dashboard
+                </button>
+              )}
             </div>
           ) : (
             /* Public Pre-login Actions: Clean text links */
@@ -231,18 +256,34 @@ export const TopNav: React.FC<TopNavProps> = ({
                   </div>
 
                   <div className={`border-t mt-1 pt-1 space-y-0.5 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        resetToInitialScenarios();
-                        setRoleDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 text-xs text-[#f95721] hover:text-[#fb923c] flex items-center gap-2 transition-colors cursor-pointer font-medium ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'
-                        }`}
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 text-[#f95721]" />
-                      <span>Reset Case</span>
-                    </button>
+                    {currentUser?.role === 'admin' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== 'undefined') {
+                            window.location.hash = '#/admin/dashboard';
+                          }
+                          setCurrentPage('admin');
+                          setRoleDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs text-[#f95721] hover:text-[#fb923c] flex items-center gap-2 transition-colors cursor-pointer font-medium ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'}`}
+                      >
+                        <Shield className="w-3.5 h-3.5 text-[#f95721]" />
+                        <span>Admin Dashboard</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetToInitialScenarios();
+                          setRoleDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs text-[#f95721] hover:text-[#fb923c] flex items-center gap-2 transition-colors cursor-pointer font-medium ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'}`}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-[#f95721]" />
+                        <span>Reset Case</span>
+                      </button>
+                    )}
 
                     <div className={`border-t my-1 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`} />
 
