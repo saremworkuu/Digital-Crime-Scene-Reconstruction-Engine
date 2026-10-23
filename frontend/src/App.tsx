@@ -96,6 +96,7 @@ const MainLayout: React.FC = () => {
   };
 
   const isAuthPage = !currentUser || currentPage === 'home' || currentPage === 'about' || currentPage === 'contact' || currentPage === 'login' || currentPage === 'register';
+  const isSplitScreenPage = currentPage === 'login' || currentPage === 'register' || currentPage === 'contact';
 
   return (
     <div className={`min-h-screen pt-[61px] ${theme === 'light' ? 'bg-[#f8fafc] text-[#0f172a]' : 'bg-[#0e0d0d] text-[#e7e5e4]'} flex flex-col font-sans selection:bg-[#f95721]/30 selection:text-[#ff936b] relative overflow-x-hidden transition-colors duration-200`}>
@@ -148,7 +149,7 @@ const MainLayout: React.FC = () => {
         )}
 
         {/* Main Content Area */}
-        <main className="flex-1 min-w-0 max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full">
+        <main className={`flex-1 min-w-0 w-full ${isSplitScreenPage ? 'p-0 max-w-none' : 'max-w-7xl mx-auto px-4 sm:px-6 py-6'}`}>
           {renderPage()}
         </main>
       </div>

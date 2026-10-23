@@ -90,7 +90,7 @@ body::-webkit-scrollbar {
 
 .animate-slide-circle-rtl,
 .animate-slide-rtl {
-  animation: slideCircleRTL 38s linear infinite;
+  animation: slideCircleRTL 30s linear infinite;
   will-change: transform;
 }
 
@@ -101,7 +101,7 @@ body::-webkit-scrollbar {
 
 .animate-slide-circle-ltr,
 .animate-slide-ltr {
-  animation: slideCircleLTR 38s linear infinite;
+  animation: slideCircleLTR 30s linear infinite;
   will-change: transform;
 }
 

@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { useApp } from '../store';
 import {
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Send,
+  Loader2
 } from 'lucide-react';
 import { toast } from '../components/Toast';
 
@@ -14,44 +16,113 @@ export const Contact: React.FC = () => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [organization, setOrganization] = useState('');
+  const [phone, setPhone] = useState('');
   const [message, setMessage] = useState('');
 
-  // States
+  // Field-specific validation errors
+  const [firstNameError, setFirstNameError] = useState<string | null>(null);
+  const [lastNameError, setLastNameError] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [messageError, setMessageError] = useState<string | null>(null);
+
+  // General state
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Field validation helpers
+  const validateFirstName = (val: string) => {
+    setFirstName(val);
+    if (!val.trim()) {
+      setFirstNameError('First name is required');
+    } else {
+      setFirstNameError(null);
+    }
+  };
+
+  const validateLastName = (val: string) => {
+    setLastName(val);
+    if (!val.trim()) {
+      setLastNameError('Last name is required');
+    } else {
+      setLastNameError(null);
+    }
+  };
+
   const validateEmail = (val: string) => {
     setEmail(val);
-    if (!val) {
-      setEmailError(null);
+    if (!val.trim()) {
+      setEmailError('Official email is required');
       return;
     }
-    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
     if (!isValid) {
-      setEmailError('Enter a valid Email');
+      setEmailError('Enter a valid email address');
     } else {
       setEmailError(null);
     }
   };
 
+  const validatePhone = (val: string) => {
+    setPhone(val);
+    if (!val.trim()) {
+      setPhoneError('Phone number is required');
+      return;
+    }
+    // Basic phone validation (allowing digits, +, -, (, ), spaces)
+    const digitsOnly = val.replace(/\D/g, '');
+    if (digitsOnly.length < 7 || digitsOnly.length > 15) {
+      setPhoneError('Enter a valid phone number (7-15 digits)');
+    } else {
+      setPhoneError(null);
+    }
+  };
+
+  const validateMessage = (val: string) => {
+    setMessage(val);
+    if (!val.trim()) {
+      setMessageError('Message cannot be empty');
+    } else if (val.trim().length < 10) {
+      setMessageError('Please enter at least 10 characters');
+    } else {
+      setMessageError(null);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setGeneralError(null);
 
-    if (!firstName.trim() || !lastName.trim()) {
-      const err = 'Please enter both your First Name and Last Name.';
-      setGeneralError(err);
-      toast.error(err);
-      return;
+    let hasError = false;
+
+    if (!firstName.trim()) {
+      setFirstNameError('First name is required');
+      hasError = true;
+    }
+    if (!lastName.trim()) {
+      setLastNameError('Last name is required');
+      hasError = true;
     }
 
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      const err = 'A valid official email is required.';
-      setEmailError('Enter a valid Email');
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setEmailError('A valid official email is required');
+      hasError = true;
+    }
+
+    const digitsOnly = phone.replace(/\D/g, '');
+    if (!phone.trim() || digitsOnly.length < 7 || digitsOnly.length > 15) {
+      setPhoneError('A valid phone number is required');
+      hasError = true;
+    }
+
+    if (!message.trim() || message.trim().length < 10) {
+      setMessageError('Message must be at least 10 characters');
+      hasError = true;
+    }
+
+    if (hasError) {
+      const err = 'Please resolve all required fields highlighted in red.';
       setGeneralError(err);
       toast.error(err);
       return;
@@ -64,208 +135,302 @@ export const Contact: React.FC = () => {
       const generatedTicket = `አሻራ-${Date.now().toString().slice(-6)}`;
       setTicketId(generatedTicket);
       setIsSubmitting(false);
-      toast.success(`Message received! Reference ticket #${generatedTicket}`);
-    }, 500);
+
+      // Reset form fields
+      setFirstName('');
+      setLastName('');
+      setEmail('');
+      setPhone('');
+      setMessage('');
+
+      toast.success(`Message transmitted! Reference case ticket #${generatedTicket}`);
+    }, 600);
   };
 
   return (
-    <div className="min-h-[calc(100vh-4.5rem)] py-4 sm:py-6 flex items-center justify-center px-3 sm:px-6">
-      {/* Outer Card Shell Container matching Picture 1 */}
-      <div
-        className={`w-full max-w-5xl rounded-[28px] border transition-colors shadow-2xl p-4 sm:p-5 lg:p-6 ${isLight
-            ? 'bg-white border-slate-200 shadow-slate-200/50'
-            : 'bg-[#090807] border-[#24201e] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)]'
-          }`}
-      >
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-center">
+    <div
+      className={`min-h-[calc(100vh-61px)] w-full flex flex-col lg:flex-row transition-colors ${
+        isLight ? 'bg-slate-50' : 'bg-[#090807]'
+      }`}
+    >
+      {/* =================================================================== */}
+      {/* LEFT 50% OF SCREEN: FULL-BLEED EDGE-TO-EDGE ARTWORK IMAGE           */}
+      {/* Spans full viewport height on desktop, stacks on top on mobile      */}
+      {/* =================================================================== */}
+      <div className="w-full lg:w-1/2 min-h-[300px] sm:min-h-[380px] lg:min-h-[calc(100vh-61px)] relative overflow-hidden bg-[#070606] flex items-center justify-center shrink-0">
+        <img
+          src="/assets/contact_art.png"
+          alt="Hooded figure running along forest pathway"
+          className="w-full h-full object-cover object-center"
+          loading="eager"
+          decoding="sync"
+        />
+        {/* Subtle vignette gradient for smooth visual blend */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/20 pointer-events-none" />
+      </div>
 
-          {/* =================================================================== */}
-          {/* LEFT PANEL: Widened Proportional Image Box (Picture 1: Eagle art)   */}
-          {/* Sized proportionally so you don't have to scroll down               */}
-          {/* =================================================================== */}
-          <div className="lg:col-span-6 flex flex-col justify-center">
-            <div className="relative w-full h-[400px] sm:h-[460px] lg:h-[500px] rounded-2xl overflow-hidden bg-[#0d0c0c] border border-[#2b2523] flex items-center justify-center shadow-2xl">
-              <img
-                src="/assets/contact_art.png"
-                alt="Hooded figure running along forest pathway"
-                className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
-                loading="eager"
-                decoding="sync"
-              />
-            </div>
+      {/* =================================================================== */}
+      {/* RIGHT 50% OF SCREEN: CLEAN CENTERED CONTACT FORM                    */}
+      {/* No outer card boxes, no enclosing borders, exactly matches Sign In  */}
+      {/* =================================================================== */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center px-6 sm:px-12 lg:px-14 xl:px-20 py-8 lg:py-12">
+        <div className="w-full max-w-md">
+
+          {/* Header */}
+          <div className="space-y-1.5 mb-6">
+            <h1
+              className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${
+                isLight ? 'text-slate-900' : 'text-white'
+              }`}
+            >
+              Contact Us
+            </h1>
+            <p
+              className={`text-xs sm:text-sm font-sans ${
+                isLight ? 'text-slate-500' : 'text-[#a8a29e]'
+              }`}
+            >
+              Send our forensic investigation team a message and we will respond promptly
+            </p>
           </div>
 
-          {/* =================================================================== */}
-          {/* RIGHT PANEL: Clean Modern Form (matching Picture 1 layout)          */}
-          {/* =================================================================== */}
-          <div className="lg:col-span-6 flex flex-col justify-center px-2 sm:px-4 lg:px-6 py-2">
-
-            {/* Header */}
-            <div className="space-y-1 mb-5">
-              <h1
-                className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${isLight ? 'text-slate-900' : 'text-white'
-                  }`}
-              >
-                Contact Us
-              </h1>
-              <p
-                className={`text-xs sm:text-sm font-sans ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'
-                  }`}
-              >
-                Send us a message and our team will get back to you shortly
+          {/* Success Banner */}
+          {ticketId && (
+            <div className="mb-5 p-4 rounded-xl bg-emerald-950/70 border border-emerald-600/70 text-emerald-300 text-xs space-y-1 animate-fadeIn">
+              <div className="flex items-center gap-2 font-semibold text-emerald-200">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Message Received Successfully</span>
+              </div>
+              <p className="text-[11px] text-emerald-300/90 pl-6 font-mono">
+                Case Ticket Reference: <strong className="text-white select-all">#{ticketId}</strong>
               </p>
             </div>
+          )}
 
-            {/* Confirmation Banner */}
-            {ticketId && (
-              <div className="mb-4 p-3.5 rounded-2xl bg-emerald-950/70 border border-emerald-600/70 text-emerald-200 space-y-1.5 animate-fadeIn">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="text-sm font-bold text-white font-sans">
-                    Message Received — Ref: <span className="font-mono text-emerald-300">{ticketId}</span>
-                  </span>
-                </div>
-                <p className="text-xs text-emerald-200/90 leading-relaxed font-sans">
-                  Thank you! We will reach out to <strong className="text-white">{email}</strong> shortly.
-                </p>
-              </div>
-            )}
+          {/* General Error Notification */}
+          {generalError && (
+            <div className="mb-5 p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs flex items-center gap-2 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{generalError}</span>
+            </div>
+          )}
 
-            {/* General Error Notification */}
-            {generalError && (
-              <div className="mb-4 p-3 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs flex items-center gap-2 animate-fadeIn">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <span>{generalError}</span>
-              </div>
-            )}
+          {/* Contact Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-3.5">
-
-              {/* Row 1: First Name & Last Name (Side by Side matching Picture 1) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="contact-firstName"
-                    className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                      }`}
-                  >
-                    First Name
-                  </label>
-                  <input
-                    id="contact-firstName"
-                    type="text"
-                    required
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="Felix"
-                    className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans ${isLight
-                        ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
-                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
-                      }`}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label
-                    htmlFor="contact-lastName"
-                    className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                      }`}
-                  >
-                    Last Name
-                  </label>
-                  <input
-                    id="contact-lastName"
-                    type="text"
-                    required
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Brown"
-                    className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans ${isLight
-                        ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
-                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
-                      }`}
-                  />
-                </div>
-              </div>
-
-              {/* Row 2: Email (With Red Error State matching Picture 1) */}
-              <div className="space-y-1">
+            {/* Name Fields: First Name and Last Name */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* First Name */}
+              <div className="space-y-1.5">
                 <label
-                  htmlFor="contact-email"
-                  className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                    }`}
+                  htmlFor="contact-first-name"
+                  className={`block text-xs font-medium font-sans ${
+                    isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                  }`}
                 >
-                  Email
+                  First Name <span className="text-[#f95721]">*</span>
                 </label>
                 <div className="relative">
                   <input
-                    id="contact-email"
-                    type="email"
+                    id="contact-first-name"
+                    type="text"
                     required
-                    value={email}
-                    onChange={(e) => validateEmail(e.target.value)}
-                    placeholder="felixbrown27@gmail.com"
-                    className={`w-full px-3.5 py-2 sm:py-2.5 pr-10 rounded-xl text-sm transition-all outline-none font-sans ${emailError
+                    value={firstName}
+                    onChange={(e) => validateFirstName(e.target.value)}
+                    placeholder="Sarem"
+                    className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                      firstNameError
                         ? isLight
                           ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
                           : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
                         : isLight
-                          ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
-                          : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
-                      }`}
+                        ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                    }`}
                   />
-
-                  {emailError && (
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
-                      <AlertCircle className="w-4 h-4" />
-                    </div>
-                  )}
                 </div>
-
-                {emailError && (
+                {firstNameError && (
                   <p className="text-[11px] text-red-500 font-sans mt-0.5">
-                    {emailError}
+                    {firstNameError}
                   </p>
                 )}
               </div>
 
-
-              {/* Row 4: Clean, Compact Message Field */}
-              <div className="space-y-1">
+              {/* Last Name */}
+              <div className="space-y-1.5">
                 <label
-                  htmlFor="contact-msg"
-                  className={`block text-xs font-medium font-sans ${isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
-                    }`}
+                  htmlFor="contact-last-name"
+                  className={`block text-xs font-medium font-sans ${
+                    isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                  }`}
                 >
-                  Message
+                  Last Name <span className="text-[#f95721]">*</span>
                 </label>
-                <textarea
-                  id="contact-msg"
-                  rows={2}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="How can we assist you?"
-                  className={`w-full px-3.5 py-2 sm:py-2.5 rounded-xl text-sm transition-all outline-none font-sans resize-none ${isLight
-                      ? 'bg-slate-50 border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:bg-white focus:ring-1 focus:ring-[#f95721]'
-                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                <div className="relative">
+                  <input
+                    id="contact-last-name"
+                    type="text"
+                    required
+                    value={lastName}
+                    onChange={(e) => validateLastName(e.target.value)}
+                    placeholder="Worku"
+                    className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                      lastNameError
+                        ? isLight
+                          ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                          : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                        : isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
                     }`}
+                  />
+                </div>
+                {lastNameError && (
+                  <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                    {lastNameError}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Email Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="contact-email"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Official Email <span className="text-[#f95721]">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="contact-email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => validateEmail(e.target.value)}
+                  placeholder="saremworkuu@gmail.com"
+                  className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                    emailError
+                      ? isLight
+                        ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                        : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                      : isLight
+                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                  }`}
                 />
+                {emailError && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
               </div>
+              {emailError && (
+                <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                  {emailError}
+                </p>
+              )}
+            </div>
 
-              {/* Submit Button (matching Picture 1) */}
-              <div className="pt-1.5">
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-3 px-6 rounded-xl font-bold text-sm text-white bg-[#f95721] hover:bg-[#ea580c] active:scale-[0.99] transition-all shadow-lg hover:shadow-[0_0_20px_rgba(249,87,33,0.4)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
-                >
-                  {isSubmitting ? 'Sending Message...' : 'Send Message'}
-                </button>
+            {/* Phone Number Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="contact-phone"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Phone Number <span className="text-[#f95721]">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="contact-phone"
+                  type="tel"
+                  required
+                  value={phone}
+                  onChange={(e) => validatePhone(e.target.value)}
+                  placeholder="+1 (555) 019-2834"
+                  className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                    phoneError
+                      ? isLight
+                        ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                        : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                      : isLight
+                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                  }`}
+                />
+                {phoneError && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
               </div>
+              {phoneError && (
+                <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                  {phoneError}
+                </p>
+              )}
+            </div>
 
-            </form>
-          </div>
+            {/* Message Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="contact-message"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Message <span className="text-[#f95721]">*</span>
+              </label>
+              <textarea
+                id="contact-message"
+                rows={4}
+                required
+                value={message}
+                onChange={(e) => validateMessage(e.target.value)}
+                placeholder="Describe your inquiry, telemetry verification query, or incident detail..."
+                className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none resize-none font-sans ${
+                  messageError
+                    ? isLight
+                      ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                      : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                    : isLight
+                    ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                    : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                }`}
+              />
+              {messageError && (
+                <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                  {messageError}
+                </p>
+              )}
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full bg-[#f95721] hover:bg-[#ea580c] text-white font-semibold py-2.5 sm:py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(249,87,33,0.3)] hover:shadow-[0_0_28px_rgba(249,87,33,0.5)] cursor-pointer flex items-center justify-center gap-2 font-sans disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Transmitting Message...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>Send Message</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+          </form>
 
         </div>
       </div>
