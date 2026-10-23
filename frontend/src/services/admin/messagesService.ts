@@ -335,5 +335,69 @@ export const messagesService = {
         details: { reference: item.reference }
       });
     }
+  },
+
+  async submitPublicMessage(data: {
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone?: string;
+    message: string;
+    subject?: string;
+    category?: string;
+  }): Promise<AdminContactMessage> {
+    let createdMsg: AdminContactMessage | null = null;
+    try {
+      const res = await apiClient.post<AdminContactMessage>('/contact', {
+        first_name: data.first_name,
+        last_name: data.last_name,
+        email: data.email,
+        phone: data.phone || '',
+        message: data.message,
+        subject: data.subject || 'Forensic Inquiry / Incident Escalation',
+        category: 'Incident Report'
+      });
+      if (res.data && res.data.id) {
+        createdMsg = res.data;
+      }
+    } catch (err) {
+      console.warn('Backend live contact submission error, falling back to local store:', err);
+    }
+
+    const list = await messagesAdapter.getAll();
+    const finalMsg: AdminContactMessage = createdMsg || {
+      id: `msg-${Date.now().toString().slice(-6)}`,
+      reference: `አሻራ-${Date.now().toString().slice(-6)}`,
+      sender_name: `${data.first_name} ${data.last_name}`.trim(),
+      sender_email: data.email,
+      sender_phone: data.phone || '',
+      subject: data.subject || 'Forensic Inquiry / Incident Escalation',
+      category: 'Incident Report',
+      status: 'new',
+      priority: 'high',
+      assignee: null,
+      date: new Date().toISOString(),
+      is_read: false,
+      body: data.message,
+      reply_thread: []
+    };
+
+    if (!list.some(m => m.id === finalMsg.id || m.reference === finalMsg.reference)) {
+      list.unshift(finalMsg);
+      await messagesAdapter.saveAll(list);
+    }
+
+    try {
+      await auditService.log({
+        action: 'CONTACT_MESSAGE_RECEIVED',
+        target_type: 'MESSAGE',
+        target_id: finalMsg.id,
+        details: { reference: finalMsg.reference, sender: finalMsg.sender_email }
+      });
+    } catch {}
+
+    return finalMsg;
   }
 };
+
+

@@ -186,12 +186,23 @@ const MainLayout: React.FC = () => {
 
       {/* Footer */}
       <footer className={`no-print border-t ${theme === 'light' ? 'border-[#e4e4e7] bg-[#ffffff]/90 text-[#71717a]' : 'border-[#25201e] bg-[#12100f]/90 text-[#78716c]'} backdrop-blur-md px-6 py-3 text-xs font-mono relative z-10 transition-colors duration-200`}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Shield className="w-3.5 h-3.5 text-[#f95721]" />
             <span className={`${theme === 'light' ? 'text-[#3f3f46]' : 'text-[#a8a29e]'} font-medium`}>አሻራ</span>
+            <span className="text-[11px] text-[#78716c]">· Digital Crime Scene Reconstruction Engine</span>
           </div>
-          <span className="text-[11px] text-[#78716c]">አሻራ - Digital Crime Scene Reconstruction Engine</span>
+          <div className="text-[10px] text-[#78716c]">
+            <a
+              href="https://www.flaticon.com/free-icons/finger-scan"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="finger scan icons"
+              className="hover:text-[#f95721] transition-colors"
+            >
+              Finger scan icons created by PixelVerse - Flaticon
+            </a>
+          </div>
         </div>
       </footer>
     </div>

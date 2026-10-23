@@ -7,6 +7,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { toast } from '../components/Toast';
+import { messagesService } from '../services/admin/messagesService';
 
 export const Contact: React.FC = () => {
   const { theme } = useApp();
@@ -90,7 +91,7 @@ export const Contact: React.FC = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setGeneralError(null);
 
@@ -130,11 +131,19 @@ export const Contact: React.FC = () => {
 
     setIsSubmitting(true);
 
-    // Simulate sending message
-    setTimeout(() => {
-      const generatedTicket = `አሻራ-${Date.now().toString().slice(-6)}`;
+    try {
+      const result = await messagesService.submitPublicMessage({
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        message: message.trim(),
+        subject: 'Forensic Incident / Case Inquiry',
+        category: 'Incident Escalation'
+      });
+
+      const generatedTicket = result.reference || `አሻራ-${Date.now().toString().slice(-6)}`;
       setTicketId(generatedTicket);
-      setIsSubmitting(false);
 
       // Reset form fields
       setFirstName('');
@@ -144,7 +153,14 @@ export const Contact: React.FC = () => {
       setMessage('');
 
       toast.success(`Message transmitted! Reference case ticket #${generatedTicket}`);
-    }, 600);
+    } catch (err: any) {
+      console.error('Contact transmission failed:', err);
+      const errText = err?.message || 'Transmission failed. Please check network connection.';
+      setGeneralError(errText);
+      toast.error(errText);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

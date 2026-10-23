@@ -35,7 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'cases', label: 'Case Management', icon: FolderLock },
   { id: 'evidence', label: 'Forensic Vault', icon: FileCheck2 },
   { id: 'rules', label: 'Detection Rules', icon: ShieldAlert },
-  { id: 'messages', label: 'Inquiries & Inbox', icon: Mail },
+  { id: 'messages', label: 'Inbox', icon: Mail },
   { id: 'health', label: 'Engine Health', icon: Activity },
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
@@ -195,36 +195,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => {
-              if (typeof window !== 'undefined') window.location.hash = '';
-              setCurrentPage('home');
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
-              theme === 'light'
-                ? 'bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 border-slate-200 shadow-sm'
-                : 'bg-[#1c1917] hover:bg-[#25201e] text-[#d6d3d1] hover:text-white border-[#332c28]'
-            }`}
-            title="View Public Portal"
-          >
-            <span>Public Site</span>
-            <ExternalLink className="w-3.5 h-3.5 text-[#f95721]" />
-          </button>
-
-          <button
-            type="button"
-            onClick={logout}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
-              theme === 'light'
-                ? 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
-                : 'bg-red-950/40 hover:bg-red-900/60 text-red-400 border-red-500/30'
-            }`}
-            title="Sign Out of Admin Console"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
-          </button>
         </div>
       </header>
 
@@ -310,16 +280,41 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             })}
           </nav>
 
-          {/* Sidebar Footer */}
-          {!isCollapsed && (
-            <div
-              className={`p-3 border-t text-[10px] font-mono text-center ${
-                theme === 'light' ? 'border-slate-200 text-slate-400' : 'border-[#24201e] text-[#78716c]'
-              }`}
+          {/* Sidebar Bottom Actions (Vertically stacked, no boxes, no icons) */}
+          <div
+            className={`p-3 border-t flex flex-col gap-1.5 ${
+              theme === 'light' ? 'border-slate-200' : 'border-[#24201e]'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined') window.location.hash = '';
+                setCurrentPage('home');
+              }}
+              className={`text-left text-xs font-medium transition-colors cursor-pointer py-1 px-2 ${
+                theme === 'light'
+                  ? 'text-slate-600 hover:text-[#ea580c]'
+                  : 'text-[#a8a29e] hover:text-[#f95721]'
+              } ${isCollapsed ? 'text-center px-0' : ''}`}
+              title="Public Site"
             >
-              DCSRE Admin v2.4 (Mock Mode)
-            </div>
-          )}
+              {isCollapsed ? 'Site' : 'Public Site'}
+            </button>
+
+            <button
+              type="button"
+              onClick={logout}
+              className={`text-left text-xs font-medium transition-colors cursor-pointer py-1 px-2 ${
+                theme === 'light'
+                  ? 'text-red-600 hover:text-red-700'
+                  : 'text-red-400 hover:text-red-300'
+              } ${isCollapsed ? 'text-center px-0' : ''}`}
+              title="Sign Out"
+            >
+              {isCollapsed ? 'Exit' : 'Sign Out'}
+            </button>
+          </div>
         </aside>
 
         {/* Mobile Slide-over Drawer */}
@@ -401,6 +396,44 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                   );
                 })}
               </nav>
+
+              {/* Mobile Drawer Bottom Actions */}
+              <div
+                className={`pt-4 border-t flex flex-col gap-2 ${
+                  theme === 'light' ? 'border-slate-200' : 'border-[#24201e]'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    if (typeof window !== 'undefined') window.location.hash = '';
+                    setCurrentPage('home');
+                  }}
+                  className={`text-left text-xs font-medium transition-colors cursor-pointer py-1.5 px-2 ${
+                    theme === 'light'
+                      ? 'text-slate-600 hover:text-[#ea580c]'
+                      : 'text-[#a8a29e] hover:text-[#f95721]'
+                  }`}
+                >
+                  Public Site
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    logout();
+                  }}
+                  className={`text-left text-xs font-medium transition-colors cursor-pointer py-1.5 px-2 ${
+                    theme === 'light'
+                      ? 'text-red-600 hover:text-red-700'
+                      : 'text-red-400 hover:text-red-300'
+                  }`}
+                >
+                  Sign Out
+                </button>
+              </div>
             </div>
           </div>
         )}
