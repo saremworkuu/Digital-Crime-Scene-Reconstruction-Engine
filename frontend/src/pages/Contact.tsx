@@ -237,7 +237,7 @@ export const Contact: React.FC = () => {
                     required
                     value={firstName}
                     onChange={(e) => validateFirstName(e.target.value)}
-                    placeholder="Sarem"
+                    placeholder=""
                     className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
                       firstNameError
                         ? isLight
@@ -273,7 +273,7 @@ export const Contact: React.FC = () => {
                     required
                     value={lastName}
                     onChange={(e) => validateLastName(e.target.value)}
-                    placeholder="Worku"
+                    placeholder=""
                     className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
                       lastNameError
                         ? isLight
@@ -310,7 +310,7 @@ export const Contact: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => validateEmail(e.target.value)}
-                  placeholder="saremworkuu@gmail.com"
+                  placeholder=""
                   className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
                     emailError
                       ? isLight
@@ -351,7 +351,7 @@ export const Contact: React.FC = () => {
                   required
                   value={phone}
                   onChange={(e) => validatePhone(e.target.value)}
-                  placeholder="+1 (555) 019-2834"
+                  placeholder=""
                   className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
                     phoneError
                       ? isLight

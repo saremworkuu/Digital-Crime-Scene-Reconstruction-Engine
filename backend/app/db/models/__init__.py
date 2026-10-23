@@ -9,6 +9,9 @@ from app.db.models.revoked_token import RevokedToken
 from app.db.models.entity import Entity
 from app.db.models.relationship import Relationship
 from app.db.models.report import Report
+from app.db.models.sigma_rule import SigmaRule
+from app.db.models.contact_message import ContactMessage
+from app.db.models.system_settings import SystemSettings
 
 __all__ = [
     'User',
@@ -21,5 +24,8 @@ __all__ = [
     'RevokedToken',
     'Entity',
     'Relationship',
-    'Report'
+    'Report',
+    'SigmaRule',
+    'ContactMessage',
+    'SystemSettings',
 ]

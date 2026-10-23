@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.api.v1 import auth, users, cases, evidence, events, timeline, graph, detections, reports, audit
+from app.api.v1.admin import admin_router
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -12,3 +13,4 @@ api_router.include_router(graph.router, prefix="/graph", tags=["graph"])
 api_router.include_router(detections.router, prefix="/detections", tags=["detections"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
+api_router.include_router(admin_router, prefix="/admin", tags=["admin"])

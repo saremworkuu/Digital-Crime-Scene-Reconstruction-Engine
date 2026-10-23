@@ -2,26 +2,35 @@
  * Rules Service (Admin-Only)
  * Manages Sigma detection rules, MITRE ATT&CK mapping, rule testing, and JSON import/export.
  *
- * NOTE: The `rulesAdapter` abstracts rule storage. To connect to a live SIEM or
- * Sigma detection engine, update only this adapter.
+ * Fully integrated with live FastAPI endpoints (/api/v1/admin/rules)
+ * with graceful fallback to preserved mock seed data.
  */
 
 import { AdminSigmaRule, RuleSeverity } from '../../admin/types';
 import { SEED_SIGMA_RULES } from '../../mocks/admin/seedData';
 import { delay, getStored, setStored } from './storageHelper';
 import { auditService } from './auditService';
+import { apiClient } from '../../api';
 
 // ============================================================================
-// DATA ACCESS ADAPTER (Mock Implementation -> Swappable to Real Backend API)
+// DATA ACCESS ADAPTER (Real Backend API with Mock Preserving Fallback)
 // ============================================================================
 const rulesAdapter = {
   async getAll(): Promise<AdminSigmaRule[]> {
-    await delay(300, 500);
+    try {
+      const res = await apiClient.get<AdminSigmaRule[]>('/admin/rules');
+      if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+        setStored('rules', res.data);
+        return res.data;
+      }
+    } catch (err) {
+      console.warn('Backend live rules API fallback to local data:', err);
+    }
+    await delay(150, 300);
     return getStored<AdminSigmaRule[]>('rules', SEED_SIGMA_RULES);
   },
 
   async saveAll(rules: AdminSigmaRule[]): Promise<void> {
-    await delay(200, 400);
     setStored('rules', rules);
   }
 };
@@ -52,6 +61,19 @@ export const rulesService = {
   },
 
   async toggleRule(id: string, enabled: boolean): Promise<AdminSigmaRule> {
+    try {
+      const res = await apiClient.patch<AdminSigmaRule>(`/admin/rules/${id}/toggle`, { enabled });
+      if (res.data) {
+        const list = await rulesAdapter.getAll();
+        const idx = list.findIndex((r) => r.id === id);
+        if (idx !== -1) list[idx] = res.data;
+        await rulesAdapter.saveAll(list);
+        return res.data;
+      }
+    } catch (err) {
+      console.warn('Live API toggle rule error, proceeding with local fallback:', err);
+    }
+
     const list = await rulesAdapter.getAll();
     const item = list.find((r) => r.id === id);
     if (!item) throw new Error(`Rule ${id} not found.`);
@@ -76,6 +98,18 @@ export const rulesService = {
     description: string;
     query: string;
   }): Promise<AdminSigmaRule> {
+    try {
+      const res = await apiClient.post<AdminSigmaRule>('/admin/rules', data);
+      if (res.data) {
+        const list = await rulesAdapter.getAll();
+        list.unshift(res.data);
+        await rulesAdapter.saveAll(list);
+        return res.data;
+      }
+    } catch (err) {
+      console.warn('Live API create rule error, proceeding with local fallback:', err);
+    }
+
     const list = await rulesAdapter.getAll();
     const newRule: AdminSigmaRule = {
       id: `sig-${Date.now().toString().slice(-6)}`,
@@ -103,6 +137,19 @@ export const rulesService = {
   },
 
   async updateRule(id: string, patch: Partial<AdminSigmaRule>): Promise<AdminSigmaRule> {
+    try {
+      const res = await apiClient.patch<AdminSigmaRule>(`/admin/rules/${id}`, patch);
+      if (res.data) {
+        const list = await rulesAdapter.getAll();
+        const idx = list.findIndex((r) => r.id === id);
+        if (idx !== -1) list[idx] = res.data;
+        await rulesAdapter.saveAll(list);
+        return res.data;
+      }
+    } catch (err) {
+      console.warn('Live API update rule error, proceeding with local fallback:', err);
+    }
+
     const list = await rulesAdapter.getAll();
     const index = list.findIndex((r) => r.id === id);
     if (index === -1) throw new Error(`Rule ${id} not found.`);
@@ -122,6 +169,12 @@ export const rulesService = {
   },
 
   async deleteRule(id: string): Promise<void> {
+    try {
+      await apiClient.delete(`/admin/rules/${id}`);
+    } catch (err) {
+      console.warn('Live API delete rule error, proceeding with local fallback:', err);
+    }
+
     const list = await rulesAdapter.getAll();
     const target = list.find((r) => r.id === id);
     const filtered = list.filter((r) => r.id !== id);
@@ -140,6 +193,19 @@ export const rulesService = {
     matchCount: number;
     sampleMatches: Array<{ timestamp: string; host: string; log_snippet: string }>;
   }> {
+    try {
+      const res = await apiClient.post<{
+        ruleId: string;
+        matchCount: number;
+        sampleMatches: Array<{ timestamp: string; host: string; log_snippet: string }>;
+      }>(`/admin/rules/${id}/test`);
+      if (res.data) {
+        return res.data;
+      }
+    } catch (err) {
+      console.warn('Live API test rule error, proceeding with local fallback:', err);
+    }
+
     await delay(450, 700);
     const list = await rulesAdapter.getAll();
     const rule = list.find((r) => r.id === id);
@@ -172,6 +238,17 @@ export const rulesService = {
   async importRulesFromJson(jsonContent: string): Promise<number> {
     const parsed = JSON.parse(jsonContent);
     if (!Array.isArray(parsed)) throw new Error('Import file must contain a JSON array of rules.');
+
+    try {
+      const res = await apiClient.post<{ importedCount: number }>('/admin/rules/import', parsed);
+      if (typeof res.data?.importedCount === 'number') {
+        // Refresh local cache
+        await rulesAdapter.getAll();
+        return res.data.importedCount;
+      }
+    } catch (err) {
+      console.warn('Live API import rules error, proceeding with local fallback:', err);
+    }
 
     const list = await rulesAdapter.getAll();
     let importedCount = 0;

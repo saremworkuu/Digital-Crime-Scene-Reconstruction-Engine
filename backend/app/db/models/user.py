@@ -6,8 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean,DateTime, Enum, String
-
-from sqlalchemy.dialects.postgresql import UUID 
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -70,4 +69,28 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False
+    )
+
+    department: Mapped[str | None] = mapped_column(
+        String,
+        default="Digital Forensic Incident Response (DFIR) Command",
+        nullable=True
+    )
+
+    two_factor_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="active",
+        nullable=True
+    )
+
+    sessions: Mapped[list | None] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=True
     )

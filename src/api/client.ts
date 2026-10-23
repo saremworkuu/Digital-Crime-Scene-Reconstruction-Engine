@@ -20,18 +20,41 @@ class ApiClient {
 
   setToken(token: string | null) {
     this.token = token;
+    if (typeof window !== 'undefined') {
+      try {
+        if (token) {
+          localStorage.setItem('dcsre_access_token', token);
+        } else {
+          localStorage.removeItem('dcsre_access_token');
+          localStorage.removeItem('token');
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
 
   getToken(): string | null {
-    return this.token;
+    if (this.token) return this.token;
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('dcsre_access_token') || localStorage.getItem('token');
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     const headers = new Headers(options.headers || {});
-    headers.set('Content-Type', 'application/json');
+    if (!(options.body instanceof FormData)) {
+      headers.set('Content-Type', 'application/json');
+    }
 
-    if (this.token) {
-      headers.set('Authorization', `Bearer ${this.token}`);
+    const token = this.getToken();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
     }
 
     try {
@@ -72,6 +95,13 @@ class ApiClient {
   put<T>(endpoint: string, body?: any) {
     return this.request<T>(endpoint, {
       method: 'PUT',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  patch<T>(endpoint: string, body?: any) {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
       body: body ? JSON.stringify(body) : undefined,
     });
   }

@@ -527,6 +527,12 @@ def delete_evidence(
         allow_viewer=False,
     )
 
+    if getattr(case, "legal_hold", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Deletion Blocked: Case "{case.name}" is currently locked under Legal Hold.',
+        )
+
     # Clean up associations and events
     db.execute(delete(EventEvidence).where(EventEvidence.evidence_id == evidence.id))
     db.execute(delete(Event).where(Event.evidence_id == evidence.id))

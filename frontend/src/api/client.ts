@@ -22,7 +22,12 @@ class ApiClient {
     this.token = token;
     if (typeof window !== 'undefined') {
       try {
-        localStorage.removeItem('token');
+        if (token) {
+          localStorage.setItem('dcsre_access_token', token);
+        } else {
+          localStorage.removeItem('dcsre_access_token');
+          localStorage.removeItem('token');
+        }
       } catch {
         // ignore
       }
@@ -30,7 +35,15 @@ class ApiClient {
   }
 
   getToken(): string | null {
-    return this.token;
+    if (this.token) return this.token;
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('dcsre_access_token') || localStorage.getItem('token');
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
@@ -82,6 +95,13 @@ class ApiClient {
   put<T>(endpoint: string, body?: any) {
     return this.request<T>(endpoint, {
       method: 'PUT',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  patch<T>(endpoint: string, body?: any) {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
       body: body ? JSON.stringify(body) : undefined,
     });
   }

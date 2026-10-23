@@ -59,9 +59,9 @@ export default defineConfig(() => {
     server: {
       proxy: {
         '/api': {
-          target: 'https://digital-crime-scene-reconstruction-engine.onrender.com',
+          target: process.env.VITE_BACKEND_TARGET || 'http://localhost:8000',
           changeOrigin: true,
-          secure: true,
+          secure: false,
         },
       },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

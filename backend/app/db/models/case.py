@@ -75,3 +75,15 @@ class Case(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    legal_hold: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )

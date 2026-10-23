@@ -3,7 +3,7 @@ import uuid
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String,Text,Enum
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -83,5 +83,13 @@ class Evidence(Base):
     )
     parsing_error:Mapped[str|None]=mapped_column(
         Text,
+        nullable=True
+    )
+    expected_sha256: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True
+    )
+    verified: Mapped[bool | None] = mapped_column(
+        Boolean,
         nullable=True
     )
