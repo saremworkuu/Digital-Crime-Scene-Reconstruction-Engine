@@ -57,7 +57,7 @@ export const Reports: React.FC = () => {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>DCSRE Forensic Report - ${activeCase?.name}</title>
+  <title>አሻራ Forensic Report - ${activeCase?.name}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #111; padding: 40px; max-width: 900px; margin: 0 auto; }
     h1, h2, h3 { font-family: ui-monospace, Menlo, Monaco, monospace; color: #111; }
@@ -150,7 +150,7 @@ export const Reports: React.FC = () => {
         {/* Document Header & Classification */}
         <div className="border-b-2 border-[#282321] print:border-black pb-6 space-y-3">
           <div className="flex flex-wrap items-center justify-between text-xs font-mono text-[#a8a29e] print:text-gray-600">
-            <span>DCSRE FORENSIC EXAMINATION REPORT</span>
+            <span>አሻራ FORENSIC EXAMINATION REPORT</span>
             <span className="uppercase text-[#f95721] print:text-black font-semibold">
               TLP:AMBER+STRICT · CONFIDENTIAL FORENSIC INVESTIGATION
             </span>
@@ -186,7 +186,7 @@ export const Reports: React.FC = () => {
             1. Executive Summary
           </h2>
           <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
-            A forensic investigation was initiated regarding digital evidence collected from internal and perimeter infrastructure associated with <strong>{activeCase.name}</strong>. Analysis was performed using the Digital Crime Scene Reconstruction Engine (DCSRE), utilizing multi-format normalization, Sigma rule heuristics, and MITRE ATT&CK correlation.
+            A forensic investigation was initiated regarding digital evidence collected from internal and perimeter infrastructure associated with <strong>{activeCase.name}</strong>. Analysis was performed using the አሻራ Digital Crime Scene Reconstruction Engine, utilizing multi-format normalization, Sigma rule heuristics, and MITRE ATT&CK correlation.
           </p>
           <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
             The examination reconstructed a total of <strong>{activeCaseEvents.length}</strong> normalized events across <strong>{activeCaseEvidence.length}</strong> authenticated evidence sources, identifying <strong>{activeCaseDetections.length}</strong> verified attack indicators. Key compromised assets include {compromisedHosts.map(h => h.label).join(', ')}.
@@ -337,7 +337,7 @@ export const Reports: React.FC = () => {
 
             <div className="text-right text-[11px] text-[#78716c] print:text-gray-600 font-mono">
               <div>Verification Hash: {activeCaseEvidence[0]?.sha256_hash.slice(0, 16)}...</div>
-              <div>Generated via DCSRE v2.0 Engine</div>
+              <div>Generated via አሻራ v2.0 Engine</div>
             </div>
           </div>
         </section>

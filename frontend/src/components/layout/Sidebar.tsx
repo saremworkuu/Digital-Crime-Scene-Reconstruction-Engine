@@ -181,7 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
                   }}
                   className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
                 >
-                  About DCSRE Engine
+                  About አሻራ Engine
                 </button>
                 <button
                   type="button"

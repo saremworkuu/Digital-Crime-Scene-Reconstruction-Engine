@@ -65,7 +65,7 @@ export const TopNav: React.FC<TopNavProps> = ({
             <div>
               <span className={`text-base font-bold tracking-tight transition-colors ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#f95721]'
                 }`}>
-                DCSRE
+                አሻራ
               </span>
               <span className={`text-[10px] block font-mono leading-none ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'
                 }`}>

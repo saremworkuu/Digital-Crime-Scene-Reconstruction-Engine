@@ -61,7 +61,7 @@ export const Contact: React.FC = () => {
 
     // Simulate sending message
     setTimeout(() => {
-      const generatedTicket = `DCSRE-${Date.now().toString().slice(-6)}`;
+      const generatedTicket = `አሻራ-${Date.now().toString().slice(-6)}`;
       setTicketId(generatedTicket);
       setIsSubmitting(false);
       toast.success(`Message received! Reference ticket #${generatedTicket}`);
@@ -87,7 +87,7 @@ export const Contact: React.FC = () => {
             <div className="relative w-full h-[400px] sm:h-[460px] lg:h-[500px] rounded-2xl overflow-hidden bg-[#0d0c0c] border border-[#2b2523] flex items-center justify-center shadow-2xl">
               <img
                 src="/assets/contact_art.png"
-                alt="Chess knight casting rearing horse shadow artwork"
+                alt="Hooded figure running along forest pathway"
                 className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
                 loading="eager"
                 decoding="sync"

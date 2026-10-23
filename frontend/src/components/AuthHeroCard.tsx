@@ -41,14 +41,14 @@ export const AuthHeroCard: React.FC<AuthHeroCardProps> = ({
               <Shield className="w-5 h-5" />
             </div>
             <span className="font-mono text-[10px] uppercase tracking-widest text-[#f95721] bg-[#29140c]/80 border border-[#f95721]/30 px-2.5 py-1 rounded-full">
-              DCSRE CORE
+              አሻራ CORE
             </span>
           </div>
 
           <div className="space-y-3 z-10">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#221f1d] border border-[#382f2c] text-[11px] font-mono text-[#ff936b]">
               <Sparkles className="w-3.5 h-3.5 text-[#f95721]" />
-              <span>Digital Crime Scene Reconstruction</span>
+              <span>አሻራ - Digital Crime Scene Reconstruction</span>
             </div>
             <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight leading-snug">
               High-Assurance Cyber Forensic & Incident Telemetry

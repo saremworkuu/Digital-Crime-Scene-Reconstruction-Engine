@@ -1,5 +1,5 @@
 /**
- * Real Email Validator for DCSRE Registration & Custody Ledger
+ * Real Email Validator for አሻራ Registration & Custody Ledger
  * Ensures users register with genuine, valid, non-disposable email addresses.
  */
 

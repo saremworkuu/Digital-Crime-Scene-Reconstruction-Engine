@@ -154,9 +154,9 @@ const MainLayout: React.FC = () => {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="w-3.5 h-3.5 text-[#f95721]" />
-            <span className={`${theme === 'light' ? 'text-[#3f3f46]' : 'text-[#a8a29e]'} font-medium`}>DCSRE</span>
+            <span className={`${theme === 'light' ? 'text-[#3f3f46]' : 'text-[#a8a29e]'} font-medium`}>አሻራ</span>
           </div>
-          <span className="text-[11px] text-[#78716c]">Digital Crime Scene Reconstruction Engine</span>
+          <span className="text-[11px] text-[#78716c]">አሻራ - Digital Crime Scene Reconstruction Engine</span>
         </div>
       </footer>
     </div>

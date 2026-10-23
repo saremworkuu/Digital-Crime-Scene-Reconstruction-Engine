@@ -1,5 +1,5 @@
 /**
- * Base HTTP API client for DCSRE backend
+ * Base HTTP API client for አሻራ backend
  */
 
 export interface ApiResponse<T> {
@@ -8,9 +8,15 @@ export interface ApiResponse<T> {
   status: number;
 }
 
+export const RENDER_BACKEND_URL = 'https://digital-crime-scene-reconstruction-engine.onrender.com';
+
 class ApiClient {
   private token: string | null = null;
-  private baseUrl = '/api/v1';
+  private baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL)
+    ? import.meta.env.VITE_API_BASE_URL
+    : (typeof import.meta !== 'undefined' && import.meta.env?.PROD)
+      ? `${RENDER_BACKEND_URL}/api/v1`
+      : '/api/v1';
 
   setToken(token: string | null) {
     this.token = token;

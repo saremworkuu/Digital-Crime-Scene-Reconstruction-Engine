@@ -11,7 +11,7 @@ export const INITIAL_SIGMA_RULES: DetectionRule[] = [
     severity: 'critical',
     mitre_technique: 'T1505.003',
     mitre_tactic: 'Persistence',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: Suspicious Web Shell Access Pattern
 id: rule-web-shell-access
@@ -40,7 +40,7 @@ level: critical`,
     severity: 'high',
     mitre_technique: 'T1548.003',
     mitre_tactic: 'Privilege Escalation',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: Sudo Privilege Escalation by Service User
 id: rule-sudo-priv-esc
@@ -66,7 +66,7 @@ level: high`,
     severity: 'medium',
     mitre_technique: 'T1110.001',
     mitre_tactic: 'Credential Access',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: SSH Authentication Brute Force
 id: rule-ssh-brute-force
@@ -91,7 +91,7 @@ level: medium`,
     severity: 'critical',
     mitre_technique: 'T1059.001',
     mitre_tactic: 'Execution',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: Suspicious Encoded PowerShell Execution
 id: rule-powershell-encoded
@@ -120,7 +120,7 @@ level: critical`,
     severity: 'critical',
     mitre_technique: 'T1490',
     mitre_tactic: 'Impact',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: Volume Shadow Copy Deletion
 id: rule-vss-shadow-deletion
@@ -147,7 +147,7 @@ level: critical`,
     severity: 'high',
     mitre_technique: 'T1071.001',
     mitre_tactic: 'Command and Control',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: High-Frequency Outbound C2 Beaconing
 id: rule-c2-beaconing
@@ -174,7 +174,7 @@ level: high`,
     severity: 'medium',
     mitre_technique: 'T1560.001',
     mitre_tactic: 'Collection',
-    author: 'DCSRE Forensics Team',
+    author: 'አሻራ Forensics Team',
     status: 'active',
     yaml_content: `title: Data Staged in Compressed Archive
 id: rule-mass-archive-staging
