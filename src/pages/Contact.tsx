@@ -190,7 +190,7 @@ export const Contact: React.FC = () => {
                 isLight ? 'text-slate-500' : 'text-[#a8a29e]'
               }`}
             >
-              Send our forensic investigation team a message and we will respond promptly
+              Send us a message and our team will get back to you shortly
             </p>
           </div>
 
@@ -199,7 +199,7 @@ export const Contact: React.FC = () => {
             <div className="mb-5 p-4 rounded-xl bg-emerald-950/70 border border-emerald-600/70 text-emerald-300 text-xs space-y-1 animate-fadeIn">
               <div className="flex items-center gap-2 font-semibold text-emerald-200">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Message Received Successfully</span>
+                <span>Message Sent Successfully</span>
               </div>
               <p className="text-[11px] text-emerald-300/90 pl-6 font-mono">
                 Case Ticket Reference: <strong className="text-white select-all">#{ticketId}</strong>
@@ -391,7 +391,7 @@ export const Contact: React.FC = () => {
                 required
                 value={message}
                 onChange={(e) => validateMessage(e.target.value)}
-                placeholder="Describe your inquiry, telemetry verification query, or incident detail..."
+                placeholder="Tell us what happened or how we can help..."
                 className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none resize-none font-sans ${
                   messageError
                     ? isLight

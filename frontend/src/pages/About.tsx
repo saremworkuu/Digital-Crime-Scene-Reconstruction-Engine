@@ -9,43 +9,43 @@ export const About: React.FC = () => {
   const corePillars = [
     {
       id: '01',
-      title: 'Cryptographic Chain of Custody & Attribution',
-      desc: 'Automated cryptographic SHA-256 validation, tamper-proof digital custody ledgers, and threat actor attribution.',
+      title: 'Tamper-Proof Evidence & Proof',
+      desc: 'Locks down digital evidence with unchangeable digital seals so it can never be faked, proving exactly who did it in court.',
       image: '/assets/about_art_1.png',
-      tag: 'SHA-256 · NON-REPUDIATION',
-      highlights: ['SHA-256 Verification', 'Immutable Custody Ledger', 'Adversary Attribution']
+      tag: 'EVIDENCE INTEGRITY',
+      highlights: ['Untampered Evidence', 'Legal Proof', 'Attacker Identity']
     },
     {
       id: '02',
-      title: 'Autonomous Lateral Movement & Progression',
-      desc: 'Uncovers multi-stage attacker progression shedding persistence anchors, privilege escalation, and internal hops.',
+      title: 'Track Attacker Movement Inside',
+      desc: 'Follows hackers step-by-step as they jump between machines, steal passwords, and try to take over the network.',
       image: '/assets/about_art_2.png',
-      tag: 'AUTONOMOUS LATERAL MOVEMENT',
-      highlights: ['Lateral Movement Graph', 'Privilege Escalation', 'Host Hop Telemetry']
+      tag: 'PATH TRACKING',
+      highlights: ['Step-by-Step Path', 'Stolen Passwords', 'Machine Jumps']
     },
     {
       id: '03',
-      title: 'Perimeter Containment & MITRE Telemetry',
-      desc: 'Continuous perimeter barrier telemetry mapping adversary tactics against MITRE ATT&CK matrix sensors and tripwires.',
+      title: 'Detect Break-Ins & Stop Attacks',
+      desc: 'Monitors firewalls and entry doors 24/7 to catch the moment hackers break in and stop them before they spread.',
       image: '/assets/about_art_3.png',
-      tag: 'MITRE ATT&CK · SENSOR WIRE',
-      highlights: ['MITRE ATT&CK Matrix', 'Perimeter Telemetry', 'Sigma Rule Engine']
+      tag: 'BORDER DEFENSE',
+      highlights: ['Break-In Alerts', 'Firewall Defense', 'Live Protection']
     },
     {
       id: '04',
-      title: 'Host Anchoring & Volatile Memory Forensics',
-      desc: 'Detects deeply anchored in-memory payloads, process hollowing, LSASS credential theft, and persistent OS hooks.',
+      title: 'Find Hidden Malware & Viruses',
+      desc: 'Scans live computer memory to uncover hidden viruses, backdoors, and stealthy code that normal antiviruses miss.',
       image: '/assets/about_art_4.png',
-      tag: 'VOLATILE PAYLOAD ANCHORS',
-      highlights: ['Process Injection', 'LSASS Defense', 'Volatile Memory Dumps']
+      tag: 'DEEP MEMORY SCAN',
+      highlights: ['Hidden Viruses', 'Memory Scans', 'Secret Backdoors']
     },
     {
       id: '05',
-      title: 'Boundary Breach & Exfiltration Reconstruction',
-      desc: 'Spatial 3D reconstruction of network boundary breaches, command-and-control beaconing, and unauthorized exfiltration.',
+      title: '3D Crime Scene Reconstruction',
+      desc: 'Turns complicated log data into an interactive 3D map so you can clearly watch the entire attack from start to finish.',
       image: '/assets/about_art_5.png',
-      tag: 'BREACH & EXFILTRATION TOPOLOGY',
-      highlights: ['3D Crime Scene', 'C2 Beacon Tracking', 'Blast Radius Isolation']
+      tag: '3D MAP RECONSTRUCTION',
+      highlights: ['Interactive 3D Map', 'Stolen Data Trail', 'Visual Replay']
     }
   ];
 
@@ -76,7 +76,7 @@ export const About: React.FC = () => {
                 isLight ? 'text-slate-600' : 'text-[#a8a29e]'
               }`}
             >
-              High-assurance cyber forensic platform reconstructing multi-stage intrusions from raw evidence into interactive 3D attack topologies and audit reports.
+              አሻራ investigates cyber attacks and digital break-ins. It collects evidence, tracks what hackers did, and rebuilds the entire incident into an easy-to-understand 3D crime scene and legal report.
             </p>
           </div>
 
@@ -88,24 +88,14 @@ export const About: React.FC = () => {
 
       {/* Core Forensic Capabilities: Proportional Medium-Sized Cards in Continuous Sliding Track */}
       <div className="space-y-4 pt-2">
-        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[#2b2523] pb-2.5">
-          <div>
-            <h2
-              className={`text-base sm:text-lg lg:text-xl font-bold tracking-tight ${
-                isLight ? 'text-slate-900' : 'text-[#fafaf9]'
-              }`}
-            >
-              Core Forensic Capabilities
-            </h2>
-            <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
-              Comprehensive investigation pipeline engineered for forensic validation and attribution
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs font-mono text-[#f95721] bg-[#f95721]/10 border border-[#f95721]/20 px-2.5 py-1 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-[#f95721] animate-pulse" />
-            <span>CONTINUOUS SCAN · HOVER TO PAUSE</span>
-          </div>
+        <div className="border-b border-[#2b2523] pb-2.5">
+          <h2
+            className={`text-base sm:text-lg lg:text-xl font-bold tracking-tight ${
+              isLight ? 'text-slate-900' : 'text-[#fafaf9]'
+            }`}
+          >
+            What አሻራ Does
+          </h2>
         </div>
 
         {/* Circular Sliding Track Viewport */}
@@ -150,15 +140,10 @@ export const About: React.FC = () => {
                   className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/80 to-black/40 transition-opacity duration-300 group-hover:from-black/95 group-hover:via-black/85"
                 />
 
-                {/* Top Bar with Spec Tag and Capability ID */}
+                {/* Top Bar with Category Tag (CAP badge removed) */}
                 <div className="relative z-10 p-3.5 sm:p-4 flex items-center justify-between w-full">
                   <span className="text-[10px] sm:text-[11px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-md bg-black/85 backdrop-blur-md border border-white/20 text-[#ff936b] font-bold shadow-md">
                     {pillar.tag}
-                  </span>
-
-                  <span className="text-[10px] sm:text-[11px] font-mono tracking-widest px-2 py-0.5 rounded bg-black/70 backdrop-blur-md border border-white/10 text-stone-300 flex items-center gap-1.5 font-semibold">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#f95721] animate-pulse" />
-                    CAP-{pillar.id}
                   </span>
                 </div>
 
