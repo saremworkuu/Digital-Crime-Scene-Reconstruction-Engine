@@ -1,4 +1,5 @@
 import React from 'react';
+import { useApp } from '../../store';
 
 interface StatusBadgeProps {
   status: string;
@@ -6,40 +7,62 @@ interface StatusBadgeProps {
 }
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, variant = 'status' }) => {
+  const { theme } = useApp();
+  const isLight = theme === 'light';
   const norm = String(status || '').toLowerCase().trim();
 
-  let style = 'bg-stone-800 text-stone-300 border-stone-700';
+  let style = isLight
+    ? 'bg-slate-100 text-slate-700 border-slate-200'
+    : 'bg-stone-800 text-stone-300 border-stone-700';
 
   if (variant === 'severity') {
     switch (norm) {
       case 'critical':
-        style = 'bg-red-950/80 text-red-300 border-red-700/60 shadow-[0_0_10px_rgba(239,68,68,0.2)]';
+        style = isLight
+          ? 'bg-red-50 text-red-700 border-red-200 shadow-sm'
+          : 'bg-red-950/80 text-red-300 border-red-700/60 shadow-[0_0_10px_rgba(239,68,68,0.2)]';
         break;
       case 'high':
-        style = 'bg-orange-950/80 text-orange-300 border-orange-700/60';
+        style = isLight
+          ? 'bg-orange-50 text-orange-700 border-orange-200'
+          : 'bg-orange-950/80 text-orange-300 border-orange-700/60';
         break;
       case 'medium':
-        style = 'bg-amber-950/80 text-amber-300 border-amber-700/60';
+        style = isLight
+          ? 'bg-amber-50 text-amber-700 border-amber-200'
+          : 'bg-amber-950/80 text-amber-300 border-amber-700/60';
         break;
       case 'low':
-        style = 'bg-blue-950/80 text-blue-300 border-blue-700/60';
+        style = isLight
+          ? 'bg-blue-50 text-blue-700 border-blue-200'
+          : 'bg-blue-950/80 text-blue-300 border-blue-700/60';
         break;
       default:
-        style = 'bg-stone-900 text-stone-400 border-stone-800';
+        style = isLight
+          ? 'bg-slate-100 text-slate-600 border-slate-200'
+          : 'bg-stone-900 text-stone-400 border-stone-800';
     }
   } else if (variant === 'role') {
     switch (norm) {
       case 'admin':
-        style = 'bg-red-950/80 text-red-300 border-red-600/70 shadow-[0_0_8px_rgba(239,68,68,0.25)] font-bold';
+        style = isLight
+          ? 'bg-red-50 text-red-700 border-red-200 font-bold shadow-sm'
+          : 'bg-red-950/80 text-red-300 border-red-600/70 shadow-[0_0_8px_rgba(239,68,68,0.25)] font-bold';
         break;
       case 'investigator':
-        style = 'bg-orange-950/80 text-orange-300 border-[#ea580c]/60 font-semibold';
+        style = isLight
+          ? 'bg-orange-50 text-orange-700 border-orange-200 font-semibold'
+          : 'bg-orange-950/80 text-orange-300 border-[#ea580c]/60 font-semibold';
         break;
       case 'auditor':
-        style = 'bg-purple-950/80 text-purple-300 border-purple-600/60 font-semibold';
+        style = isLight
+          ? 'bg-purple-50 text-purple-700 border-purple-200 font-semibold'
+          : 'bg-purple-950/80 text-purple-300 border-purple-600/60 font-semibold';
         break;
       default:
-        style = 'bg-stone-800 text-stone-300 border-stone-700';
+        style = isLight
+          ? 'bg-slate-100 text-slate-700 border-slate-200'
+          : 'bg-stone-800 text-stone-300 border-stone-700';
     }
   } else {
     // Default Status colors
@@ -50,14 +73,18 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, variant = 'sta
       case 'online':
       case 'true':
       case 'match':
-        style = 'bg-emerald-950/70 text-emerald-300 border-emerald-600/60';
+        style = isLight
+          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+          : 'bg-emerald-950/70 text-emerald-300 border-emerald-600/60';
         break;
       case 'under_review':
       case 'in_review':
       case 'processing':
       case 'replied':
       case 'pending':
-        style = 'bg-amber-950/70 text-amber-300 border-amber-600/60';
+        style = isLight
+          ? 'bg-amber-50 text-amber-700 border-amber-200'
+          : 'bg-amber-950/70 text-amber-300 border-amber-600/60';
         break;
       case 'disabled':
       case 'failed':
@@ -65,18 +92,26 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, variant = 'sta
       case 'degraded':
       case 'false':
       case 'mismatch':
-        style = 'bg-red-950/70 text-red-300 border-red-700/60';
+        style = isLight
+          ? 'bg-red-50 text-red-700 border-red-200'
+          : 'bg-red-950/70 text-red-300 border-red-700/60';
         break;
       case 'new':
-        style = 'bg-[#ea580c]/20 text-[#f95721] border-[#f95721]/50 font-bold animate-pulse';
+        style = isLight
+          ? 'bg-orange-100 text-[#f95721] border-[#f95721]/40 font-bold animate-pulse'
+          : 'bg-[#ea580c]/20 text-[#f95721] border-[#f95721]/50 font-bold animate-pulse';
         break;
       case 'closed':
       case 'archived':
       case 'spam':
-        style = 'bg-stone-900 text-stone-400 border-stone-800';
+        style = isLight
+          ? 'bg-slate-100 text-slate-600 border-slate-200'
+          : 'bg-stone-900 text-stone-400 border-stone-800';
         break;
       default:
-        style = 'bg-stone-800/80 text-stone-300 border-stone-700';
+        style = isLight
+          ? 'bg-slate-100 text-slate-600 border-slate-200'
+          : 'bg-stone-800/80 text-stone-300 border-stone-700';
     }
   }
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Database } from 'lucide-react';
+import { useApp } from '../../store';
 
 interface EmptyStateProps {
   title?: string;
@@ -16,15 +17,34 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   actionLabel,
   onAction
 }) => {
+  const { theme } = useApp();
+  const isLight = theme === 'light';
+
   return (
-    <div className="flex flex-col items-center justify-center p-8 sm:p-12 text-center rounded-2xl bg-black/20 border border-dashed border-[#332b27] space-y-3">
-      <div className="p-4 rounded-2xl bg-[#1d1613] border border-[#3d2b21] text-[#f95721] shadow-inner">
+    <div
+      className={`flex flex-col items-center justify-center p-8 sm:p-12 text-center rounded-2xl border border-dashed space-y-3 ${
+        isLight
+          ? 'bg-slate-50/70 border-slate-300'
+          : 'bg-black/20 border-[#332b27]'
+      }`}
+    >
+      <div
+        className={`p-4 rounded-2xl border shadow-inner ${
+          isLight
+            ? 'bg-orange-50 border-orange-200 text-[#f95721]'
+            : 'bg-[#1d1613] border-[#3d2b21] text-[#f95721]'
+        }`}
+      >
         <Icon className="w-8 h-8 opacity-80" />
       </div>
 
       <div className="space-y-1 max-w-sm">
-        <h4 className="text-sm sm:text-base font-bold text-white font-sans">{title}</h4>
-        <p className="text-xs text-stone-400 font-sans leading-relaxed">{message}</p>
+        <h4 className={`text-sm sm:text-base font-bold font-sans ${isLight ? 'text-slate-900' : 'text-white'}`}>
+          {title}
+        </h4>
+        <p className={`text-xs font-sans leading-relaxed ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+          {message}
+        </p>
       </div>
 
       {actionLabel && onAction && (

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { EmptyState } from './EmptyState';
+import { useApp } from '../../store';
 
 export interface Column<T> {
   key: string;
@@ -33,29 +34,54 @@ export function DataTable<T>({
   emptyMessage,
   pagination
 }: DataTableProps<T>) {
+  const { theme } = useApp();
+  const isLight = theme === 'light';
+
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center p-16 rounded-2xl bg-[#141211]/90 border border-[#2b2523] space-y-3">
+      <div
+        className={`flex flex-col items-center justify-center p-16 rounded-2xl border space-y-3 ${
+          isLight ? 'bg-white border-slate-200' : 'bg-[#141211]/90 border-[#2b2523]'
+        }`}
+      >
         <Loader2 className="w-7 h-7 text-[#f95721] animate-spin" />
-        <span className="text-xs font-mono text-stone-400">Loading forensic records...</span>
+        <span className={`text-xs font-mono ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+          Loading forensic records...
+        </span>
       </div>
     );
   }
 
   if (!data || data.length === 0) {
     return (
-      <div className="rounded-2xl bg-[#141211]/90 border border-[#2b2523] p-4">
+      <div
+        className={`rounded-2xl border p-4 ${
+          isLight ? 'bg-white border-slate-200' : 'bg-[#141211]/90 border-[#2b2523]'
+        }`}
+      >
         <EmptyState title={emptyTitle} message={emptyMessage} />
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl bg-[#141211]/90 border border-[#2b2523] shadow-xl overflow-hidden backdrop-blur-md">
+    <div
+      className={`rounded-2xl border overflow-hidden backdrop-blur-md ${
+        isLight
+          ? 'bg-white border-slate-200 shadow-sm text-slate-800'
+          : 'bg-[#141211]/90 border-[#2b2523] shadow-xl text-stone-200'
+      }`}
+    >
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs sm:text-sm">
           <thead>
-            <tr className="border-b border-[#2b2523] bg-black/40 text-[11px] font-mono uppercase tracking-wider text-stone-400 select-none">
+            <tr
+              className={`border-b text-[11px] font-mono uppercase tracking-wider select-none ${
+                isLight
+                  ? 'border-slate-200 bg-slate-50 text-slate-500 font-bold'
+                  : 'border-[#2b2523] bg-black/40 text-stone-400'
+              }`}
+            >
               {columns.map((col) => (
                 <th key={col.key} className={`py-3.5 px-4 font-semibold ${col.className || ''}`}>
                   {col.header}
@@ -63,11 +89,13 @@ export function DataTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#221c1a]">
+          <tbody className={isLight ? 'divide-y divide-slate-100' : 'divide-y divide-[#221c1a]'}>
             {data.map((row) => (
               <tr
                 key={keyExtractor(row)}
-                className="hover:bg-white/[0.02] transition-colors group"
+                className={`transition-colors group ${
+                  isLight ? 'hover:bg-slate-50/80 text-slate-800' : 'hover:bg-white/[0.02]'
+                }`}
               >
                 {columns.map((col) => (
                   <td key={col.key} className={`py-3.5 px-4 ${col.className || ''}`}>
@@ -82,10 +110,23 @@ export function DataTable<T>({
 
       {/* Pagination Controls */}
       {pagination && pagination.totalPages > 1 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-[#26201e] bg-black/20 text-xs text-stone-400">
+        <div
+          className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t text-xs ${
+            isLight
+              ? 'border-slate-200 bg-slate-50 text-slate-600'
+              : 'border-[#26201e] bg-black/20 text-stone-400'
+          }`}
+        >
           <div className="font-mono">
-            Showing Page <strong className="text-white">{pagination.currentPage}</strong> of{' '}
-            <strong className="text-white">{pagination.totalPages}</strong> ({pagination.totalItems} records)
+            Showing Page{' '}
+            <strong className={isLight ? 'text-slate-900 font-bold' : 'text-white'}>
+              {pagination.currentPage}
+            </strong>{' '}
+            of{' '}
+            <strong className={isLight ? 'text-slate-900 font-bold' : 'text-white'}>
+              {pagination.totalPages}
+            </strong>{' '}
+            ({pagination.totalItems} records)
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -93,7 +134,11 @@ export function DataTable<T>({
               type="button"
               disabled={pagination.currentPage <= 1}
               onClick={() => pagination.onPageChange(pagination.currentPage - 1)}
-              className="p-1.5 rounded-lg border border-[#332a26] bg-[#1d1816] text-stone-300 hover:text-white hover:border-[#f95721] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+              className={`p-1.5 rounded-lg border disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all ${
+                isLight
+                  ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  : 'border-[#332a26] bg-[#1d1816] text-stone-300 hover:text-white hover:border-[#f95721]'
+              }`}
               aria-label="Previous page"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -115,6 +160,8 @@ export function DataTable<T>({
                     className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
                       isActive
                         ? 'bg-[#f95721] text-white shadow-[0_0_10px_rgba(249,87,33,0.4)]'
+                        : isLight
+                        ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 hover:border-slate-400'
                         : 'border border-[#332a26] bg-[#1d1816] text-stone-300 hover:text-white hover:border-[#f95721]'
                     }`}
                   >
@@ -124,7 +171,10 @@ export function DataTable<T>({
               }
               if (p === pagination.currentPage - 2 || p === pagination.currentPage + 2) {
                 return (
-                  <span key={p} className="px-1 text-stone-600 font-mono">
+                  <span
+                    key={p}
+                    className={`px-1 font-mono ${isLight ? 'text-slate-400' : 'text-stone-600'}`}
+                  >
                     ...
                   </span>
                 );
@@ -136,7 +186,11 @@ export function DataTable<T>({
               type="button"
               disabled={pagination.currentPage >= pagination.totalPages}
               onClick={() => pagination.onPageChange(pagination.currentPage + 1)}
-              className="p-1.5 rounded-lg border border-[#332a26] bg-[#1d1816] text-stone-300 hover:text-white hover:border-[#f95721] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+              className={`p-1.5 rounded-lg border disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all ${
+                isLight
+                  ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  : 'border-[#332a26] bg-[#1d1816] text-stone-300 hover:text-white hover:border-[#f95721]'
+              }`}
               aria-label="Next page"
             >
               <ChevronRight className="w-4 h-4" />

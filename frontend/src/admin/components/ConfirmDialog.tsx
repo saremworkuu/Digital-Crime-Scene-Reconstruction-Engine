@@ -127,6 +127,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
             <span>{confirmLabel}</span>
           </button>
+        </div>
       </div>
     </div>
   );

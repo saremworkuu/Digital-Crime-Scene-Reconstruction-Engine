@@ -188,7 +188,7 @@ export const Login: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => validateEmail(e.target.value)}
-                  placeholder="saremworkuu@gmail.com or admin"
+                  placeholder="Enter your email or username"
                   className={`w-full px-3.5 py-2.5 sm:py-3 pr-10 rounded-xl text-sm transition-all outline-none font-sans ${
                     emailError
                       ? isLight
@@ -263,7 +263,7 @@ export const Login: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <span>Sign In to Workspace</span>
+                    <span>Sign In</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -280,7 +280,9 @@ export const Login: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentPage('register')}
-                className="text-xs font-bold text-white hover:text-[#f95721] transition-colors cursor-pointer"
+                className={`text-xs font-bold transition-colors cursor-pointer ${
+                  isLight ? 'text-[#f95721] hover:text-[#ea580c] hover:underline' : 'text-[#f95721] hover:text-white'
+                }`}
               >
                 Sign Up Account
               </button>

@@ -532,45 +532,73 @@ export const UsersPage: React.FC = () => {
 
       {/* Drawer / Details for Selected User Active Sessions */}
       {selectedUser && (
-        <div className="p-5 rounded-2xl bg-[#141211]/90 border border-[#2b2523] shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-[#26201e] pb-3">
+        <div
+          className={`p-5 rounded-2xl border space-y-4 ${
+            isLight
+              ? 'bg-white border-slate-200 shadow-sm text-slate-800'
+              : 'bg-[#141211]/90 border-[#2b2523] shadow-xl text-stone-200'
+          }`}
+        >
+          <div
+            className={`flex items-center justify-between border-b pb-3 ${
+              isLight ? 'border-slate-100' : 'border-[#26201e]'
+            }`}
+          >
             <div className="space-y-0.5">
-              <h3 className="text-sm sm:text-base font-bold text-white font-sans flex items-center gap-2">
+              <h3
+                className={`text-sm sm:text-base font-bold font-sans flex items-center gap-2 ${
+                  isLight ? 'text-slate-900' : 'text-white'
+                }`}
+              >
                 <Laptop className="w-4 h-4 text-[#f95721]" />
                 <span>Active Login Sessions for {selectedUser.name}</span>
               </h3>
-              <p className="text-xs text-stone-400 font-sans">
+              <p className={`text-xs font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
                 Review authenticated devices and force terminate suspicious tokens
               </p>
             </div>
             <button
               type="button"
               onClick={() => setSelectedUser(null)}
-              className="text-xs font-mono text-stone-400 hover:text-white cursor-pointer"
+              className={`text-xs font-mono cursor-pointer ${
+                isLight ? 'text-slate-500 hover:text-slate-900' : 'text-stone-400 hover:text-white'
+              }`}
             >
               Close Panel
             </button>
           </div>
 
           {selectedUser.sessions.length === 0 ? (
-            <p className="text-xs font-mono text-stone-500 py-3">No active live sessions detected for this user.</p>
+            <p className={`text-xs font-mono py-3 ${isLight ? 'text-slate-400' : 'text-stone-500'}`}>
+              No active live sessions detected for this user.
+            </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {selectedUser.sessions.map((sess) => (
                 <div
                   key={sess.id}
-                  className="p-3.5 rounded-xl bg-black/40 border border-[#2b2523] flex items-center justify-between gap-3 text-xs"
+                  className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-200'
+                      : 'bg-black/40 border-[#2b2523]'
+                  }`}
                 >
                   <div className="space-y-1 min-w-0">
-                    <div className="font-semibold text-white font-sans truncate">{sess.device}</div>
-                    <div className="text-[11px] font-mono text-stone-400">
+                    <div className={`font-semibold font-sans truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      {sess.device}
+                    </div>
+                    <div className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
                       IP: {sess.ip} · Last Active: {sess.last_active}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleForceLogout(selectedUser, sess.id)}
-                    className="px-2.5 py-1.5 rounded-lg text-xs font-mono text-red-400 hover:text-white bg-red-950/50 hover:bg-red-900/60 border border-red-800/60 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-mono border transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                      isLight
+                        ? 'text-red-700 hover:bg-red-50 bg-white border-red-200'
+                        : 'text-red-400 hover:text-white bg-red-950/50 hover:bg-red-900/60 border-red-800/60'
+                    }`}
                     title="Terminate Session"
                   >
                     <LogOut className="w-3.5 h-3.5" />
@@ -585,76 +613,120 @@ export const UsersPage: React.FC = () => {
 
       {/* Modal: Create User */}
       {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md rounded-2xl bg-[#141211] border border-[#2e2724] p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-white font-sans">Create Forensic Examiner Account</h3>
+        <div
+          className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn ${
+            isLight ? 'bg-slate-900/40' : 'bg-black/80'
+          }`}
+        >
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl space-y-4 ${
+              isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-[#141211] border-[#2e2724] text-white'
+            }`}
+          >
+            <h3 className={`text-lg font-bold font-sans ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              Create Forensic Examiner Account
+            </h3>
             <form onSubmit={handleSaveCreate} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Full Name</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Full Name
+                </label>
                 <input
                   type="text"
                   required
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder="e.g. Alex Mercer"
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Official Email</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Official Email
+                </label>
                 <input
                   type="email"
                   required
                   value={formEmail}
                   onChange={(e) => setFormEmail(e.target.value)}
                   placeholder="e.g. a.mercer@dcsre.net"
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">Role</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                    Role
+                  </label>
                   <select
                     value={formRole}
                     onChange={(e) => setFormRole(e.target.value as AdminRole)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] cursor-pointer ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   >
-                    <option value="investigator">Investigator</option>
-                    <option value="auditor">Auditor</option>
-                    <option value="admin">Administrator</option>
+                    <option value="investigator" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Investigator</option>
+                    <option value="auditor" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Auditor</option>
+                    <option value="admin" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Administrator</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">Status</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                    Status
+                  </label>
                   <select
                     value={formStatus}
                     onChange={(e) => setFormStatus(e.target.value as UserStatus)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] cursor-pointer ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   >
-                    <option value="active">Active</option>
-                    <option value="disabled">Disabled</option>
+                    <option value="active" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Active</option>
+                    <option value="disabled" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Disabled</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Department</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Department
+                </label>
                 <input
                   type="text"
                   required
                   value={formDepartment}
                   onChange={(e) => setFormDepartment(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#26201e]">
+              <div className={`flex items-center justify-end gap-2.5 pt-3 border-t ${isLight ? 'border-slate-100' : 'border-[#26201e]'}`}>
                 <button
                   type="button"
                   onClick={() => setCreateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-stone-300 bg-stone-900 border border-stone-700 hover:bg-stone-800 cursor-pointer"
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${
+                    isLight
+                      ? 'text-slate-700 bg-slate-100 border-slate-300 hover:bg-slate-200'
+                      : 'text-stone-300 bg-stone-900 border-stone-700 hover:bg-stone-800'
+                  }`}
                 >
                   Cancel
                 </button>
@@ -672,75 +744,119 @@ export const UsersPage: React.FC = () => {
 
       {/* Modal: Edit User */}
       {editModalOpen && selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md rounded-2xl bg-[#141211] border border-[#2e2724] p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-white font-sans">Edit Account: {selectedUser.name}</h3>
+        <div
+          className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn ${
+            isLight ? 'bg-slate-900/40' : 'bg-black/80'
+          }`}
+        >
+          <div
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl space-y-4 ${
+              isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-[#141211] border-[#2e2724] text-white'
+            }`}
+          >
+            <h3 className={`text-lg font-bold font-sans ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              Edit Account: {selectedUser.name}
+            </h3>
             <form onSubmit={handleSaveEdit} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Full Name</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Full Name
+                </label>
                 <input
                   type="text"
                   required
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Email</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Email
+                </label>
                 <input
                   type="email"
                   required
                   value={formEmail}
                   onChange={(e) => setFormEmail(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">Role</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                    Role
+                  </label>
                   <select
                     value={formRole}
                     onChange={(e) => setFormRole(e.target.value as AdminRole)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] cursor-pointer ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   >
-                    <option value="investigator">Investigator</option>
-                    <option value="auditor">Auditor</option>
-                    <option value="admin">Administrator</option>
+                    <option value="investigator" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Investigator</option>
+                    <option value="auditor" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Auditor</option>
+                    <option value="admin" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Administrator</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">Status</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                    Status
+                  </label>
                   <select
                     value={formStatus}
                     onChange={(e) => setFormStatus(e.target.value as UserStatus)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] cursor-pointer ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   >
-                    <option value="active">Active</option>
-                    <option value="disabled">Disabled</option>
-                    <option value="suspended">Suspended</option>
+                    <option value="active" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Active</option>
+                    <option value="disabled" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Disabled</option>
+                    <option value="suspended" className={isLight ? 'bg-white text-slate-900' : 'bg-[#141211]'}>Suspended</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Department</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Department
+                </label>
                 <input
                   type="text"
                   required
                   value={formDepartment}
                   onChange={(e) => setFormDepartment(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm border focus:outline-none focus:border-[#f95721] ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#26201e]">
+              <div className={`flex items-center justify-end gap-2.5 pt-3 border-t ${isLight ? 'border-slate-100' : 'border-[#26201e]'}`}>
                 <button
                   type="button"
                   onClick={() => setEditModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-stone-300 bg-stone-900 border border-stone-700 hover:bg-stone-800 cursor-pointer"
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${
+                    isLight
+                      ? 'text-slate-700 bg-slate-100 border-slate-300 hover:bg-slate-200'
+                      : 'text-stone-300 bg-stone-900 border-stone-700 hover:bg-stone-800'
+                  }`}
                 >
                   Cancel
                 </button>

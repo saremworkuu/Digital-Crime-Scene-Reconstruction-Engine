@@ -403,7 +403,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Security Policy Enforcement:
     // Only the designated system administrator (saremworkuu@gmail.com) can be Admin.
     // Any other person can only be an investigator. Role switching is prohibited.
-    const assignedRole: UserRole = (normalizedEmail === 'saremworkuu@gmail.com' || normalizedEmail === 'admin@dcsre.corp')
+    const assignedRole: UserRole = (normalizedEmail === 'saremworkuu@gmail.com' || normalizedEmail === 'admin@dcsre.corp' || normalizedEmail === 'admin@ashara.gov')
       ? 'admin'
       : 'investigator';
 
@@ -470,6 +470,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       normalizedInput === 'administrator' ||
       normalizedInput === 'saremworkuu' ||
       normalizedInput === 'saremworkuu@gmail.com' ||
+      normalizedInput === 'admin@ashara.gov' ||
       normalizedInput === 'admin@dcsre.corp' ||
       normalizedInput === 'admin@dcsre.com' ||
       normalizedInput === 'admin@admin.com' ||

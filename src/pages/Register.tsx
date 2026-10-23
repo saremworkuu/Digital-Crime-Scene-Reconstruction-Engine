@@ -324,7 +324,9 @@ export const Register: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCurrentPage('login')}
-                className="text-xs font-bold text-white hover:text-[#f95721] transition-colors cursor-pointer"
+                className={`text-xs font-bold transition-colors cursor-pointer ${
+                  isLight ? 'text-[#f95721] hover:text-[#ea580c] hover:underline' : 'text-[#f95721] hover:text-white'
+                }`}
               >
                 Log In
               </button>

@@ -16,8 +16,12 @@ import { systemService } from '../../services/admin';
 import { AdminSettings } from '../types';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { toast } from '../../components/Toast';
+import { useApp } from '../../store';
 
 export const SettingsPage: React.FC = () => {
+  const { theme } = useApp();
+  const isLight = theme === 'light';
+
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -96,13 +100,17 @@ export const SettingsPage: React.FC = () => {
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#2e2926]">
+      <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b ${
+        isLight ? 'border-slate-200' : 'border-[#2e2926]'
+      }`}>
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-[#e7e5e4] flex items-center gap-2.5">
+          <h1 className={`text-xl font-bold tracking-tight flex items-center gap-2.5 ${
+            isLight ? 'text-slate-900' : 'text-[#e7e5e4]'
+          }`}>
             <Settings className="w-5 h-5 text-[#f95721]" />
             Global Platform Settings
           </h1>
-          <p className="text-xs text-[#a8a29e] mt-1">
+          <p className={`text-xs mt-1 ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
             Configure report branding, evidence retention horizons, default investigation timezones, and forensic security baselines.
           </p>
         </div>
@@ -111,15 +119,21 @@ export const SettingsPage: React.FC = () => {
       {/* Main Settings Form */}
       <form onSubmit={handleSave} className="space-y-6">
         {/* Section 1: Organization & Forensic Branding */}
-        <div className="bg-[#121110] border border-[#24201e] rounded-xl p-5 space-y-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-[#24201e]">
+        <div className={`rounded-xl p-5 space-y-4 border ${
+          isLight
+            ? 'bg-white border-slate-200 text-slate-800 shadow-sm'
+            : 'bg-[#121110] border-[#24201e]'
+        }`}>
+          <div className={`flex items-center gap-2 pb-2 border-b ${
+            isLight ? 'border-slate-200' : 'border-[#24201e]'
+          }`}>
             <Building className="w-4 h-4 text-[#f95721]" />
-            <h2 className="text-sm font-semibold text-[#e7e5e4]">Report Branding & Department Identity</h2>
+            <h2 className={`text-sm font-semibold ${isLight ? 'text-slate-900' : 'text-[#e7e5e4]'}`}>Report Branding & Department Identity</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div>
-              <label htmlFor="orgNameInput" className="block text-[#a8a29e] font-medium mb-1.5">
+              <label htmlFor="orgNameInput" className={`block font-medium mb-1.5 ${isLight ? 'text-slate-700' : 'text-[#a8a29e]'}`}>
                 Organization / Lab Name
               </label>
               <input
@@ -128,15 +142,19 @@ export const SettingsPage: React.FC = () => {
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
                 required
-                className="w-full px-3 py-2 rounded-lg bg-[#181615] border border-[#292422] text-[#e7e5e4] focus:outline-none focus:border-[#f95721] font-sans"
+                className={`w-full px-3 py-2 rounded-lg focus:outline-none focus:border-[#f95721] font-sans border ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900'
+                    : 'bg-[#181615] border-[#292422] text-[#e7e5e4]'
+                }`}
               />
-              <p className="text-[11px] text-[#78716c] mt-1">
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>
                 Appears on generated forensic PDFs, chain-of-custody headers, and court export packages.
               </p>
             </div>
 
             <div>
-              <label htmlFor="timeZoneSelect" className="block text-[#a8a29e] font-medium mb-1.5 flex items-center gap-1.5">
+              <label htmlFor="timeZoneSelect" className={`block font-medium mb-1.5 flex items-center gap-1.5 ${isLight ? 'text-slate-700' : 'text-[#a8a29e]'}`}>
                 <Globe className="w-3.5 h-3.5 text-[#f95721]" />
                 Investigation Reference Timezone
               </label>
@@ -144,17 +162,21 @@ export const SettingsPage: React.FC = () => {
                 id="timeZoneSelect"
                 value={timeZone}
                 onChange={(e) => setTimeZone(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-[#181615] border border-[#292422] text-[#e7e5e4] focus:outline-none focus:border-[#f95721] font-mono text-xs cursor-pointer"
+                className={`w-full px-3 py-2 rounded-lg focus:outline-none focus:border-[#f95721] font-mono text-xs cursor-pointer border ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900'
+                    : 'bg-[#181615] border-[#292422] text-[#e7e5e4]'
+                }`}
               >
-                <option value="UTC">UTC (Coordinated Universal Time) [Recommended for Forensic Timelines]</option>
-                <option value="America/New_York">America/New_York (EST/EDT)</option>
-                <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
-                <option value="Europe/London">Europe/London (GMT/BST)</option>
-                <option value="Europe/Berlin">Europe/Berlin (CET/CEST)</option>
-                <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
-                <option value="Africa/Addis_Ababa">Africa/Addis_Ababa (EAT +03:00)</option>
+                <option value="UTC" className={isLight ? 'bg-white text-slate-900' : ''}>UTC (Coordinated Universal Time) [Recommended for Forensic Timelines]</option>
+                <option value="America/New_York" className={isLight ? 'bg-white text-slate-900' : ''}>America/New_York (EST/EDT)</option>
+                <option value="America/Los_Angeles" className={isLight ? 'bg-white text-slate-900' : ''}>America/Los_Angeles (PST/PDT)</option>
+                <option value="Europe/London" className={isLight ? 'bg-white text-slate-900' : ''}>Europe/London (GMT/BST)</option>
+                <option value="Europe/Berlin" className={isLight ? 'bg-white text-slate-900' : ''}>Europe/Berlin (CET/CEST)</option>
+                <option value="Asia/Tokyo" className={isLight ? 'bg-white text-slate-900' : ''}>Asia/Tokyo (JST)</option>
+                <option value="Africa/Addis_Ababa" className={isLight ? 'bg-white text-slate-900' : ''}>Africa/Addis_Ababa (EAT +03:00)</option>
               </select>
-              <p className="text-[11px] text-[#78716c] mt-1">
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>
                 Timestamps normalized from EVTX, PCAP, and syslog are displayed relative to this baseline.
               </p>
             </div>
@@ -162,15 +184,21 @@ export const SettingsPage: React.FC = () => {
         </div>
 
         {/* Section 2: Data Retention & Compliance */}
-        <div className="bg-[#121110] border border-[#24201e] rounded-xl p-5 space-y-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-[#24201e]">
+        <div className={`rounded-xl p-5 space-y-4 border ${
+          isLight
+            ? 'bg-white border-slate-200 text-slate-800 shadow-sm'
+            : 'bg-[#121110] border-[#24201e]'
+        }`}>
+          <div className={`flex items-center gap-2 pb-2 border-b ${
+            isLight ? 'border-slate-200' : 'border-[#24201e]'
+          }`}>
             <Calendar className="w-4 h-4 text-[#f95721]" />
-            <h2 className="text-sm font-semibold text-[#e7e5e4]">Evidence & Audit Retention Policy</h2>
+            <h2 className={`text-sm font-semibold ${isLight ? 'text-slate-900' : 'text-[#e7e5e4]'}`}>Evidence & Audit Retention Policy</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div>
-              <label htmlFor="retentionDaysInput" className="block text-[#a8a29e] font-medium mb-1.5">
+              <label htmlFor="retentionDaysInput" className={`block font-medium mb-1.5 ${isLight ? 'text-slate-700' : 'text-[#a8a29e]'}`}>
                 Retention Horizon (Days)
               </label>
               <input
@@ -181,17 +209,25 @@ export const SettingsPage: React.FC = () => {
                 value={retentionDays}
                 onChange={(e) => setRetentionDays(Number(e.target.value))}
                 required
-                className="w-full px-3 py-2 rounded-lg bg-[#181615] border border-[#292422] text-[#e7e5e4] focus:outline-none focus:border-[#f95721] font-mono"
+                className={`w-full px-3 py-2 rounded-lg focus:outline-none focus:border-[#f95721] font-mono border ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900'
+                    : 'bg-[#181615] border-[#292422] text-[#e7e5e4]'
+                }`}
               />
-              <p className="text-[11px] text-[#78716c] mt-1">
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>
                 Cases older than this retention threshold will be queued for automated archive unless under Legal Hold.
               </p>
             </div>
 
-            <div className="p-3 bg-[#181615] border border-[#292422] rounded-lg flex items-start gap-2.5">
-              <Shield className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="text-[11px] text-[#a8a29e]">
-                <strong className="text-[#e7e5e4]">Legal Hold Overrule:</strong> Any active case flagged with a Legal Hold
+            <div className={`p-3 rounded-lg flex items-start gap-2.5 border ${
+              isLight
+                ? 'bg-emerald-50/70 border-emerald-200 text-slate-700'
+                : 'bg-[#181615] border-[#292422]'
+            }`}>
+              <Shield className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+              <div className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'}`}>
+                <strong className={isLight ? 'text-emerald-800' : 'text-[#e7e5e4]'}>Legal Hold Overrule:</strong> Any active case flagged with a Legal Hold
                 strictly prevents automated deletion, immutable evidence wiping, or audit log truncation regardless of retention limits.
               </div>
             </div>
@@ -199,15 +235,21 @@ export const SettingsPage: React.FC = () => {
         </div>
 
         {/* Section 3: Forensic Security & Auth Controls */}
-        <div className="bg-[#121110] border border-[#24201e] rounded-xl p-5 space-y-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-[#24201e]">
+        <div className={`rounded-xl p-5 space-y-4 border ${
+          isLight
+            ? 'bg-white border-slate-200 text-slate-800 shadow-sm'
+            : 'bg-[#121110] border-[#24201e]'
+        }`}>
+          <div className={`flex items-center gap-2 pb-2 border-b ${
+            isLight ? 'border-slate-200' : 'border-[#24201e]'
+          }`}>
             <Lock className="w-4 h-4 text-[#f95721]" />
-            <h2 className="text-sm font-semibold text-[#e7e5e4]">Authentication & Password Baselines</h2>
+            <h2 className={`text-sm font-semibold ${isLight ? 'text-slate-900' : 'text-[#e7e5e4]'}`}>Authentication & Password Baselines</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
             <div>
-              <label htmlFor="minPasswordLengthInput" className="block text-[#a8a29e] font-medium mb-1.5">
+              <label htmlFor="minPasswordLengthInput" className={`block font-medium mb-1.5 ${isLight ? 'text-slate-700' : 'text-[#a8a29e]'}`}>
                 Min Password Length
               </label>
               <input
@@ -217,13 +259,17 @@ export const SettingsPage: React.FC = () => {
                 max="32"
                 value={minPasswordLength}
                 onChange={(e) => setMinPasswordLength(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg bg-[#181615] border border-[#292422] text-[#e7e5e4] focus:outline-none focus:border-[#f95721] font-mono"
+                className={`w-full px-3 py-2 rounded-lg focus:outline-none focus:border-[#f95721] font-mono border ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900'
+                    : 'bg-[#181615] border-[#292422] text-[#e7e5e4]'
+                }`}
               />
-              <p className="text-[11px] text-[#78716c] mt-1">NIST SP 800-63B recommends 12+ chars.</p>
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>NIST SP 800-63B recommends 12+ chars.</p>
             </div>
 
             <div>
-              <label htmlFor="lockoutLimitInput" className="block text-[#a8a29e] font-medium mb-1.5">
+              <label htmlFor="lockoutLimitInput" className={`block font-medium mb-1.5 ${isLight ? 'text-slate-700' : 'text-[#a8a29e]'}`}>
                 Lockout Failed Attempt Threshold
               </label>
               <input
@@ -233,9 +279,13 @@ export const SettingsPage: React.FC = () => {
                 max="10"
                 value={lockoutLimit}
                 onChange={(e) => setLockoutLimit(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg bg-[#181615] border border-[#292422] text-[#e7e5e4] focus:outline-none focus:border-[#f95721] font-mono"
+                className={`w-full px-3 py-2 rounded-lg focus:outline-none focus:border-[#f95721] font-mono border ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900'
+                    : 'bg-[#181615] border-[#292422] text-[#e7e5e4]'
+                }`}
               />
-              <p className="text-[11px] text-[#78716c] mt-1">Locks account for 30m after failures.</p>
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>Locks account for 30m after failures.</p>
             </div>
 
             <div className="flex flex-col justify-center pt-2">
@@ -244,11 +294,15 @@ export const SettingsPage: React.FC = () => {
                   type="checkbox"
                   checked={twoFactorEnforced}
                   onChange={(e) => setTwoFactorEnforced(e.target.checked)}
-                  className="rounded border-[#3d3632] text-[#f95721] focus:ring-[#f95721] bg-[#181615] w-4 h-4"
+                  className={`rounded text-[#f95721] focus:ring-[#f95721] w-4 h-4 ${
+                    isLight
+                      ? 'border-slate-300 bg-white'
+                      : 'border-[#3d3632] bg-[#181615]'
+                  }`}
                 />
-                <span className="text-xs font-semibold text-[#e7e5e4]">Mandate 2FA (TOTP)</span>
+                <span className={`text-xs font-semibold ${isLight ? 'text-slate-900' : 'text-[#e7e5e4]'}`}>Mandate 2FA (TOTP)</span>
               </label>
-              <p className="text-[11px] text-[#78716c] mt-1">
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>
                 Forces all investigators and auditors to bind an authenticator app upon next sign-in.
               </p>
             </div>
@@ -269,13 +323,17 @@ export const SettingsPage: React.FC = () => {
       </form>
 
       {/* Danger Zone: Reset Demo Data */}
-      <div className="border border-red-500/30 bg-red-950/20 rounded-xl p-5 space-y-4">
+      <div className={`rounded-xl p-5 space-y-4 border ${
+        isLight
+          ? 'border-red-200 bg-red-50/70 text-slate-800'
+          : 'border-red-500/30 bg-red-950/20'
+      }`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-red-400" />
+            <AlertTriangle className={`w-5 h-5 ${isLight ? 'text-red-500' : 'text-red-400'}`} />
             <div>
-              <h2 className="text-sm font-semibold text-red-300">Administrative Demo Environment Reset</h2>
-              <p className="text-xs text-[#a8a29e] mt-0.5">
+              <h2 className={`text-sm font-semibold ${isLight ? 'text-red-700' : 'text-red-300'}`}>Administrative Demo Environment Reset</h2>
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'}`}>
                 Purge all custom cases, newly registered examiners, mock messages, and modifications. Restores original factory seed state.
               </p>
             </div>
@@ -283,7 +341,11 @@ export const SettingsPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setResetDialogOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-500/50 transition-colors cursor-pointer shrink-0"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer shrink-0 ${
+              isLight
+                ? 'bg-red-600 hover:bg-red-700 text-white'
+                : 'bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-500/50'
+            }`}
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reset Demo Data

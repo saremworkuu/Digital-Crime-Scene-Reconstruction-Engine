@@ -19,8 +19,12 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { rulesService } from '../../services/admin';
 import { AdminSigmaRule, RuleSeverity } from '../types';
 import { toast } from '../../components/Toast';
+import { useApp } from '../../store';
 
 export const RulesPage: React.FC = () => {
+  const { theme } = useApp();
+  const isLight = theme === 'light';
+
   const [rules, setRules] = useState<AdminSigmaRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -215,9 +219,13 @@ export const RulesPage: React.FC = () => {
       header: 'Rule Title & Query Spec',
       render: (r) => (
         <div className="space-y-1">
-          <div className="font-bold text-white font-sans text-xs sm:text-sm">{r.name}</div>
-          <p className="text-xs text-stone-400 font-sans line-clamp-1">{r.description}</p>
-          <code className="text-[10px] font-mono text-[#ff936b] bg-black/50 px-2 py-0.5 rounded border border-[#2b2523] block truncate max-w-md">
+          <div className={`font-bold font-sans text-xs sm:text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>{r.name}</div>
+          <p className={`text-xs font-sans line-clamp-1 ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>{r.description}</p>
+          <code className={`text-[10px] font-mono px-2 py-0.5 rounded border block truncate max-w-md ${
+            isLight
+              ? 'text-[#f95721] bg-orange-50/80 border-orange-200'
+              : 'text-[#ff936b] bg-black/50 border-[#2b2523]'
+          }`}>
             {r.query}
           </code>
         </div>
@@ -232,7 +240,11 @@ export const RulesPage: React.FC = () => {
       key: 'mitre_id',
       header: 'MITRE ATT&CK',
       render: (r) => (
-        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-black/60 border border-[#3b322e] text-[#f95721] font-bold">
+        <span className={`text-[11px] font-mono px-2 py-0.5 rounded border font-bold ${
+          isLight
+            ? 'bg-orange-50 border-orange-200 text-[#f95721]'
+            : 'bg-black/60 border-[#3b322e] text-[#f95721]'
+        }`}>
           {r.mitre_id}
         </span>
       )
@@ -241,7 +253,7 @@ export const RulesPage: React.FC = () => {
       key: 'times_triggered',
       header: 'Times Triggered',
       render: (r) => (
-        <span className="text-xs font-mono font-bold text-stone-300">
+        <span className={`text-xs font-mono font-bold ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
           {r.times_triggered} incidents
         </span>
       )
@@ -255,8 +267,12 @@ export const RulesPage: React.FC = () => {
           onClick={() => handleToggle(r)}
           className={`px-3 py-1 rounded-full text-xs font-mono font-semibold transition-all border cursor-pointer ${
             r.enabled
-              ? 'bg-emerald-950/70 border-emerald-600/60 text-emerald-300 hover:bg-emerald-900/60'
-              : 'bg-stone-900 border-stone-800 text-stone-500 hover:bg-stone-800'
+              ? isLight
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                : 'bg-emerald-950/70 border-emerald-600/60 text-emerald-300 hover:bg-emerald-900/60'
+              : isLight
+                ? 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200'
+                : 'bg-stone-900 border-stone-800 text-stone-500 hover:bg-stone-800'
           }`}
         >
           {r.enabled ? 'Enabled' : 'Disabled'}
@@ -272,7 +288,11 @@ export const RulesPage: React.FC = () => {
           <button
             type="button"
             onClick={() => handleTestRule(r)}
-            className="px-2 py-1 rounded-lg bg-stone-900 hover:bg-orange-950/50 text-[#f95721] border border-stone-700 hover:border-[#f95721]/50 text-xs font-mono flex items-center gap-1 cursor-pointer transition-colors"
+            className={`px-2 py-1 rounded-lg border text-xs font-mono flex items-center gap-1 cursor-pointer transition-colors ${
+              isLight
+                ? 'bg-slate-100 hover:bg-orange-50 text-[#f95721] border-slate-200 hover:border-orange-300'
+                : 'bg-stone-900 hover:bg-orange-950/50 text-[#f95721] border-stone-700 hover:border-[#f95721]/50'
+            }`}
             title="Execute Rule Against Telemetry"
           >
             <Play className="w-3 h-3" />
@@ -282,7 +302,11 @@ export const RulesPage: React.FC = () => {
           <button
             type="button"
             onClick={() => handleOpenEdit(r)}
-            className="p-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 cursor-pointer transition-colors"
+            className={`p-1.5 rounded-lg border cursor-pointer transition-colors ${
+              isLight
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border-slate-200'
+                : 'bg-stone-900 hover:bg-stone-800 text-stone-300 hover:text-white border-stone-700'
+            }`}
             title="Edit Rule"
           >
             <Edit className="w-3.5 h-3.5" />
@@ -291,7 +315,11 @@ export const RulesPage: React.FC = () => {
           <button
             type="button"
             onClick={() => handleDelete(ruleItem(r))}
-            className="p-1.5 rounded-lg bg-stone-900 hover:bg-red-950/50 text-stone-500 hover:text-red-400 border border-stone-700 hover:border-red-600/50 cursor-pointer transition-colors"
+            className={`p-1.5 rounded-lg border cursor-pointer transition-colors ${
+              isLight
+                ? 'bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 border-slate-200 hover:border-red-200'
+                : 'bg-stone-900 hover:bg-red-950/50 text-stone-500 hover:text-red-400 border-stone-700 hover:border-red-600/50'
+            }`}
             title="Delete Rule"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -307,13 +335,19 @@ export const RulesPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#282321]">
+      <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b ${
+        isLight ? 'border-slate-200' : 'border-[#282321]'
+      }`}>
         <div>
-          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight font-sans flex items-center gap-2.5">
+          <h1 className={`text-xl sm:text-2xl font-black tracking-tight font-sans flex items-center gap-2.5 ${
+            isLight ? 'text-slate-900' : 'text-white'
+          }`}>
             <ShieldAlert className="w-6 h-6 text-[#f95721]" />
             <span>Sigma Detection Rules Engine</span>
           </h1>
-          <p className="text-xs sm:text-sm text-stone-400 font-sans mt-0.5">
+          <p className={`text-xs sm:text-sm font-sans mt-0.5 ${
+            isLight ? 'text-slate-500' : 'text-stone-400'
+          }`}>
             Real-time telemetry tripwires, MITRE ATT&CK correlation, and rule validation
           </p>
         </div>
@@ -330,7 +364,11 @@ export const RulesPage: React.FC = () => {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold text-stone-300 bg-stone-900 hover:bg-stone-800 border border-stone-700 cursor-pointer"
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold cursor-pointer border transition-colors ${
+              isLight
+                ? 'text-slate-700 bg-white hover:bg-slate-50 border-slate-300'
+                : 'text-stone-300 bg-stone-900 hover:bg-stone-800 border-stone-700'
+            }`}
             title="Import Rules from JSON"
           >
             <Upload className="w-3.5 h-3.5" />
@@ -340,7 +378,11 @@ export const RulesPage: React.FC = () => {
           <button
             type="button"
             onClick={handleExportJson}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold text-stone-300 bg-stone-900 hover:bg-stone-800 border border-stone-700 cursor-pointer"
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono font-semibold cursor-pointer border transition-colors ${
+              isLight
+                ? 'text-slate-700 bg-white hover:bg-slate-50 border-slate-300'
+                : 'text-stone-300 bg-stone-900 hover:bg-stone-800 border-stone-700'
+            }`}
             title="Export Rules as JSON"
           >
             <Download className="w-3.5 h-3.5" />
@@ -396,43 +438,63 @@ export const RulesPage: React.FC = () => {
 
       {/* Test Results Modal */}
       {testModalOpen && testResults && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-lg rounded-2xl bg-[#141211] border border-[#2e2623] p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#26201e]">
-              <div className="flex items-center gap-2 text-white font-bold font-sans">
+        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn ${
+          isLight ? 'bg-slate-900/40' : 'bg-black/80'
+        }`}>
+          <div className={`w-full max-w-lg rounded-2xl p-6 space-y-4 border ${
+            isLight
+              ? 'bg-white border-slate-200 shadow-xl text-slate-800'
+              : 'bg-[#141211] border-[#2e2623] shadow-2xl text-white'
+          }`}>
+            <div className={`flex items-center justify-between pb-3 border-b ${
+              isLight ? 'border-slate-200' : 'border-[#26201e]'
+            }`}>
+              <div className={`flex items-center gap-2 font-bold font-sans ${
+                isLight ? 'text-slate-900' : 'text-white'
+              }`}>
                 <Play className="w-4 h-4 text-[#f95721]" />
                 <span>Sigma Rule Simulation Output</span>
               </div>
               <button
                 type="button"
                 onClick={() => setTestModalOpen(false)}
-                className="text-xs font-mono text-stone-400 hover:text-white cursor-pointer"
+                className={`text-xs font-mono cursor-pointer ${
+                  isLight ? 'text-slate-400 hover:text-slate-700' : 'text-stone-400 hover:text-white'
+                }`}
               >
                 Close
               </button>
             </div>
 
-            <div className="flex items-center justify-between p-3 rounded-xl bg-black/40 border border-[#28221f]">
-              <span className="text-xs font-mono text-stone-400">Total Telemetry Matches</span>
-              <span className="text-base font-mono font-bold text-emerald-400">
+            <div className={`flex items-center justify-between p-3 rounded-xl border ${
+              isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-[#28221f]'
+            }`}>
+              <span className={`text-xs font-mono ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>Total Telemetry Matches</span>
+              <span className="text-base font-mono font-bold text-emerald-600 dark:text-emerald-400">
                 {testResults.matchCount} Event Hits
               </span>
             </div>
 
             <div className="space-y-2">
-              <span className="text-[11px] font-mono text-stone-400 uppercase tracking-wider block">
+              <span className={`text-[11px] font-mono uppercase tracking-wider block ${
+                isLight ? 'text-slate-500' : 'text-stone-400'
+              }`}>
                 Sample Correlated Log Snippets
               </span>
               {testResults.sampleMatches.map((m, idx) => (
                 <div
                   key={idx}
-                  className="p-3 rounded-xl bg-black/50 border border-[#2b2523] space-y-1 font-mono text-xs"
+                  className={`p-3 rounded-xl border space-y-1 font-mono text-xs ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/50 border-[#2b2523]'
+                  }`}
                 >
-                  <div className="flex items-center justify-between text-stone-500 text-[10px]">
+                  <div className={`flex items-center justify-between text-[10px] ${
+                    isLight ? 'text-slate-400' : 'text-stone-500'
+                  }`}>
                     <span>Host: {m.host}</span>
                     <span>{m.timestamp}</span>
                   </div>
-                  <div className="text-stone-200">{m.log_snippet}</div>
+                  <div className={isLight ? 'text-slate-800' : 'text-stone-200'}>{m.log_snippet}</div>
                 </div>
               ))}
             </div>
@@ -441,7 +503,11 @@ export const RulesPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setTestModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-stone-300 bg-stone-900 hover:bg-stone-800 border border-stone-700 cursor-pointer"
+                className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${
+                  isLight
+                    ? 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+                    : 'text-stone-300 bg-stone-900 hover:bg-stone-800 border-stone-700'
+                }`}
               >
                 Done
               </button>
@@ -452,78 +518,110 @@ export const RulesPage: React.FC = () => {
 
       {/* Modal: Create Rule */}
       {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-lg rounded-2xl bg-[#141211] border border-[#2e2724] p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-white font-sans">Author Sigma Detection Rule</h3>
+        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn ${
+          isLight ? 'bg-slate-900/40' : 'bg-black/80'
+        }`}>
+          <div className={`w-full max-w-lg rounded-2xl p-6 space-y-4 border ${
+            isLight
+              ? 'bg-white border-slate-200 shadow-xl'
+              : 'bg-[#141211] border-[#2e2724] shadow-2xl'
+          }`}>
+            <h3 className={`text-lg font-bold font-sans ${isLight ? 'text-slate-900' : 'text-white'}`}>Author Sigma Detection Rule</h3>
             <form onSubmit={handleSaveCreate} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Rule Name</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Rule Name</label>
                 <input
                   type="text"
                   required
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder="e.g. Cobalt Strike Beaconing via Rundll32"
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] border ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">Severity</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Severity</label>
                   <select
                     value={formSeverity}
                     onChange={(e) => setFormSeverity(e.target.value as RuleSeverity)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   >
-                    <option value="critical">Critical</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
+                    <option value="critical" className={isLight ? 'text-slate-900 bg-white' : ''}>Critical</option>
+                    <option value="high" className={isLight ? 'text-slate-900 bg-white' : ''}>High</option>
+                    <option value="medium" className={isLight ? 'text-slate-900 bg-white' : ''}>Medium</option>
+                    <option value="low" className={isLight ? 'text-slate-900 bg-white' : ''}>Low</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">MITRE ATT&CK ID</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>MITRE ATT&CK ID</label>
                   <input
                     type="text"
                     required
                     value={formMitre}
                     onChange={(e) => setFormMitre(e.target.value)}
                     placeholder="e.g. T1059.001"
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Description</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Description</label>
                 <input
                   type="text"
                   required
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
                   placeholder="Brief description of adversary activity detected"
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] border ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Detection Query</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Detection Query</label>
                 <textarea
                   rows={3}
                   required
                   value={formQuery}
                   onChange={(e) => setFormQuery(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white font-mono text-xs focus:outline-none focus:border-[#f95721] resize-none"
+                  className={`w-full px-3 py-2 rounded-xl font-mono text-xs focus:outline-none focus:border-[#f95721] resize-none border ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#26201e]">
+              <div className={`flex items-center justify-end gap-2.5 pt-3 border-t ${
+                isLight ? 'border-slate-200' : 'border-[#26201e]'
+              }`}>
                 <button
                   type="button"
                   onClick={() => setCreateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-stone-300 bg-stone-900 border border-stone-700 hover:bg-stone-800 cursor-pointer"
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer border ${
+                    isLight
+                      ? 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+                      : 'text-stone-300 bg-stone-900 border-stone-700 hover:bg-stone-800'
+                  }`}
                 >
                   Cancel
                 </button>
@@ -541,75 +639,107 @@ export const RulesPage: React.FC = () => {
 
       {/* Modal: Edit Rule */}
       {editModalOpen && editingRule && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-lg rounded-2xl bg-[#141211] border border-[#2e2724] p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-white font-sans">Edit Sigma Rule: {editingRule.name}</h3>
+        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn ${
+          isLight ? 'bg-slate-900/40' : 'bg-black/80'
+        }`}>
+          <div className={`w-full max-w-lg rounded-2xl p-6 space-y-4 border ${
+            isLight
+              ? 'bg-white border-slate-200 shadow-xl'
+              : 'bg-[#141211] border-[#2e2724] shadow-2xl'
+          }`}>
+            <h3 className={`text-lg font-bold font-sans ${isLight ? 'text-slate-900' : 'text-white'}`}>Edit Sigma Rule: {editingRule.name}</h3>
             <form onSubmit={handleSaveEdit} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Rule Name</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Rule Name</label>
                 <input
                   type="text"
                   required
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] border ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">Severity</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Severity</label>
                   <select
                     value={formSeverity}
                     onChange={(e) => setFormSeverity(e.target.value as RuleSeverity)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] cursor-pointer border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   >
-                    <option value="critical">Critical</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
+                    <option value="critical" className={isLight ? 'text-slate-900 bg-white' : ''}>Critical</option>
+                    <option value="high" className={isLight ? 'text-slate-900 bg-white' : ''}>High</option>
+                    <option value="medium" className={isLight ? 'text-slate-900 bg-white' : ''}>Medium</option>
+                    <option value="low" className={isLight ? 'text-slate-900 bg-white' : ''}>Low</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-mono text-stone-400 mb-1">MITRE ATT&CK ID</label>
+                  <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>MITRE ATT&CK ID</label>
                   <input
                     type="text"
                     required
                     value={formMitre}
                     onChange={(e) => setFormMitre(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                    className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-black/40 border-[#2e2724] text-white'
+                    }`}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Description</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Description</label>
                 <input
                   type="text"
                   required
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white text-xs sm:text-sm focus:outline-none focus:border-[#f95721]"
+                  className={`w-full px-3 py-2 rounded-xl text-xs sm:text-sm focus:outline-none focus:border-[#f95721] border ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-stone-400 mb-1">Detection Query</label>
+                <label className={`block text-xs font-mono mb-1 ${isLight ? 'text-slate-700' : 'text-stone-400'}`}>Detection Query</label>
                 <textarea
                   rows={3}
                   required
                   value={formQuery}
                   onChange={(e) => setFormQuery(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-[#2e2724] text-white font-mono text-xs focus:outline-none focus:border-[#f95721] resize-none"
+                  className={`w-full px-3 py-2 rounded-xl font-mono text-xs focus:outline-none focus:border-[#f95721] resize-none border ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900'
+                      : 'bg-black/40 border-[#2e2724] text-white'
+                  }`}
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#26201e]">
+              <div className={`flex items-center justify-end gap-2.5 pt-3 border-t ${
+                isLight ? 'border-slate-200' : 'border-[#26201e]'
+              }`}>
                 <button
                   type="button"
                   onClick={() => setEditModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-stone-300 bg-stone-900 border border-stone-700 hover:bg-stone-800 cursor-pointer"
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer border ${
+                    isLight
+                      ? 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+                      : 'text-stone-300 bg-stone-900 border-stone-700 hover:bg-stone-800'
+                  }`}
                 >
                   Cancel
                 </button>
