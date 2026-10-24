@@ -8,9 +8,11 @@ import {
   Sun,
   Moon,
   Menu,
-  X
+  X,
+  UserCog
 } from 'lucide-react';
 import { Forensic3DCore } from './Forensic3DCore';
+import { EditProfileModal } from './EditProfileModal';
 
 interface TopNavProps {
   onToggleMobileMenu?: () => void;
@@ -33,6 +35,7 @@ export const TopNav: React.FC<TopNavProps> = ({
 
   const isLight = theme === 'light';
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#121110]/95 backdrop-blur-md border-b border-[#282422] px-4 sm:px-6 py-3 transition-colors shadow-lg">
@@ -145,7 +148,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                       : (isLight ? 'text-slate-800 hover:text-[#ea580c]' : 'text-[#e7e5e4] hover:text-[#f95721]')
                   }`}
                 >
-                  Investigator Dashboard
+                  Dashboard
                 </button>
               )}
             </div>
@@ -285,6 +288,20 @@ export const TopNav: React.FC<TopNavProps> = ({
                       </button>
                     )}
 
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRoleDropdownOpen(false);
+                        setIsEditProfileOpen(true);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors cursor-pointer font-medium ${
+                        isLight ? 'text-slate-700 hover:bg-slate-100' : 'text-[#e7e5e4] hover:bg-[#23201e]'
+                      }`}
+                    >
+                      <UserCog className="w-3.5 h-3.5 text-[#f95721]" />
+                      <span>Edit Profile</span>
+                    </button>
+
                     <div className={`border-t my-1 ${isLight ? 'border-slate-200' : 'border-[#2e2926]'}`} />
 
                     <button
@@ -321,6 +338,11 @@ export const TopNav: React.FC<TopNavProps> = ({
         </div>
 
       </div>
+
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+      />
     </header>
   );
 };

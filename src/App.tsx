@@ -194,13 +194,13 @@ const MainLayout: React.FC = () => {
           </div>
           <div className="text-[10px] text-[#78716c]">
             <a
-              href="https://www.flaticon.com/free-icons/finger-scan"
+              href="https://www.flaticon.com/free-icons/finger-print"
               target="_blank"
               rel="noopener noreferrer"
-              title="finger scan icons"
+              title="finger print icons"
               className="hover:text-[#f95721] transition-colors"
             >
-              Finger scan icons created by PixelVerse - Flaticon
+              Finger print icons created by sonnycandra - Flaticon
             </a>
           </div>
         </div>

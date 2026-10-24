@@ -1,6 +1,6 @@
 # Auth schemas
 from typing import Optional, Any
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -51,3 +51,22 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=6, max_length=128)
     confirm_password: Optional[str] = None
+
+
+class UpdateProfileRequest(BaseModel):
+    name: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    department: Optional[str] = None
+    badge_id: Optional[str] = None
+    badgeId: Optional[str] = None
+
+    @model_validator(mode="after")
+    def sync_badge_fields(self) -> "UpdateProfileRequest":
+        if self.badge_id and not self.badgeId:
+            self.badgeId = self.badge_id
+        elif self.badgeId and not self.badge_id:
+            self.badge_id = self.badgeId
+        return self
+
+

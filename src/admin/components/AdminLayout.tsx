@@ -16,10 +16,12 @@ import {
   Menu,
   X,
   UserCheck,
+  UserCog,
   LogOut
 } from 'lucide-react';
 import { useApp } from '../../store';
 import { messagesService } from '../../services/admin';
+import { EditProfileModal } from '../../components/EditProfileModal';
 
 interface NavItem {
   id: string;
@@ -57,6 +59,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState<number>(0);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   // Poll or refresh unread messages count periodically
   useEffect(() => {
@@ -143,15 +146,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         {/* Right: User Identity, Role Badge & Exit to Workspace */}
         <div className="flex items-center gap-3">
           {currentUser && (
-            <div
-              className={`hidden sm:flex items-center gap-2.5 px-3 py-1 rounded-lg border ${
+            <button
+              type="button"
+              onClick={() => setIsEditProfileOpen(true)}
+              title="Click to edit administrator profile"
+              className={`hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-lg border transition-all cursor-pointer group text-left ${
                 theme === 'light'
-                  ? 'bg-slate-100 border-slate-200'
-                  : 'bg-[#181615] border-[#262220]'
+                  ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 hover:border-slate-300'
+                  : 'bg-[#181615] hover:bg-[#201d1b] border-[#262220] hover:border-[#383330]'
               }`}
             >
               <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border ${
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border transition-transform group-hover:scale-105 ${
                   theme === 'light'
                     ? 'bg-orange-100 text-[#f95721] border-orange-200'
                     : 'bg-[#24130d] text-[#f95721] border-[#ea580c]/30'
@@ -192,7 +198,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               >
                 {currentUser.role}
               </span>
-            </div>
+              <UserCog className="w-3.5 h-3.5 text-[#f95721] opacity-75 group-hover:opacity-100 transition-opacity ml-0.5" />
+            </button>
           )}
 
         </div>
@@ -286,6 +293,19 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               theme === 'light' ? 'border-slate-200' : 'border-[#24201e]'
             }`}
           >
+            <button
+              type="button"
+              onClick={() => setIsEditProfileOpen(true)}
+              className={`text-left text-xs font-medium transition-colors cursor-pointer py-1 px-2 ${
+                theme === 'light'
+                  ? 'text-slate-600 hover:text-[#ea580c]'
+                  : 'text-[#a8a29e] hover:text-[#f95721]'
+              } ${isCollapsed ? 'text-center px-0' : ''}`}
+              title="Edit Profile"
+            >
+              {isCollapsed ? 'Profile' : 'Edit Profile'}
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -407,6 +427,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                   type="button"
                   onClick={() => {
                     setMobileMenuOpen(false);
+                    setIsEditProfileOpen(true);
+                  }}
+                  className={`text-left text-xs font-medium transition-colors cursor-pointer py-1.5 px-2 ${
+                    theme === 'light'
+                      ? 'text-slate-600 hover:text-[#ea580c]'
+                      : 'text-[#a8a29e] hover:text-[#f95721]'
+                  }`}
+                >
+                  Edit Profile
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
                     if (typeof window !== 'undefined') window.location.hash = '';
                     setCurrentPage('home');
                   }}
@@ -443,6 +478,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           {children}
         </main>
       </div>
+
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+      />
     </div>
   );
 };

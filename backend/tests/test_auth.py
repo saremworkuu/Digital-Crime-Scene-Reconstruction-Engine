@@ -73,3 +73,20 @@ def test_syntax_and_missing_tld_rejected():
         with pytest.raises(HTTPException) as exc_info:
             validate_real_email(email)
         assert exc_info.value.status_code == 400
+
+
+def test_update_profile_schema_validation():
+    from app.schemas.auth import UpdateProfileRequest
+
+    req = UpdateProfileRequest(
+        name="Agent Mulder",
+        email="mulder@fbi.gov",
+        department="X-Files Unit",
+        badge_id="FBI-90210"
+    )
+    assert req.name == "Agent Mulder"
+    assert req.email == "mulder@fbi.gov"
+    assert req.department == "X-Files Unit"
+    assert req.badge_id == "FBI-90210"
+    assert req.badgeId == "FBI-90210"
+

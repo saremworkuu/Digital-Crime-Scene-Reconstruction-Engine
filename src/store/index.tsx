@@ -113,6 +113,15 @@ interface AppContextType {
   }) => { success: boolean; message: string; user?: User };
   loginUser: (email: string, password?: string) => { success: boolean; message: string; user?: User };
   logout: () => void;
+  updateCurrentUserProfile: (updates: {
+    name?: string;
+    email?: string;
+    department?: string;
+    badge_id?: string;
+    badgeId?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }) => Promise<{ success: boolean; message: string; user?: User }>;
 
   // Compatibility aliases
   state: {
@@ -583,6 +592,105 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCurrentUser(null);
     setCurrentPage('home');
     toast.success(`${roleLabel} ${userName} has signed out successfully. Session closed.`);
+  };
+
+  const updateCurrentUserProfile = async (updates: {
+    name?: string;
+    email?: string;
+    department?: string;
+    badge_id?: string;
+    badgeId?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }): Promise<{ success: boolean; message: string; user?: User }> => {
+    if (!currentUser) {
+      return { success: false, message: 'No active session found.' };
+    }
+
+    const effectiveBadge = updates.badgeId || updates.badge_id;
+
+    // Optional: handle password change if requested
+    if (updates.newPassword) {
+      if (!updates.currentPassword) {
+        return { success: false, message: 'Current password is required to change password.' };
+      }
+      try {
+        await authApi.changePassword(updates.currentPassword, updates.newPassword);
+      } catch (err: any) {
+        console.warn('Password update through API encountered error:', err);
+        const detailMsg = err?.response?.data?.detail;
+        if (detailMsg) {
+          return { success: false, message: String(detailMsg) };
+        }
+        if (currentUser.password && currentUser.password !== updates.currentPassword) {
+          return { success: false, message: 'Incorrect current password.' };
+        }
+      }
+    }
+
+    // Attempt backend profile update
+    let backendUser: User | null = null;
+    try {
+      const resp = await authApi.updateProfile({
+        name: updates.name,
+        username: updates.name,
+        email: updates.email,
+        department: updates.department,
+        badge_id: effectiveBadge,
+        badgeId: effectiveBadge
+      });
+      if (resp && resp.data) {
+        backendUser = resp.data;
+      }
+    } catch (apiErr: any) {
+      console.warn('Backend updateProfile API call failed (proceeding with local session update):', apiErr);
+      if (apiErr?.response?.data?.detail) {
+        return { success: false, message: String(apiErr.response.data.detail) };
+      }
+    }
+
+    const updatedUser: User = {
+      ...currentUser,
+      ...(backendUser || {}),
+      name: updates.name?.trim() ? updates.name.trim() : (backendUser?.name || currentUser.name),
+      email: updates.email?.trim() ? updates.email.trim() : (backendUser?.email || currentUser.email),
+      department: updates.department !== undefined ? updates.department : (backendUser?.department || currentUser.department),
+      badgeId: effectiveBadge !== undefined ? effectiveBadge : (backendUser?.badgeId || currentUser.badgeId),
+      badge_id: effectiveBadge !== undefined ? effectiveBadge : (backendUser?.badge_id || currentUser.badge_id),
+      password: updates.newPassword ? updates.newPassword : currentUser.password
+    };
+
+    // Update active user in state
+    setCurrentUserState(updatedUser);
+
+    // Update users directory list and persist to localStorage
+    setUsers(prev => {
+      const next = prev.map(u => (u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase()) ? { ...u, ...updatedUser } : u);
+      try {
+        localStorage.setItem('dcsre_registered_examiners', JSON.stringify(next));
+      } catch (e) {
+        console.warn('Failed to save updated users to localStorage', e);
+      }
+      return next;
+    });
+
+    // Audit log
+    logAuditAction(
+      'USER_UPDATED',
+      'user',
+      currentUser.id,
+      {
+        action: 'PROFILE_UPDATED',
+        updated_name: updatedUser.name,
+        updated_email: updatedUser.email,
+        updated_department: updatedUser.department,
+        updated_badge: updatedUser.badgeId,
+        password_changed: Boolean(updates.newPassword)
+      },
+      { id: currentUser.id, name: updatedUser.name, role: updatedUser.role }
+    );
+
+    return { success: true, message: 'Profile updated successfully.', user: updatedUser };
   };
 
   // Active Case Data Subsets
@@ -1214,6 +1322,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         registerUser,
         loginUser,
         logout,
+        updateCurrentUserProfile,
         theme,
         setTheme,
         toggleTheme,

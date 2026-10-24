@@ -21,6 +21,7 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
     ChangePasswordRequest,
+    UpdateProfileRequest,
 )
 from app.core.config import settings
 from slowapi import Limiter
@@ -39,6 +40,8 @@ def to_user_response(user: User) -> UserResponse:
         if hasattr(user.created_at, "isoformat")
         else str(user.created_at or "")
     )
+    dept = getattr(user, "department", None) or "Digital Forensic Incident Response (DFIR) Command"
+    badge = getattr(user, "badge_id", None) or getattr(user, "badgeId", None) or ("ADMIN-001" if role_str == "admin" else "DFIR-4821")
     return UserResponse(
         id=str(user.id),
         username=user.username,
@@ -46,6 +49,9 @@ def to_user_response(user: User) -> UserResponse:
         email=user.email,
         role=role_str,
         is_active=user.is_active,
+        department=dept,
+        badge_id=badge,
+        badgeId=badge,
         created_at=created_at_str,
     )
 
@@ -344,6 +350,97 @@ def get_current_user_profile(
     current_user: User = Depends(get_current_user),
 ):
     return to_user_response(current_user)
+
+
+@router.put("/me", response_model=UserResponse)
+@router.patch("/me", response_model=UserResponse)
+def update_current_user_profile(
+    data: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one field to update.",
+        )
+
+    # Update Name / Username
+    new_username = updates.get("username") or updates.get("name")
+    if new_username:
+        new_username = new_username.strip()
+        if len(new_username) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Name must be at least 2 characters.",
+            )
+        # Check uniqueness if changed
+        if new_username.lower() != current_user.username.lower():
+            existing = db.execute(
+                select(User).where(
+                    func.lower(User.username) == new_username.lower(),
+                    User.id != current_user.id
+                )
+            ).scalars().first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Username or name '{new_username}' is already in use.",
+                )
+        current_user.username = new_username
+
+    # Update Email
+    new_email = updates.get("email")
+    if new_email:
+        new_email = new_email.strip().lower()
+        validate_real_email(new_email)
+        if new_email != current_user.email.lower():
+            existing = db.execute(
+                select(User).where(
+                    func.lower(User.email) == new_email,
+                    User.id != current_user.id
+                )
+            ).scalars().first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Email address '{new_email}' is already registered.",
+                )
+        current_user.email = new_email
+
+    # Update Department
+    if "department" in updates and updates["department"] is not None:
+        current_user.department = updates["department"].strip()
+
+    # Update Badge ID
+    badge = updates.get("badge_id") or updates.get("badgeId")
+    if badge:
+        if hasattr(current_user, "badge_id"):
+            current_user.badge_id = badge.strip()
+        elif hasattr(current_user, "badgeId"):
+            current_user.badgeId = badge.strip()
+
+    current_user.updated_at = datetime.now(timezone.utc)
+
+    try:
+        db.commit()
+        db.refresh(current_user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Profile update conflicts with an existing database record.",
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred while updating profile: {str(e)}",
+        )
+
+    return to_user_response(current_user)
+
 
 
 @router.get("/users", response_model=list[UserResponse])

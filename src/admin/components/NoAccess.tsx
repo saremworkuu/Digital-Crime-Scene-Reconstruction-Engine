@@ -74,14 +74,17 @@ export const NoAccess: React.FC<NoAccessProps> = ({
           >
             <ArrowLeft className="w-4 h-4" />
             <span>
-              Return to {currentUser?.role === 'investigator' ? 'Investigator Dashboard' : currentUser?.role === 'admin' ? 'Admin Dashboard' : 'Home'}
+              Return to {currentUser?.role === 'investigator' ? 'Dashboard' : currentUser?.role === 'admin' ? 'Admin Dashboard' : 'Home'}
             </span>
           </button>
 
           {!currentUser && (
             <button
               type="button"
-              onClick={() => setCurrentPage('login')}
+              onClick={() => {
+                if (typeof window !== 'undefined') window.location.hash = '';
+                setCurrentPage('login');
+              }}
               className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-[#f95721] hover:bg-[#ea580c] transition-all shadow-[0_0_15px_rgba(249,87,33,0.4)] flex items-center justify-center gap-2 cursor-pointer"
             >
               <LogIn className="w-4 h-4" />

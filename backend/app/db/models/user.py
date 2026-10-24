@@ -77,6 +77,11 @@ class User(Base):
         nullable=True
     )
 
+    badge_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True
+    )
+
     two_factor_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=False,

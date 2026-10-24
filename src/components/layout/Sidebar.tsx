@@ -13,9 +13,11 @@ import {
   LogOut, 
   Shield, 
   UserCheck,
-  RefreshCw 
+  RefreshCw,
+  UserCog
 } from 'lucide-react';
 import { UserRole } from '../../types';
+import { EditProfileModal } from '../EditProfileModal';
 
 interface SidebarProps {
   onOpenNewTask: () => void;
@@ -32,6 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
   } = useApp();
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -186,6 +189,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
                 <button
                   type="button"
                   onClick={() => {
+                    setProfileDropdownOpen(false);
+                    setIsEditProfileOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
+                >
+                  <UserCog className="w-3.5 h-3.5 text-[#f95721]" />
+                  <span>Edit Profile</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     resetToInitialScenarios();
                     setProfileDropdownOpen(false);
                   }}
@@ -210,6 +224,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
         </div>
       </div>
 
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+      />
     </aside>
   );
 };
