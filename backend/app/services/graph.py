@@ -1,4 +1,10 @@
 # Graph service (Stage 7)
+# B2/B3 fixes:
+# - No hardcoded subnet_map (violates Rule 2).
+# - IP-to-host merging is purely evidence-derived.
+# - Adversary styling only on *adversary_infrastructure* entities from findings.
+# - Victim/compromised highlight only on target hosts confirmed by findings.
+# - One node per entity; no duplicate HOST and EXT for the same address.
 import ipaddress
 import re
 from typing import Any, Dict, List, Set, Tuple
@@ -30,7 +36,7 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
     )
     workstation = details.get("WorkstationName")
 
-    raw_msg = str(details.get("raw_message") or details.get("raw") or (event.get("raw") if is_dict else getattr(event, "raw", "")) or "")
+    raw_msg = str(details.get("raw_message") or details.get("raw") or "")
     if not host:
         syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
         if syslog_match:
@@ -50,7 +56,6 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
         (event.get("action") if is_dict else getattr(event, "action", None))
         or details.get("action")
         or details.get("message")
-        or details.get("Message")
         or (event.get("event_type") if is_dict else getattr(event, "event_type", "Event"))
     )
 
@@ -77,7 +82,12 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
         (event.get("is_attack_path") if is_dict else getattr(event, "is_attack_path", False))
         or details.get("is_attack_path")
         or (event.get("severity") if is_dict else getattr(event, "severity", "low")) in ("critical", "high")
-        or any(w in str(action).lower() for w in ["cvlk", "rclone", "psexec", "mimikatz", "vssadmin", "ntdsutil", "comsvcs", "shadow", "drop"])
+        or any(w in str(action).lower() for w in [
+            "cvlk", "rclone", "psexec", "mimikatz", "vssadmin", "ntdsutil",
+            "comsvcs", "shadow", "drop", "authorized_keys", "useradd",
+            "wget", "/tmp/", "chmod +x", "mysqldump", "scp ", "/dev/tcp",
+            "history -c", "crontab", "miner", "3333", "4444"
+        ])
     )
 
     ts = (event.get("timestamp") if is_dict else getattr(event, "timestamp", None)) or details.get("timestamp") or ""
@@ -99,10 +109,18 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
     }
 
 
-def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dict[str, Any]:
+def build_attack_graph(
+    events: List[Any],
+    attack_path_only: bool = False,
+    findings: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     """
     Constructs directional graph topology with IP-to-host merging, distinct node roles,
     and aggregated edges with counts.
+
+    B2: IP-to-host merging is evidence-derived only (no hardcoded map).
+    B3: adversary vs victim roles are determined from findings, not from
+        raw is_attack flag.
     """
     nodes_map: Dict[str, Dict[str, Any]] = {}
     edges_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -110,23 +128,31 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
 
     extracted_events = [extract_event_fields(e) for e in events]
 
-    # Pass 1: Build IP-to-host mapping from evidence records containing both
+    # B2 Pass 1: Build IP-to-host mapping from evidence records containing both.
+    # No pre-seeded hardcoded map — only what's in the evidence.
     for evt in extracted_events:
         h = evt["host"] or evt["workstation"]
         if h and evt["src_ip"] and is_private_ip(evt["src_ip"]):
             ip_to_host[evt["src_ip"]] = h
+        # Also check dst_ip → host when the host is clearly internal
+        if h and evt["dst_ip"] and is_private_ip(evt["dst_ip"]):
+            # Only map if the event's host matches what we'd expect for the dst
+            if h not in ip_to_host.values():
+                ip_to_host.setdefault(evt["dst_ip"], h)
 
-    # Pre-defined known IP-to-host mappings for this subnet
-    subnet_map = {
-        "10.20.1.12": "WS-HR-12",
-        "10.20.2.2": "DC-01",
-        "10.20.2.5": "SRV-FS-02",
-        "10.20.2.20": "SRV-BKP-01",
-        "10.20.2.30": "WS-ACC-03",
-    }
-    for ip, h in subnet_map.items():
-        if ip not in ip_to_host:
-            ip_to_host[ip] = h
+    # B3: Determine adversary infrastructure and compromised hosts from findings
+    adversary_ips: Set[str] = set()
+    compromised_hosts: Set[str] = set()
+    if findings:
+        for f in findings:
+            role = f.get("actor_role") or ""
+            actor = f.get("actor") or ""
+            if role == "adversary_infrastructure" and actor:
+                adversary_ips.add(actor)
+            target_role = f.get("target_role") or ""
+            target = f.get("target_host") or ""
+            if target_role == "compromised_host" and target:
+                compromised_hosts.add(target)
 
     # Pass 2: Create nodes and aggregate edges
     for evt in extracted_events:
@@ -134,21 +160,22 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
         ts = evt["timestamp"]
         evt_id = evt["id"]
 
-        # Resolve host (merge private IP into host if mapped)
+        # Resolve host (merge private IP into host if evidence-derived mapping exists)
         effective_host = evt["host"]
         if not effective_host and evt["src_ip"] and evt["src_ip"] in ip_to_host:
             effective_host = ip_to_host[evt["src_ip"]]
 
-        # 1. Host Node
+        # 1. Host Node — only mark compromised if findings confirm it (B3)
         if effective_host:
             h_id = f"host-{effective_host}"
+            is_compromised_by_finding = effective_host in compromised_hosts
             if h_id not in nodes_map:
                 nodes_map[h_id] = {
                     "id": h_id,
                     "label": effective_host,
                     "type": "host",
-                    "role": "internal_host",
-                    "is_compromised": is_attack,
+                    "role": "compromised_host" if is_compromised_by_finding else "internal_host",
+                    "is_compromised": is_compromised_by_finding,
                     "is_attack_path": is_attack,
                     "event_count": 1,
                     "event_ids": [evt_id] if evt_id else [],
@@ -159,12 +186,14 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                 nodes_map[h_id]["event_count"] += 1
                 if evt_id and evt_id not in nodes_map[h_id]["event_ids"]:
                     nodes_map[h_id]["event_ids"].append(evt_id)
-                if is_attack:
+                if is_compromised_by_finding:
                     nodes_map[h_id]["is_compromised"] = True
+                    nodes_map[h_id]["role"] = "compromised_host"
+                if is_attack:
                     nodes_map[h_id]["is_attack_path"] = True
                 nodes_map[h_id]["last_seen"] = ts
 
-        # 2. User Node (from logon / user actions)
+        # 2. User Node
         if evt["user"]:
             u_id = f"user-{evt['user']}"
             if u_id not in nodes_map:
@@ -188,7 +217,6 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                     nodes_map[u_id]["is_compromised"] = True
                     nodes_map[u_id]["is_attack_path"] = True
 
-            # Connect User -> Host
             if effective_host:
                 h_id = f"host-{effective_host}"
                 edge_key = (u_id, h_id)
@@ -210,7 +238,7 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                     if is_attack:
                         edges_map[edge_key]["is_attack_path"] = True
 
-        # 3. Source IP (if not merged into host)
+        # 3. Source IP
         src_ip = evt["src_ip"]
         src_node_id = None
         if src_ip:
@@ -218,15 +246,18 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                 src_node_id = f"host-{ip_to_host[src_ip]}"
             else:
                 is_priv = is_private_ip(src_ip)
+                # B3: adversary role from findings, not from is_attack alone
+                is_adversary = src_ip in adversary_ips
                 src_node_id = f"ip-{src_ip}"
+                node_type = "host" if is_priv else "external_ip"
+                node_role = "adversary_infrastructure" if is_adversary else ("internal_host" if is_priv else "external_ip")
                 if src_node_id not in nodes_map:
                     nodes_map[src_node_id] = {
                         "id": src_node_id,
                         "label": src_ip,
-                        "type": "host" if is_priv else "external_ip",
-                        "role": "internal_host" if is_priv else "external_ip",
-                        # Only mark compromised if a finding involved it
-                        "is_compromised": is_attack,
+                        "type": node_type,
+                        "role": node_role,
+                        "is_compromised": is_adversary,
                         "is_attack_path": is_attack,
                         "event_count": 1,
                         "event_ids": [evt_id] if evt_id else [],
@@ -237,8 +268,10 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                     nodes_map[src_node_id]["event_count"] += 1
                     if evt_id and evt_id not in nodes_map[src_node_id]["event_ids"]:
                         nodes_map[src_node_id]["event_ids"].append(evt_id)
-                    if is_attack:
+                    if is_adversary:
                         nodes_map[src_node_id]["is_compromised"] = True
+                        nodes_map[src_node_id]["role"] = "adversary_infrastructure"
+                    if is_attack:
                         nodes_map[src_node_id]["is_attack_path"] = True
 
         # 4. Destination IP
@@ -249,15 +282,17 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                 dst_node_id = f"host-{ip_to_host[dst_ip]}"
             else:
                 is_priv = is_private_ip(dst_ip)
+                is_adversary_dst = dst_ip in adversary_ips
                 dst_node_id = f"ip-{dst_ip}"
+                node_type = "host" if is_priv else "external_ip"
+                node_role = "adversary_infrastructure" if is_adversary_dst else ("internal_host" if is_priv else "external_ip")
                 if dst_node_id not in nodes_map:
                     nodes_map[dst_node_id] = {
                         "id": dst_node_id,
                         "label": dst_ip,
-                        "type": "host" if is_priv else "external_ip",
-                        "role": "internal_host" if is_priv else "external_ip",
-                        # External IPs are adversary infrastructure if attack involves them
-                        "is_compromised": is_attack and not is_priv,
+                        "type": node_type,
+                        "role": node_role,
+                        "is_compromised": is_adversary_dst,
                         "is_attack_path": is_attack,
                         "event_count": 1,
                         "event_ids": [evt_id] if evt_id else [],
@@ -268,10 +303,13 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
                     nodes_map[dst_node_id]["event_count"] += 1
                     if evt_id and evt_id not in nodes_map[dst_node_id]["event_ids"]:
                         nodes_map[dst_node_id]["event_ids"].append(evt_id)
+                    if is_adversary_dst:
+                        nodes_map[dst_node_id]["role"] = "adversary_infrastructure"
+                        nodes_map[dst_node_id]["is_compromised"] = True
                     if is_attack:
                         nodes_map[dst_node_id]["is_attack_path"] = True
 
-        # Connect Source Node -> Destination Node (Network Flow)
+        # Connect Source Node -> Destination Node
         if src_node_id and dst_node_id and src_node_id != dst_node_id:
             edge_key = (src_node_id, dst_node_id)
             proto_port = f"{evt['protocol'] or 'TCP'}/{evt['dst_port'] or 443}"
@@ -311,4 +349,3 @@ def build_attack_graph(events: List[Any], attack_path_only: bool = False) -> Dic
         "nodes": nodes,
         "edges": edges,
     }
-

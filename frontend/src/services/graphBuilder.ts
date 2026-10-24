@@ -13,28 +13,28 @@ function isPrivateIp(ipStr: string): boolean {
 
 /**
  * Builds nodes and directional relationship edges for Cytoscape / Canvas rendering (Stage 7).
- * Merges IP and Host when known, distinguishes internal vs external roles, and aggregates edges.
+ *
+ * B2 fix: IP-to-host merging is purely evidence-derived — no hardcoded subnet maps.
+ * B3 fix: adversary vs victim classification is based on is_attack_path AND
+ *         whether the node is a source (adversary) or target (victim/compromised).
+ *         External addresses that merely appear in normal traffic are NOT marked adversary.
  */
 export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData {
   const nodeMap = new Map<string, GraphNode>();
   const edgeMap = new Map<string, GraphEdge>();
+  // B2: evidence-derived IP-to-host mapping only
   const ipToHost = new Map<string, string>();
 
   if (!Array.isArray(events) || events.length === 0) {
     return { nodes: [], edges: [] };
   }
 
-  // Pre-seed known subnet host mappings
-  const subnetMap: Record<string, string> = {
-    '10.20.1.12': 'WS-HR-12',
-    '10.20.2.2': 'DC-01',
-    '10.20.2.5': 'SRV-FS-02',
-    '10.20.2.20': 'SRV-BKP-01',
-    '10.20.2.30': 'WS-ACC-03',
-  };
-  Object.entries(subnetMap).forEach(([ip, h]) => ipToHost.set(ip, h));
+  // B3: Track which external IPs are sources of attack events (adversary infra)
+  // and which internal hosts are targets (compromised)
+  const adversaryIps = new Set<string>();
+  const compromisedHosts = new Set<string>();
 
-  // Pass 1: Build IP-to-host mapping from records with both
+  // B2 Pass 1: Build IP-to-host mapping from evidence (no pre-seeded data)
   for (const evt of events) {
     const h = evt.host && evt.host !== 'unknown_host' ? evt.host : null;
     if (h && evt.src_ip && isPrivateIp(evt.src_ip)) {
@@ -42,20 +42,35 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
     }
   }
 
-  // Pass 2: Build graph entities and aggregated edges
+  // B3 Pass: Classify adversary vs compromised from attack-path events
+  for (const evt of events) {
+    if (!evt.is_attack_path) continue;
+    // External source of attack → adversary infrastructure
+    if (evt.src_ip && !isPrivateIp(evt.src_ip)) {
+      adversaryIps.add(evt.src_ip);
+    }
+    // Internal host that is a target → compromised
+    const effectiveHost = evt.host && evt.host !== 'unknown_host' ? evt.host : null;
+    if (effectiveHost) {
+      // The host is the victim/target, NOT the attacker
+      const hostIsAttacker = evt.src_ip === effectiveHost;
+      if (!hostIsAttacker) {
+        compromisedHosts.add(effectiveHost);
+      }
+    }
+    // External destination of C2/exfil → adversary infra
+    if (evt.dst_ip && !isPrivateIp(evt.dst_ip) &&
+        (evt.mitre_tactic === 'Command and Control' || evt.mitre_tactic === 'Exfiltration' || evt.mitre_tactic === 'Impact')) {
+      adversaryIps.add(evt.dst_ip);
+    }
+  }
+
+  // Pass 2: Build graph entities
   for (const evt of events) {
     if (!evt) continue;
 
-    const isAttack = Boolean(
-      evt.is_attack_path ||
-      evt.severity === 'critical' ||
-      evt.severity === 'high' ||
-      /fail|error|attack|malware|shell|sudo|privilege|brute|inject|drop|unauthorized|cvlk|rclone|psexec|lsass|comsvcs/i.test(
-        String(evt.action || '') + ' ' + String(evt.mitre_technique || '')
-      )
-    );
+    const isAttack = Boolean(evt.is_attack_path || evt.severity === 'critical' || evt.severity === 'high');
 
-    // Resolve effective host (merge private IP if known)
     let effectiveHost = evt.host && evt.host !== 'unknown_host' ? evt.host : null;
     if (!effectiveHost && evt.src_ip && ipToHost.has(evt.src_ip)) {
       effectiveHost = ipToHost.get(evt.src_ip)!;
@@ -64,12 +79,14 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
     // 1. Host Node
     if (effectiveHost) {
       const hostId = `host-${effectiveHost}`;
+      const isComp = compromisedHosts.has(effectiveHost);
       if (!nodeMap.has(hostId)) {
         nodeMap.set(hostId, {
           id: hostId,
           label: effectiveHost,
           type: 'host',
-          is_compromised: isAttack,
+          role: isComp ? 'compromised_host' : 'internal_host',
+          is_compromised: isComp,
           is_attack_path: isAttack,
           event_count: 1,
           first_seen: evt.timestamp,
@@ -79,15 +96,13 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
       } else {
         const node = nodeMap.get(hostId)!;
         node.event_count++;
-        if (isAttack) {
-          node.is_compromised = true;
-          node.is_attack_path = true;
-        }
+        if (isComp) { node.is_compromised = true; node.role = 'compromised_host'; }
+        if (isAttack) node.is_attack_path = true;
         node.last_seen = evt.timestamp;
       }
     }
 
-    // 2. User Node (only from actual user accounts)
+    // 2. User Node
     if (evt.user && evt.user !== 'unknown' && evt.user !== 'SYSTEM' && evt.user !== '-') {
       const userId = `user-${evt.user}`;
       if (!nodeMap.has(userId)) {
@@ -95,6 +110,7 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
           id: userId,
           label: `user: ${evt.user}`,
           type: 'user',
+          role: isAttack ? 'compromised_account' : 'user_account',
           is_compromised: isAttack,
           is_attack_path: isAttack,
           event_count: 1,
@@ -105,28 +121,18 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
       } else {
         const node = nodeMap.get(userId)!;
         node.event_count++;
-        if (isAttack) {
-          node.is_compromised = true;
-          node.is_attack_path = true;
-        }
+        if (isAttack) { node.is_compromised = true; node.is_attack_path = true; }
         node.last_seen = evt.timestamp;
       }
 
-      // Edge: user -> host
       if (effectiveHost) {
         const hostId = `host-${effectiveHost}`;
         const edgeId = `edge-${userId}-${hostId}`;
         if (!edgeMap.has(edgeId)) {
           edgeMap.set(edgeId, {
-            id: edgeId,
-            source: userId,
-            target: hostId,
-            label: 'Logon / Activity',
-            timestamp: evt.timestamp,
-            count: 1,
-            is_attack_path: isAttack,
-            severity: evt.severity || 'low',
-            event_ids: [evt.id]
+            id: edgeId, source: userId, target: hostId,
+            label: 'Logon / Activity', timestamp: evt.timestamp,
+            count: 1, is_attack_path: isAttack, severity: evt.severity || 'low', event_ids: [evt.id]
           });
         } else {
           const edge = edgeMap.get(edgeId)!;
@@ -144,13 +150,15 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
         srcNodeId = `host-${ipToHost.get(evt.src_ip)}`;
       } else {
         const isPriv = isPrivateIp(evt.src_ip);
+        const isAdversary = adversaryIps.has(evt.src_ip);
         srcNodeId = `ip-${evt.src_ip}`;
         if (!nodeMap.has(srcNodeId)) {
           nodeMap.set(srcNodeId, {
             id: srcNodeId,
             label: evt.src_ip,
             type: isPriv ? 'host' : 'ip',
-            is_compromised: isAttack,
+            role: isAdversary ? 'adversary_infrastructure' : (isPriv ? 'internal_host' : 'external_ip'),
+            is_compromised: isAdversary,
             is_attack_path: isAttack,
             event_count: 1,
             first_seen: evt.timestamp,
@@ -160,10 +168,8 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
         } else {
           const node = nodeMap.get(srcNodeId)!;
           node.event_count++;
-          if (isAttack) {
-            node.is_compromised = true;
-            node.is_attack_path = true;
-          }
+          if (isAdversary) { node.is_compromised = true; node.role = 'adversary_infrastructure'; }
+          if (isAttack) node.is_attack_path = true;
         }
       }
     }
@@ -175,13 +181,15 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
         dstNodeId = `host-${ipToHost.get(evt.dst_ip)}`;
       } else {
         const isPriv = isPrivateIp(evt.dst_ip);
+        const isAdversaryDst = adversaryIps.has(evt.dst_ip);
         dstNodeId = `ip-${evt.dst_ip}`;
         if (!nodeMap.has(dstNodeId)) {
           nodeMap.set(dstNodeId, {
             id: dstNodeId,
             label: evt.dst_ip,
             type: isPriv ? 'host' : 'ip',
-            is_compromised: isAttack && !isPriv,
+            role: isAdversaryDst ? 'adversary_infrastructure' : (isPriv ? 'internal_host' : 'external_ip'),
+            is_compromised: isAdversaryDst,
             is_attack_path: isAttack,
             event_count: 1,
             first_seen: evt.timestamp,
@@ -191,31 +199,27 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
         } else {
           const node = nodeMap.get(dstNodeId)!;
           node.event_count++;
+          if (isAdversaryDst) { node.is_compromised = true; node.role = 'adversary_infrastructure'; }
           if (isAttack) node.is_attack_path = true;
         }
       }
     }
 
-    // Connect Source -> Destination (Aggregate Network Flow)
+    // Connect Source -> Destination (aggregated)
     if (srcNodeId && dstNodeId && srcNodeId !== dstNodeId) {
       const edgeId = `edge-${srcNodeId}-${dstNodeId}`;
       const protoPort = `${evt.protocol || 'TCP'}/${evt.dst_port || 443}`;
       if (!edgeMap.has(edgeId)) {
         edgeMap.set(edgeId, {
-          id: edgeId,
-          source: srcNodeId,
-          target: dstNodeId,
-          label: protoPort,
-          protocol: evt.protocol,
-          timestamp: evt.timestamp,
-          count: 1,
-          is_attack_path: isAttack,
-          severity: evt.severity || 'low',
-          event_ids: [evt.id]
+          id: edgeId, source: srcNodeId, target: dstNodeId,
+          label: protoPort, protocol: evt.protocol,
+          timestamp: evt.timestamp, count: 1,
+          is_attack_path: isAttack, severity: evt.severity || 'low', event_ids: [evt.id]
         });
       } else {
         const edge = edgeMap.get(edgeId)!;
         edge.count++;
+        // B3: aggregate label: "TCP/443 x25"
         edge.label = `${protoPort} x${edge.count}`;
         if (isAttack) edge.is_attack_path = true;
       }
@@ -227,4 +231,3 @@ export function buildGraphFromEvents(events: NormalizedEvent[]): AttackGraphData
     edges: Array.from(edgeMap.values())
   };
 }
-

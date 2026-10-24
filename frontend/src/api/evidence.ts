@@ -7,6 +7,12 @@ export const evidenceApi = {
   },
   upload: async (caseId: string, formData: FormData) => {
     let token = apiClient.getToken();
+    if (!token && typeof window !== 'undefined') {
+      try {
+        token = localStorage.getItem('dcsre_access_token') || localStorage.getItem('token');
+      } catch {}
+    }
+
     if (!token) {
       try {
         const loginRes = await fetch('/api/v1/auth/login', {
@@ -15,12 +21,17 @@ export const evidenceApi = {
           body: JSON.stringify({ email: 'saremworkuu@gmail.com', password: 'Admin@2026!' }),
         });
         const loginData = await loginRes.json();
-        if (loginData?.token) {
-          token = loginData.token;
+        const tokenVal = loginData?.token || loginData?.access_token;
+        if (tokenVal) {
+          token = tokenVal;
           apiClient.setToken(token);
+          try {
+            localStorage.setItem('dcsre_access_token', token);
+            localStorage.setItem('token', token);
+          } catch {}
         }
       } catch {
-        // Fallback to backend default investigator authentication
+        // Fallback to local authentication
       }
     }
 

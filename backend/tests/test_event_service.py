@@ -77,10 +77,10 @@ def test_save_normalized_event_creates_event_and_association():
     )
     assert event.event_type == "ssh_login"
     assert event.source == "auth_log"
-    assert event.details == {
-        "user": "alice",
-        "result": "success",
-    }
+    # A4 fix: details now includes ingested_at — use superset check
+    expected_core = {"user": "alice", "result": "success"}
+    assert expected_core.items() <= event.details.items(), \
+        f"Core details missing from event.details: {event.details}"
     assert event.fingerprint == calculate_fingerprint({
         "timestamp": "2026-10-15T10:00:00+00:00",
         "event_type": "ssh_login",

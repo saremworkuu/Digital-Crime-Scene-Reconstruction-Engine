@@ -315,11 +315,14 @@ def _create_single_evidence(
             try:
                 records = parser.parse(file_path, original_filename=filename)
                 normalized_records = normalize_records(records, default_filename=filename)
+                # A4: pass the real upload time so event_service can store
+                # ingested_at in details separately from the evidence event_time.
                 save_normalized_events(
                     db=db,
                     case_id=evidence.case_id,
                     evidence_id=evidence.id,
                     records=normalized_records,
+                    ingested_at=evidence.uploaded_at,
                 )
                 evidence.parsing_status = ParsingStatus.PARSED
                 evidence.parsing_error = None

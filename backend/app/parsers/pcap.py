@@ -22,6 +22,8 @@ class PCAPParser(BaseParser):
             raise RuntimeError("scapy is required for PCAP packet parsing. Please install scapy.")
 
         events = []
+        seen_fingerprints = set()  # For deduplication on (source_file, source_record_id)
+        
         with PcapReader(str(file_path)) as reader:
             for packet_number, packet in enumerate(reader, start=1):
                 source_ip = None
@@ -77,6 +79,12 @@ class PCAPParser(BaseParser):
                                 an = an.payload if hasattr(an, "payload") else None
                     except Exception:
                         pass
+
+                # Deduplication fingerprint: (source_file, packet_number)
+                fingerprint = (filename, packet_number)
+                if fingerprint in seen_fingerprints:
+                    continue
+                seen_fingerprints.add(fingerprint)
 
                 # Action summary
                 if query_name:

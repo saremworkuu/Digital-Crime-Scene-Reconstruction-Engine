@@ -44,10 +44,32 @@ class GenericCSVJSONParser(BaseParser):
 
         raise ValueError(f"Unsupported file extension or content: {extension}")
 
+    def _detect_csv_type(self, headers: list[str]) -> str:
+        """Detect CSV type from headers: network flow, metrics, or generic."""
+        headers_lower = [h.lower() for h in headers]
+        
+        # Check for network flow: src/dst IP and ports
+        network_indicators = ["src_ip", "source_ip", "dst_ip", "destination_ip", "src_port", "source_port", "dst_port", "destination_port"]
+        network_count = sum(1 for h in headers_lower if any(ind in h for ind in network_indicators))
+        if network_count >= 2:
+            return "network_connection"
+        
+        # Check for time series metrics: cpu, mem, net columns
+        metrics_indicators = ["cpu", "memory", "mem", "net", "network", "bytes_in", "bytes_out", "load"]
+        metrics_count = sum(1 for h in headers_lower if any(ind in h for ind in metrics_indicators))
+        if metrics_count >= 2:
+            return "metric"
+        
+        # Default to generic
+        return "csv_record"
+
     def _parse_csv(self, file_path: Path, filename: str) -> list[dict[str, Any]]:
         events = []
         with file_path.open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file)
+            # Detect CSV type from headers
+            csv_type = self._detect_csv_type(reader.fieldnames or [])
+            
             for row_idx, row in enumerate(reader, start=1):
                 d = dict(row)
                 ts = (
@@ -79,7 +101,25 @@ class GenericCSVJSONParser(BaseParser):
                 host = d.get("host") or d.get("computer") or src_ip or "unknown_host"
                 host_inferred = False if d.get("host") or d.get("computer") else True
 
-                action_val = d.get("action") or f"{proto or 'IP'} {src_ip or ''}:{src_port or ''} -> {dst_ip or ''}:{dst_port or ''}"
+                # Build action based on CSV type
+                if csv_type == "metric":
+                    cpu_val = d.get("cpu") or d.get("cpu_percent") or d.get("cpu_usage")
+                    mem_val = d.get("memory") or d.get("mem") or d.get("memory_percent") or d.get("mem_usage")
+                    summary_parts = []
+                    if cpu_val:
+                        summary_parts.append(f"CPU {cpu_val}%")
+                    if mem_val:
+                        summary_parts.append(f"MEM {mem_val}%")
+                    action_val = ", ".join(summary_parts) if summary_parts else f"Metrics for {host}"
+                elif csv_type == "network_connection":
+                    action_val = d.get("action") or f"{proto or 'IP'} {src_ip or ''}:{src_port or ''} -> {dst_ip or ''}:{dst_port or ''}"
+                else:
+                    # Generic: show key columns
+                    key_vals = []
+                    for key in ["host", "user", "action", "status", "event_type"]:
+                        if d.get(key):
+                            key_vals.append(f"{key}={d[key]}")
+                    action_val = ", ".join(key_vals) if key_vals else "CSV record"
 
                 events.append({
                     **d,
@@ -88,7 +128,7 @@ class GenericCSVJSONParser(BaseParser):
                     "host_inferred": host_inferred,
                     "source_file": filename,
                     "source_record_id": row_idx,
-                    "event_type": d.get("event_type", "netflow" if "proto" in d or "bytes_out" in d else "csv_record"),
+                    "event_type": csv_type,
                     "event_id": d.get("event_id"),
                     "user": d.get("user") or d.get("username"),
                     "process": d.get("process") or d.get("image"),

@@ -46,7 +46,9 @@ export const Timeline: React.FC = () => {
 
     sourceType: '',
 
-    onlyAttackPath: false
+    onlyAttackPath: false,
+
+    showMetrics: false
 
   });
 
@@ -105,6 +107,9 @@ export const Timeline: React.FC = () => {
       if (filters.sourceType && evt.source_type !== filters.sourceType) return false;
 
       if (filters.onlyAttackPath && !evt.is_attack_path) return false;
+
+      // Hide metric events by default unless showMetrics is enabled
+      if (!filters.showMetrics && evt.event_type === 'metric') return false;
 
 
 

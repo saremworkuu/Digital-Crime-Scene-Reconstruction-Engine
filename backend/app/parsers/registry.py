@@ -7,6 +7,16 @@ from app.parsers.txt_parser import TextFileParser
 from app.parsers.web_access import WebAccessParser
 
 
+def _is_auditd_file(filename: str) -> bool:
+    """Return True when the filename strongly suggests a Linux auditd log."""
+    lower = filename.lower()
+    return (
+        "audit" in lower
+        or lower.endswith(".audit")
+        or lower.endswith(".auditd")
+    )
+
+
 def get_parser(
     file_path: Path,
     original_filename: str | None = None,
@@ -15,13 +25,23 @@ def get_parser(
 
     filename = original_filename or file_path.name
     extension = Path(filename).suffix.lower()
+    lower_name = filename.lower()
+
+    # ------------------------------------------------------------------ #
+    # Auditd: checked before generic .log routing so it always wins       #
+    # ------------------------------------------------------------------ #
+    if _is_auditd_file(filename):
+        try:
+            from app.parsers.auditd import AuditdParser
+            return AuditdParser()
+        except Exception:
+            return LogFileParser()
 
     if extension in (".csv", ".json"):
         return GenericCSVJSONParser()
 
     if extension == ".log":
         # Check if it looks like an auth log or access log by filename
-        lower_name = filename.lower()
         if "auth" in lower_name or "secure" in lower_name:
             return AuthLogParser()
         if "access" in lower_name or "nginx" in lower_name or "apache" in lower_name or "web" in lower_name:

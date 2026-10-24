@@ -7,9 +7,10 @@ export interface ParseResult {
 
 /**
  * Normalizes input raw timestamp to UTC ISO 8601 string (FR-PARSE-7)
+ * A4 FIX: Returns null if timestamp cannot be parsed (never synthesizes current time)
  */
-export function normalizeToUTC(rawTimestamp: string | number | undefined): string {
-  if (!rawTimestamp) return new Date().toISOString();
+export function normalizeToUTC(rawTimestamp: string | number | undefined): string | null {
+  if (!rawTimestamp) return null;
   try {
     // Unix epoch in seconds or milliseconds
     if (typeof rawTimestamp === 'number' || /^\d+(\.\d+)?$/.test(String(rawTimestamp).trim())) {
@@ -45,7 +46,7 @@ export function normalizeToUTC(rawTimestamp: string | number | undefined): strin
   } catch {
     // fallback
   }
-  return new Date().toISOString();
+  return null;
 }
 
 /**

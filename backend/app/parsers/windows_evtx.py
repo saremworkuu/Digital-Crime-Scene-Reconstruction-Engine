@@ -293,7 +293,7 @@ class WindowsEVTXParser(BaseParser):
         return records
 
     def _parse_xml(self, file_path: Path, filename: str) -> list[dict[str, Any]]:
-        """Parses an XML file containing one or more <Event> elements."""
+        """Parses an XML file containing one or more <Event> elements or <Finding> elements (vulnerability scans)."""
         records = []
         try:
             tree = ET.parse(str(file_path))
@@ -307,7 +307,59 @@ class WindowsEVTXParser(BaseParser):
             except Exception as e:
                 raise ValueError(f"Invalid XML in {filename}: {e}")
 
-        # Find all <Event> elements
+        # Check for vulnerability scan format (e.g., <Finding> elements)
+        finding_elements = root.findall(".//Finding")
+        if finding_elements:
+            # Vulnerability scan: one event per <Finding>
+            for record_number, elem in enumerate(finding_elements, start=1):
+                # Extract finding details
+                finding_id = _get_element_text(elem, "id") or _get_element_text(elem, "FindingID")
+                title = _get_element_text(elem, "title") or _get_element_text(elem, "Title") or _get_element_text(elem, "name")
+                severity = _get_element_text(elem, "severity") or _get_element_text(elem, "Severity") or "medium"
+                description = _get_element_text(elem, "description") or _get_element_text(elem, "Description")
+                host = _get_element_text(elem, "host") or _get_element_text(elem, "Host") or "unknown_host"
+                cve = _get_element_text(elem, "cve") or _get_element_text(elem, "CVE")
+                
+                raw_str = ET.tostring(elem, encoding="unicode")
+                
+                action = f"Vulnerability: {title or 'Finding'} ({severity})"
+                if cve:
+                    action += f" [{cve}]"
+                
+                records.append({
+                    "timestamp": None,  # Vulnerability scans may not have timestamps
+                    "host": host,
+                    "host_inferred": False,
+                    "source_file": filename,
+                    "source_record_id": record_number,
+                    "event_type": "vulnerability_finding",
+                    "event_id": finding_id,
+                    "user": None,
+                    "process": None,
+                    "parent_process": None,
+                    "command_line": description,
+                    "src_ip": None,
+                    "dst_ip": None,
+                    "src_port": None,
+                    "dst_port": None,
+                    "protocol": None,
+                    "bytes": None,
+                    "service_name": None,
+                    "target_file": None,
+                    "raw": raw_str,
+                    "action": action,
+                    "extra": {
+                        "finding_id": finding_id,
+                        "title": title,
+                        "severity": severity,
+                        "description": description,
+                        "cve": cve,
+                        "timestamp_inferred": True,
+                    },
+                })
+            return records
+
+        # Find all <Event> elements (Sysmon-style)
         event_elements = root.findall(".//Event")
         if not event_elements:
             event_elements = [child for child in root if child.tag.split("}")[-1] == "Event"]

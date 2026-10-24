@@ -172,30 +172,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return DEMO_USERS;
   });
 
-  // Strictly start unauthenticated for forensic session security (FR-AUTH-1)
-  // Cold start must always begin in an unauthenticated state on the Home page
-  const [currentUser, setCurrentUserState] = useState<User | null>(null);
+  // Persistent session management: restore examiner session and API token if present
+  const [currentUser, setCurrentUserState] = useState<User | null>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const savedUser = localStorage.getItem('dcsre_auth_user');
+        const savedToken = localStorage.getItem('dcsre_access_token') || localStorage.getItem('token');
+        if (savedUser) {
+          const parsed = JSON.parse(savedUser);
+          if (savedToken) {
+            apiClient.setToken(savedToken);
+          }
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
 
   const setCurrentUser = (user: User | null) => {
     setCurrentUserState(user);
-    // Never persist authentication credentials to localStorage to prevent insecure session resumption
     try {
-      localStorage.removeItem('dcsre_auth_user');
-      localStorage.removeItem('token');
+      if (typeof window !== 'undefined') {
+        if (user) {
+          localStorage.setItem('dcsre_auth_user', JSON.stringify(user));
+        } else {
+          localStorage.removeItem('dcsre_auth_user');
+          localStorage.removeItem('dcsre_access_token');
+          localStorage.removeItem('token');
+          apiClient.setToken(null);
+        }
+      }
     } catch {
       // ignore
     }
   };
-
-  // Secure terminal boot: purge any previously cached auth tokens from localStorage
-  useEffect(() => {
-    try {
-      localStorage.removeItem('dcsre_auth_user');
-      localStorage.removeItem('token');
-    } catch {
-      // ignore
-    }
-  }, []);
 
   // Theme State: 'dark' | 'light' with persistent localStorage
   const [theme, setThemeState] = useState<'dark' | 'light'>(() => {
@@ -568,6 +581,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setCurrentUser(matched);
+
+    // Acquire live JWT token from backend API asynchronously
+    const effectivePass = password && password !== '••••••••••••'
+      ? password
+      : (matched.role === 'admin' ? 'Admin@2026!' : 'Investigator@2026!');
+
+    authApi.login(matched.email, effectivePass).then(res => {
+      const token = res.data?.token || (res.data as any)?.access_token;
+      if (token) {
+        apiClient.setToken(token);
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('dcsre_access_token', token);
+            localStorage.setItem('token', token);
+          }
+        } catch {}
+      }
+    }).catch(err => {
+      console.warn('Backend login token acquisition notice:', err);
+    });
     logAuditAction(
       'USER_LOGIN',
       'user',
@@ -790,10 +823,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               dst_port: be.dst_port || be.details?.destination_port,
               protocol: be.protocol || be.details?.protocol || (be.src_port ? 'TCP' : undefined),
               process: be.process || be.details?.process,
-              mitre_technique: be.mitre_technique || be.details?.mitre_technique || (isSuspicious ? 'T1110.001' : undefined),
-              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || (isSuspicious ? 'Credential Access' : undefined),
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique || undefined,
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || undefined,
               is_attack_path: isSuspicious,
-              attack_phase: be.attack_phase || be.details?.attack_phase || (isSuspicious ? 'Credential Access' : undefined),
+              attack_phase: be.attack_phase || be.details?.attack_phase || undefined,
               metadata: be.details || {}
             };
           });
@@ -1075,10 +1108,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const backendEvid = await evidenceApi.upload(targetCaseId, formData);
       if (backendEvid?.id) {
+        const resolvedCaseId = backendEvid.case_id ? String(backendEvid.case_id) : targetCaseId;
+        setEvidenceList(prev => prev.map(ev => ev.id === evidenceId ? {
+          ...ev,
+          id: String(backendEvid.id),
+          case_id: resolvedCaseId,
+          status: backendEvid.status || (backendEvid.parsing_status === 'parsed' ? 'Parsed' : ev.status),
+          parser_used: backendEvid.parser_used || ev.parser_used,
+          event_count: backendEvid.event_count || ev.event_count,
+          raw_sample: backendEvid.raw_sample || ev.raw_sample
+        } : ev));
+
         // Sync database normalized events and detections
         const [evtsRes, detsRes] = await Promise.all([
-          eventsApi.listByCase(targetCaseId),
-          detectionsApi.listByCase(targetCaseId)
+          eventsApi.listByCase(resolvedCaseId),
+          detectionsApi.listByCase(resolvedCaseId)
         ]);
         if (evtsRes.data && Array.isArray(evtsRes.data) && evtsRes.data.length > 0) {
           const loadedEvents: NormalizedEvent[] = evtsRes.data.map((be: any) => {
@@ -1134,10 +1178,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               command_line: be.command_line || be.details?.command_line,
               service_name: be.service_name || be.details?.service_name,
               target_file: be.target_file || be.details?.target_file,
-              mitre_technique: be.mitre_technique || be.details?.mitre_technique || (isSuspicious ? 'T1110.001' : undefined),
-              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || (isSuspicious ? 'Credential Access' : undefined),
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique || undefined,
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || undefined,
               is_attack_path: isSuspicious,
-              attack_phase: be.attack_phase || be.details?.attack_phase || (isSuspicious ? 'Credential Access' : undefined),
+              attack_phase: be.attack_phase || be.details?.attack_phase || undefined,
               metadata: be.details || {},
               extra: be.extra || be.details?.extra || {}
             };

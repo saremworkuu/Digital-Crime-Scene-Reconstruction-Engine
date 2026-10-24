@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
@@ -25,7 +25,7 @@ router = APIRouter()
 @router.get("/cases/{case_id}/timeline", response_model=list[EventResponse])
 def get_case_timeline(
     case_id: str,
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=10000, ge=1, le=100000),
     offset: int = Query(default=0, ge=0),
     start_time: datetime | None = Query(default=None),
     end_time: datetime | None = Query(default=None),
@@ -92,6 +92,76 @@ def get_case_timeline(
     ).scalars().all()
 
     return [EventResponse.model_validate(e) for e in events]
+
+
+@router.get("/{case_id}/count")
+@router.get("/cases/{case_id}/timeline/count")
+def get_case_timeline_count(
+    case_id: str,
+    start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None),
+    host: str | None = Query(default=None),
+    ip: str | None = Query(default=None),
+    user: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get total event count for a case with optional filters."""
+    case = get_authorized_case(
+        case_id=case_id,
+        current_user=current_user,
+        db=db,
+        allow_viewer=True,
+    )
+
+    query = select(Event).where(Event.case_id == case.id)
+
+    if start_time is not None:
+        query = query.where(Event.timestamp >= start_time)
+
+    if end_time is not None:
+        query = query.where(Event.timestamp <= end_time)
+
+    if host:
+        pattern = f"%{host}%"
+        query = query.where(
+            or_(
+                Event.source.ilike(pattern),
+                Event.details["host"].astext.ilike(pattern),
+                Event.details["computer"].astext.ilike(pattern),
+            )
+        )
+
+    if ip:
+        pattern = f"%{ip}%"
+        query = query.where(
+            or_(
+                Event.details["source_ip"].astext.ilike(pattern),
+                Event.details["ip"].astext.ilike(pattern),
+            )
+        )
+
+    if user:
+        pattern = f"%{user}%"
+        query = query.where(
+            or_(
+                Event.details["username"].astext.ilike(pattern),
+                Event.details["user"].astext.ilike(pattern),
+            )
+        )
+
+    if severity:
+        pattern = f"%{severity}%"
+        query = query.where(
+            Event.details["severity"].astext.ilike(pattern)
+        )
+
+    total_count = db.execute(
+        select(func.count()).select_from(query.subquery())
+    ).scalar() or 0
+
+    return {"total": total_count}
 
 
 @router.get(
