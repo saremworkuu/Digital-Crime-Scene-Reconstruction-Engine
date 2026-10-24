@@ -12,6 +12,7 @@ api_router.include_router(timeline.router, prefix="/timeline", tags=["timeline"]
 api_router.include_router(graph.router, prefix="/graph", tags=["graph"])
 api_router.include_router(detections.router, prefix="/detections", tags=["detections"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
+api_router.include_router(reports.router, prefix="/cases", tags=["reports"])
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
 api_router.include_router(contact.router, prefix="/contact", tags=["contact"])
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])

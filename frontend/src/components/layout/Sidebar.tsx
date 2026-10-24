@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp, DEMO_USERS } from '../../store';
 import { 
   LayoutDashboard, 
@@ -35,6 +35,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const closeTimeoutRef = useRef<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProfileDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleMouseEnter = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setProfileDropdownOpen(true);
+  };
+
+  const handleMouseLeave = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setProfileDropdownOpen(false);
+    }, 150);
+  };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -131,8 +165,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
         </button>
 
         {/* User Profile Card (Anna Gunn @gunna25) */}
-        <div className="relative">
+        <div
+          ref={dropdownRef}
+          className="relative"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <button
+            type="button"
             onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
             className="w-full flex items-center justify-between p-2 rounded-xl bg-neutral-950/70 hover:bg-neutral-900/90 border border-neutral-850 transition-all cursor-pointer text-left"
           >

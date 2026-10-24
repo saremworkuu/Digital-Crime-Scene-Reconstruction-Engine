@@ -46,7 +46,7 @@ class ApiClient {
     return null;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
+  private async request<T>(endpoint: string, options: RequestInit & { timeout?: number } = {}): Promise<ApiResponse<T>> {
     const headers = new Headers(options.headers || {});
     if (!(options.body instanceof FormData)) {
       headers.set('Content-Type', 'application/json');
@@ -57,11 +57,17 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${token.trim()}`);
     }
 
+    const timeoutMs = options.timeout ?? 4000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         ...options,
+        signal: options.signal || controller.signal,
         headers,
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -83,8 +89,9 @@ class ApiClient {
       const data = await response.json();
       return { data, status: response.status };
     } catch (err: any) {
+      clearTimeout(timeoutId);
       return {
-        error: err.message || 'Network request failed',
+        error: err.name === 'AbortError' ? 'Request timed out' : (err.message || 'Network request failed'),
         status: 0,
       };
     }
@@ -92,6 +99,30 @@ class ApiClient {
 
   get<T>(endpoint: string) {
     return this.request<T>(endpoint, { method: 'GET' });
+  }
+
+  async getBlob(endpoint: string): Promise<{ blob?: Blob; error?: string; status: number }> {
+    const headers = new Headers();
+    const token = this.getToken();
+    if (token && token !== 'null' && token !== 'undefined' && token.trim() !== '') {
+      headers.set('Authorization', `Bearer ${token.trim()}`);
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        return { error: `Request failed with status ${response.status}`, status: response.status };
+      }
+
+      const blob = await response.blob();
+      return { blob, status: response.status };
+    } catch (err: any) {
+      return { error: err.message || 'Download failed', status: 0 };
+    }
   }
 
   post<T>(endpoint: string, body?: any) {

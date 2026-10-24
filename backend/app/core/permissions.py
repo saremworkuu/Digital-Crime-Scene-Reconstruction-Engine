@@ -87,38 +87,25 @@ def get_authorized_case(
             detail="Case not found.",
         )
 
-    if current_user.role == UserRole.ADMIN:
+    user_id = getattr(current_user, "id", None)
+    user_role = getattr(current_user, "role", None)
+
+    if user_role == UserRole.ADMIN:
         return case
 
-    assignment = db.execute(
-        select(CaseAssignment.id).where(
-            CaseAssignment.case_id == case.id,
-            CaseAssignment.user_id == current_user.id,
+    is_creator = getattr(case, "created_by", None) == user_id
+
+    if not is_creator and user_role != UserRole.ADMIN:
+        if not allow_viewer:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not authorized to add evidence to this case.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to access this case.",
         )
-    ).scalar_one_or_none()
 
-    is_assigned = assignment is not None
-    is_creator = case.created_by == current_user.id
-
-    if current_user.role == UserRole.INVESTIGATOR:
-        if is_creator or is_assigned:
-            return case
-
-        # For open cases, demo scenarios, or unassigned cases: auto-assign the investigator
-        new_assignment = CaseAssignment(
-            id=uuid.uuid4(),
-            case_id=case.id,
-            user_id=current_user.id,
-            assigned_by=current_user.id,
-        )
-        db.add(new_assignment)
-        db.commit()
-        return case
-
-
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="You are not authorized to access this case.",
-    )
+    return case
 
 

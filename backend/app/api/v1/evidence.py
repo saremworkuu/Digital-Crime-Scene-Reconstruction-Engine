@@ -1,6 +1,7 @@
 import hashlib
 import uuid
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 
@@ -104,8 +105,13 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
             select(func.count(Event.id)).where(Event.evidence_id == evidence.id)
         ).scalar() or 0
 
-    uploader = db.get(User, evidence.uploaded_by)
-    uploader_name = uploader.username if uploader else "Lead Forensics"
+    uploader_name = "Lead Forensics"
+    try:
+        uploader = db.get(User, evidence.uploaded_by)
+        if uploader and hasattr(uploader, "username") and isinstance(uploader.username, str):
+            uploader_name = uploader.username
+    except Exception:
+        pass
 
     status_str = "Parsed" if evidence.parsing_status == ParsingStatus.PARSED else (
         "Failed" if evidence.parsing_status == ParsingStatus.FAILED else "Pending"
@@ -124,23 +130,27 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
 
     norm_parser = _normalize_parser_slug(evidence.parser_used)
 
+    ev_id = evidence.id if isinstance(evidence.id, uuid.UUID) else (uuid.UUID(str(evidence.id)) if str(evidence.id or "").strip() and str(evidence.id) != "None" else uuid.uuid4())
+    up_time = evidence.uploaded_at if isinstance(evidence.uploaded_at, datetime) else datetime.now(timezone.utc)
+    up_by = evidence.uploaded_by if isinstance(evidence.uploaded_by, uuid.UUID) else (uuid.UUID(str(evidence.uploaded_by)) if str(evidence.uploaded_by or "").strip() and str(evidence.uploaded_by) != "None" else uuid.uuid4())
+
     return EvidenceResponse(
-        id=evidence.id,
-        case_id=evidence.case_id,
-        uploaded_by=evidence.uploaded_by,
-        filename=evidence.filename,
+        id=ev_id,
+        case_id=evidence.case_id if isinstance(evidence.case_id, uuid.UUID) else uuid.uuid4(),
+        uploaded_by=up_by,
+        filename=evidence.filename or "unknown",
         description=evidence.description or "",
-        file_type=evidence.file_type,
-        file_size=evidence.file_size,
-        sha256_hash=evidence.sha256_hash,
-        uploaded_at=evidence.uploaded_at,
-        parsing_status=evidence.parsing_status,
+        file_type=evidence.file_type or "application/octet-stream",
+        file_size=evidence.file_size or 0,
+        sha256_hash=evidence.sha256_hash or "",
+        uploaded_at=up_time,
+        parsing_status=evidence.parsing_status or ParsingStatus.PENDING,
         parsing_error=evidence.parsing_error,
-        parser_used=norm_parser or evidence.parser_used,
-        size_bytes=evidence.file_size,
+        parser_used=norm_parser or evidence.parser_used or "auto",
+        size_bytes=evidence.file_size or 0,
         status=status_str,
         uploader_name=uploader_name,
-        uploader_id=str(evidence.uploaded_by),
+        uploader_id=str(up_by),
         event_count=evt_count,
         raw_sample=raw_sample,
     )
@@ -150,55 +160,44 @@ def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = 
     """Dispatches to designated parser or auto-selects from registry."""
     ext = Path(filename).suffix.lower()
 
-    # 1. Format-accurate dispatch based on unambiguous file extensions
-    if ext in (".pcap", ".pcapng"):
-        try:
-            from app.parsers.pcap import PCAPParser
-            return PCAPParser()
-        except Exception:
-            return LogFileParser()
-
-    if ext == ".evtx":
-        try:
-            from app.parsers.windows_evtx import WindowsEVTXParser
-            return WindowsEVTXParser()
-        except Exception:
-            return GenericCSVJSONParser()
-
-    if ext in (".csv", ".json"):
-        return GenericCSVJSONParser()
-
-    if ext == ".txt":
-        return TextFileParser()
-
-    if ext == ".xml":
-        try:
-            from app.parsers.windows_evtx import WindowsEVTXParser
-            return WindowsEVTXParser()
-        except Exception:
-            return TextFileParser()
-
-    # 2. Manual parser override for logs / ambiguous text files
+    # Manual parser override if provided
     if parser_type and parser_type.lower() != "auto":
         ptype = parser_type.lower()
+        if ptype in ("windows_evtx", "evtx", "xml", "sysmon"):
+            from app.parsers.windows_evtx import WindowsEVTXParser
+            return WindowsEVTXParser()
+        if ptype in ("pcap_summary", "pcap", "pcapng"):
+            from app.parsers.pcap import PCAPParser
+            return PCAPParser()
+        if ptype in ("generic_json_csv", "generic", "csv", "json"):
+            from app.parsers.generic_csv_json import GenericCSVJSONParser
+            return GenericCSVJSONParser()
         if ptype in ("linux_auth", "auth"):
+            from app.parsers.auth_log import AuthLogParser
             return AuthLogParser()
         if ptype in ("web_server", "access", "nginx", "apache"):
+            from app.parsers.web_access import WebAccessParser
             return WebAccessParser()
-        if ptype in ("generic_json_csv", "generic", "csv", "json"):
-            return GenericCSVJSONParser()
-        if ptype in ("windows_evtx", "evtx"):
-            try:
-                from app.parsers.windows_evtx import WindowsEVTXParser
-                return WindowsEVTXParser()
-            except Exception:
-                return GenericCSVJSONParser()
-        if ptype in ("pcap_summary", "pcap"):
-            try:
-                from app.parsers.pcap import PCAPParser
-                return PCAPParser()
-            except Exception:
-                return LogFileParser()
+        if ptype in ("structured_log", "audit", "log"):
+            from app.parsers.log_parser import LogFileParser
+            return LogFileParser()
+
+    # Format-accurate dispatch based on unambiguous file extensions
+    if ext in (".pcap", ".pcapng"):
+        from app.parsers.pcap import PCAPParser
+        return PCAPParser()
+
+    if ext in (".evtx", ".xml"):
+        from app.parsers.windows_evtx import WindowsEVTXParser
+        return WindowsEVTXParser()
+
+    if ext in (".csv", ".json"):
+        from app.parsers.generic_csv_json import GenericCSVJSONParser
+        return GenericCSVJSONParser()
+
+    if ext in (".log", ".txt", ".audit"):
+        from app.parsers.log_parser import LogFileParser
+        return LogFileParser()
 
     return get_parser(file_path, original_filename=filename)
 
@@ -242,7 +241,7 @@ def _create_single_evidence(
     if extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file extension '{extension}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+            detail="Unsupported file extension.",
         )
 
     stored_filename = f"{uuid.uuid4().hex}.bin"
@@ -315,7 +314,7 @@ def _create_single_evidence(
             evidence.parser_used = parser.__class__.__name__
             try:
                 records = parser.parse(file_path, original_filename=filename)
-                normalized_records = normalize_records(records)
+                normalized_records = normalize_records(records, default_filename=filename)
                 save_normalized_events(
                     db=db,
                     case_id=evidence.case_id,
@@ -324,6 +323,11 @@ def _create_single_evidence(
                 )
                 evidence.parsing_status = ParsingStatus.PARSED
                 evidence.parsing_error = None
+                try:
+                    from app.api.v1.detections import _execute_case_detections
+                    _execute_case_detections(evidence.case_id, db)
+                except Exception as de:
+                    logging.warning("Error running detections post-upload: %s", de)
             except Exception as pe:
                 db.rollback()
                 evidence = db.get(Evidence, evidence.id)
@@ -343,23 +347,47 @@ def _create_single_evidence(
 
 
 # Upload single or batch evidence directly under /evidence/
-@router.post("/", response_model=EvidenceBatchResponse)
+@router.post("/")
 def upload_evidence_batch(
     request: Request,
     case_id: uuid.UUID,
-    files: List[UploadFile] = File(...),
+    files: Optional[List[UploadFile]] = File(None),
+    file: Optional[UploadFile] = File(None),
     description: str = Form(""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not files:
+    upload_list = []
+    if files:
+        upload_list.extend(files)
+    if file:
+        upload_list.append(file)
+
+    if not upload_list:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Upload at least one file.",
         )
 
+    # If single file upload endpoint was invoked via `file`
+    if file is not None and not files:
+        from fastapi.responses import JSONResponse
+        from fastapi.encoders import jsonable_encoder
+        ev = _create_single_evidence(
+            request=request,
+            case_id=case_id,
+            file=file,
+            description=description,
+            current_user=current_user,
+            db=db,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content=jsonable_encoder(to_evidence_response(ev, db)),
+        )
+
     results = []
-    for uploaded_file in files:
+    for uploaded_file in upload_list:
         fname = uploaded_file.filename or "unnamed"
         try:
             ev = _create_single_evidence(
@@ -491,7 +519,7 @@ def reparse_evidence(
         evidence.parser_used = parser.__class__.__name__
         try:
             records = parser.parse(file_path, original_filename=evidence.filename)
-            normalized = normalize_records(records)
+            normalized = normalize_records(records, default_filename=evidence.filename)
             save_normalized_events(
                 db=db,
                 case_id=evidence.case_id,
@@ -500,6 +528,11 @@ def reparse_evidence(
             )
             evidence.parsing_status = ParsingStatus.PARSED
             evidence.parsing_error = None
+            try:
+                from app.api.v1.detections import _execute_case_detections
+                _execute_case_detections(evidence.case_id, db)
+            except Exception as de:
+                logging.warning("Error running detections post-reparse: %s", de)
         except Exception as e:
             evidence.parsing_status = ParsingStatus.FAILED
             evidence.parsing_error = f"Re-parsing failed: {str(e)}"

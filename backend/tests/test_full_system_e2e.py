@@ -114,5 +114,9 @@ async def run_e2e():
 
             print(f"\nSUCCESS: ALL 13 E2E INTEGRATION CHECKS PASSED FOR CASE {test_case_id}!")
 
+def test_full_system_e2e():
+    asyncio.run(run_e2e())
+
+
 if __name__ == "__main__":
     asyncio.run(run_e2e())

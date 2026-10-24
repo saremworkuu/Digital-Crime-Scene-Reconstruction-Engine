@@ -1,27 +1,29 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 try:
-    from scapy.all import IP, IPv6, TCP, UDP, ICMP, PcapReader
+    from scapy.all import IP, IPv6, TCP, UDP, ICMP, DNS, PcapReader
     HAVE_SCAPY = True
 except ImportError:
     HAVE_SCAPY = False
-    IP = IPv6 = TCP = UDP = ICMP = PcapReader = None
+    IP = IPv6 = TCP = UDP = ICMP = DNS = PcapReader = None
 
 from app.parsers.base_parser import BaseParser
 
 
 class PCAPParser(BaseParser):
-    """Extract network-flow metadata without processing payloads."""
+    """Extract individual network packet events with DNS and protocol metadata."""
 
     def parse(self, file_path: Path, original_filename: str | None = None) -> list[dict[str, Any]]:
+        filename = original_filename or file_path.name
+
         if not HAVE_SCAPY:
             raise RuntimeError("scapy is required for PCAP packet parsing. Please install scapy.")
 
-        flows: dict[tuple, dict[str, Any]] = {}
-
-        with PcapReader(str(file_path)) as packets:
-            for packet in packets:
+        events = []
+        with PcapReader(str(file_path)) as reader:
+            for packet_number, packet in enumerate(reader, start=1):
                 source_ip = None
                 destination_ip = None
                 source_port = None
@@ -49,35 +51,74 @@ class PCAPParser(BaseParser):
                 elif ICMP in packet:
                     protocol = "ICMP"
 
-                timestamp = float(packet.time)
                 packet_bytes = len(packet)
+                dt = datetime.fromtimestamp(float(packet.time), tz=timezone.utc)
+                timestamp_str = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                flow_key = (
-                    source_ip,
-                    destination_ip,
-                    source_port,
-                    destination_port,
-                    protocol,
-                )
+                query_name = None
+                query_results = []
+                event_type = "network_connection"
 
-                if flow_key not in flows:
-                    flows[flow_key] = {
-                        "event_type": "network_connection",
-                        "source": "pcap",
-                        "first_timestamp": timestamp,
-                        "last_timestamp": timestamp,
-                        "source_ip": source_ip,
-                        "destination_ip": destination_ip,
-                        "source_port": source_port,
-                        "destination_port": destination_port,
-                        "protocol": protocol,
-                        "packets": 1,
-                        "bytes": packet_bytes,
-                    }
+                if DNS in packet:
+                    event_type = "dns_query"
+                    try:
+                        if packet[DNS].qd:
+                            raw_q = packet[DNS].qd.qname
+                            query_name = raw_q.decode("utf-8", errors="ignore").rstrip(".") if hasattr(raw_q, "decode") else str(raw_q).rstrip(".")
+                    except Exception:
+                        pass
+                    try:
+                        if packet[DNS].an:
+                            # Answers
+                            an = packet[DNS].an
+                            while an:
+                                if hasattr(an, "rdata"):
+                                    query_results.append(str(an.rdata))
+                                an = an.payload if hasattr(an, "payload") else None
+                    except Exception:
+                        pass
+
+                # Action summary
+                if query_name:
+                    res_str = f" -> {', '.join(query_results)}" if query_results else ""
+                    action = f"DNS query {query_name}{res_str}"
                 else:
-                    flow = flows[flow_key]
-                    flow["last_timestamp"] = timestamp
-                    flow["packets"] += 1
-                    flow["bytes"] += packet_bytes
+                    action = f"{protocol} {source_ip}:{source_port or 0} -> {destination_ip}:{destination_port or 0} ({packet_bytes} B)"
 
-        return list(flows.values())
+                extra = {
+                    "packet_number": packet_number,
+                    "bytes": packet_bytes,
+                }
+                if query_name:
+                    extra["query_name"] = query_name
+                    extra["query_results"] = query_results
+
+                events.append({
+                    "timestamp": timestamp_str,
+                    "first_timestamp": float(packet.time),
+                    "last_timestamp": float(packet.time),
+                    "host": source_ip,
+                    "host_inferred": True,
+                    "source_file": filename,
+                    "source_record_id": packet_number,
+                    "event_type": event_type,
+                    "event_id": None,
+                    "user": None,
+                    "process": None,
+                    "parent_process": None,
+                    "command_line": query_name or action,
+                    "src_ip": source_ip,
+                    "dst_ip": destination_ip,
+                    "src_port": source_port,
+                    "dst_port": destination_port,
+                    "protocol": protocol,
+                    "bytes": packet_bytes,
+                    "service_name": None,
+                    "target_file": query_name,
+                    "raw": action,
+                    "action": action,
+                    "extra": extra,
+                })
+
+        return events
+

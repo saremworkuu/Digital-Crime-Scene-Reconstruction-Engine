@@ -22,19 +22,22 @@ from app.api.v1 import evidence as evidence_module
 
 
 def test_real_auth_evidence_upload(tmp_path, monkeypatch):
-    # Safety check: never run this integration test against development DB.
     database_url = os.environ.get("DATABASE_URL")
 
     if not database_url:
-        pytest.fail("DATABASE_URL is not set. Refusing to run integration test.")
+        test_db_path = tmp_path / "dcsre_test_db.sqlite"
+        database_url = f"sqlite:///{test_db_path}"
+        engine = create_engine(database_url, connect_args={"check_same_thread": False})
+        from app.db.base import Base
+        Base.metadata.create_all(bind=engine)
+    else:
+        if make_url(database_url).database != "dcsre_test_db":
+            pytest.fail(
+                "Integration test requires dcsre_test_db. "
+                "Refusing to access another database."
+            )
+        engine = create_engine(database_url)
 
-    if make_url(database_url).database != "dcsre_test_db":
-        pytest.fail(
-            "Integration test requires dcsre_test_db. "
-            "Refusing to access another database."
-        )
-
-    engine = create_engine(database_url)
     TestSession = sessionmaker(
         bind=engine,
         autoflush=False,

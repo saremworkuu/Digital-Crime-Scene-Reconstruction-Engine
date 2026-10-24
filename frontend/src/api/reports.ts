@@ -3,12 +3,12 @@ import { ForensicReport } from '../types';
 
 export const reportsApi = {
   generate: async (caseId: string) => {
-    return apiClient.post<ForensicReport>(`/cases/${caseId}/reports/generate`);
+    return apiClient.post<ForensicReport>(`/reports/${caseId}/reports/generate`);
   },
   exportPdf: async (caseId: string) => {
-    return apiClient.get<Blob>(`/cases/${caseId}/reports/pdf`);
+    return apiClient.getBlob(`/reports/${caseId}/reports/pdf`);
   },
   exportHtml: async (caseId: string) => {
-    return apiClient.get<string>(`/cases/${caseId}/reports/html`);
+    return apiClient.get<string>(`/reports/${caseId}/reports/html`);
   }
 };

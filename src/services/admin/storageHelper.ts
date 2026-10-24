@@ -21,12 +21,12 @@ export const delay = (minMs = 300, maxMs = 600): Promise<void> => {
 
 export const getStored = <T>(key: string, defaultValue: T): T => {
   try {
-    const raw = localStorage.getItem(`dcsre_admin_${key}`);
+    const raw = localStorage.getItem(`dcsre_admin_v3_${key}`);
     if (raw) {
       return JSON.parse(raw) as T;
     }
   } catch (err) {
-    console.warn(`[Admin Storage] Failed to read key dcsre_admin_${key}:`, err);
+    console.warn(`[Admin Storage] Failed to read key dcsre_admin_v3_${key}:`, err);
   }
   // Initialize with seed value if not present
   setStored(key, defaultValue);
@@ -35,9 +35,9 @@ export const getStored = <T>(key: string, defaultValue: T): T => {
 
 export const setStored = <T>(key: string, value: T): void => {
   try {
-    localStorage.setItem(`dcsre_admin_${key}`, JSON.stringify(value));
+    localStorage.setItem(`dcsre_admin_v3_${key}`, JSON.stringify(value));
   } catch (err) {
-    console.warn(`[Admin Storage] Failed to write key dcsre_admin_${key}:`, err);
+    console.warn(`[Admin Storage] Failed to write key dcsre_admin_v3_${key}:`, err);
   }
 };
 

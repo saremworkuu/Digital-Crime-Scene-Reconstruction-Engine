@@ -63,6 +63,13 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
     )
 
 
+from app.services.detection_engine import (
+    execute_detections_on_events,
+    get_rule_coverage_matrix,
+    BUILTIN_SIGMA_RULES,
+)
+
+
 def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]:
     events = db.execute(
         select(Event)
@@ -71,34 +78,27 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
     ).scalars().all()
 
     findings = []
+    # 1. Deterministic Sigma detection engine + correlation rules + EDR findings
     try:
-        findings.extend(detect_repeated_failed_logins(events))
-    except Exception:
-        pass
-    try:
-        findings.extend(detect_failed_then_successful_login(events))
-    except Exception:
-        pass
-    try:
-        findings.extend(detect_privilege_escalation(events))
-    except Exception:
-        pass
-    try:
-        findings.extend(detect_lateral_movement(events))
-    except Exception:
-        pass
-    try:
-        findings.extend(detect_web_sql_injection(events))
-    except Exception:
-        pass
-    try:
-        findings.extend(detect_data_exfiltration(events))
-    except Exception:
-        pass
-    try:
-        findings.extend(detect_dns_tunneling(events))
-    except Exception:
-        pass
+        findings.extend(execute_detections_on_events(events, case_id))
+    except Exception as e:
+        import logging
+        logging.warning("Error running detection engine: %s", e)
+
+    # 2. Supporting heuristic rules
+    for detector in (
+        detect_repeated_failed_logins,
+        detect_failed_then_successful_login,
+        detect_privilege_escalation,
+        detect_lateral_movement,
+        detect_web_sql_injection,
+        detect_data_exfiltration,
+        detect_dns_tunneling,
+    ):
+        try:
+            findings.extend(detector(events))
+        except Exception:
+            pass
 
     saved_detections = []
     for finding in findings:
@@ -113,10 +113,12 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
             )
         ).scalar_one_or_none()
 
-        matching_ids = {
-            uuid.UUID(str(event_id))
-            for event_id in finding.get("matching_event_ids", [])
-        }
+        matching_ids = set()
+        for event_id in finding.get("matching_event_ids", []):
+            try:
+                matching_ids.add(uuid.UUID(str(event_id)))
+            except Exception:
+                pass
 
         sev_val = finding.get("severity", "medium").lower()
         try:
@@ -124,15 +126,31 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         except ValueError:
             sev_enum = DetectionSeverity.MEDIUM
 
+        rule_info = finding.get("rule_information", {}) or {}
+        if finding.get("source"):
+            rule_info["source"] = finding["source"]
+        if finding.get("host"):
+            rule_info["host"] = finding["host"]
+        if finding.get("user"):
+            rule_info["user"] = finding["user"]
+        if finding.get("source_file"):
+            rule_info["source_file"] = finding["source_file"]
+        if finding.get("source_record_references"):
+            rule_info["source_record_references"] = finding["source_record_references"]
+        if finding.get("first_seen"):
+            rule_info["first_seen"] = str(finding["first_seen"])
+        if finding.get("last_seen"):
+            rule_info["last_seen"] = str(finding["last_seen"])
+
         if detection is None:
             detection = Detection(
                 case_id=case_id,
                 rule_id=rule_id,
-                rule_name=finding.get("display_name", finding.get("rule_name", "Security Alert")),
+                rule_name=finding.get("rule_name") or finding.get("display_name") or "Security Alert",
                 severity=sev_enum,
                 description=description,
                 mitre_technique=finding.get("mitre_technique", "T1059"),
-                rule_information=finding.get("rule_information", {}),
+                rule_information=rule_info,
                 is_false_positive=False,
             )
             db.add(detection)
@@ -140,6 +158,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         else:
             detection.severity = sev_enum
             detection.mitre_technique = finding.get("mitre_technique", detection.mitre_technique)
+            detection.rule_information = rule_info
 
         if matching_ids:
             existing_ids = set(
@@ -240,27 +259,68 @@ def toggle_false_positive(
     return build_detection_response(db, detection)
 
 
+@router.get("/cases/{case_id}/coverage")
+@router.get("/cases/{case_id}/detections/coverage")
+def get_case_rule_coverage(
+    case_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
+    events = db.execute(
+        select(Event)
+        .where(Event.case_id == case.id)
+        .order_by(Event.timestamp.asc(), Event.id.asc())
+    ).scalars().all()
+    findings = execute_detections_on_events(events, case.id)
+    return get_rule_coverage_matrix(findings)
+
+
 @router.get("/rules", response_model=List[DetectionRuleResponse])
 @router.get("/detections/rules", response_model=List[DetectionRuleResponse])
 def get_detection_rules(
     current_user: User = Depends(get_current_user),
 ):
     raw_rules = load_all_rules()
-    return [
-        DetectionRuleResponse(
-            id=r.get("id", "rule"),
-            name=r.get("title", r.get("id")),
-            severity=r.get("severity", "medium"),
-            mitre_technique=r.get("mitre_technique", "T1059"),
-            mitre_tactic=r.get("mitre_tactic", "Execution"),
-            description=r.get("description", ""),
-            author=r.get("author", "DCSRE Forensics Team"),
-            status=r.get("status", "active"),
-            tags=r.get("tags", []),
-            yaml_content=r.get("yaml_content"),
+    seen_ids = set()
+    rule_responses = []
+
+    for r in BUILTIN_SIGMA_RULES:
+        seen_ids.add(r["id"])
+        rule_responses.append(
+            DetectionRuleResponse(
+                id=r["id"],
+                name=r["name"],
+                severity=r["severity"],
+                mitre_technique=r["mitre_technique"],
+                mitre_tactic=r["mitre_tactic"],
+                description=r["description"],
+                author="DCSRE Forensics Core",
+                status="active",
+                tags=[r["mitre_tactic"].lower(), r["mitre_technique"].lower()],
+                yaml_content=json.dumps(r["detection"], indent=2),
+            )
         )
-        for r in raw_rules
-    ]
+
+    for r in raw_rules:
+        r_id = r.get("id", "rule")
+        if r_id in seen_ids:
+            continue
+        rule_responses.append(
+            DetectionRuleResponse(
+                id=r_id,
+                name=r.get("title", r.get("id")),
+                severity=r.get("severity", "medium"),
+                mitre_technique=r.get("mitre_technique", "T1059"),
+                mitre_tactic=r.get("mitre_tactic", "Execution"),
+                description=r.get("description", ""),
+                author=r.get("author", "DCSRE Forensics Team"),
+                status=r.get("status", "active"),
+                tags=r.get("tags", []),
+                yaml_content=r.get("yaml_content"),
+            )
+        )
+    return rule_responses
 
 
 @router.post("/rules/reload")

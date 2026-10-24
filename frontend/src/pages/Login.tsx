@@ -70,10 +70,23 @@ export const Login: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // 1. Attempt backend JWT login to obtain live bearer token
+      // 1. Immediately validate credentials in application store (0ms local latency)
+      const result = loginUser(trimmedInput, password);
+
+      if (!result.success) {
+        setGeneralError(result.message);
+        toast.error(result.message || 'Authentication failed. Please check credentials.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 2. Fetch live JWT bearer token asynchronously with 1200ms cap (never hangs login)
       try {
-        const res = await authApi.login(trimmedInput, password);
-        const tokenString = res?.data?.token || (res?.data as any)?.access_token;
+        const timeoutPromise = new Promise<any>((resolve) => setTimeout(() => resolve(null), 1200));
+        const liveAuthPromise = authApi.login(trimmedInput, password).catch(() => null);
+        const res = await Promise.race([liveAuthPromise, timeoutPromise]);
+        
+        const tokenString = res?.data?.token || res?.data?.access_token;
         if (tokenString) {
           apiClient.setToken(tokenString);
           try {
@@ -82,35 +95,29 @@ export const Login: React.FC = () => {
           } catch {}
         }
       } catch (backendErr) {
-        console.warn('Backend live auth fallback to local authenticated session:', backendErr);
+        console.warn('Backend live auth fallback to local session:', backendErr);
       }
 
-      // 2. Perform application store authentication
-      const result = loginUser(trimmedInput, password);
+      // 3. Authenticated session active - transition immediately
+      setSuccessMsg(result.message);
+      const welcome = result.user?.role === 'admin'
+        ? `Welcome back, Administrator ${result.user.name.split(' ')[0]}!`
+        : `Signed in as ${result.user?.name || 'Examiner'}!`;
+      toast.success(welcome);
 
-      if (result.success) {
-        setSuccessMsg(result.message);
-        const welcome = result.user?.role === 'admin'
-          ? `Welcome back, Administrator ${result.user.name.split(' ')[0]}!`
-          : `Signed in as ${result.user?.name || 'Examiner'}!`;
-        toast.success(welcome);
-        setTimeout(() => {
-          if (result.user?.role === 'admin') {
-            if (typeof window !== 'undefined') {
-              window.location.hash = '#/admin/dashboard';
-            }
-            setCurrentPage('admin');
-          } else {
-            if (typeof window !== 'undefined') {
-              window.location.hash = '';
-            }
-            setCurrentPage('dashboard');
+      setTimeout(() => {
+        if (result.user?.role === 'admin') {
+          if (typeof window !== 'undefined') {
+            window.location.hash = '#/admin/dashboard';
           }
-        }, 500);
-      } else {
-        setGeneralError(result.message);
-        toast.error(result.message || 'Authentication failed. Please check credentials.');
-      }
+          setCurrentPage('admin');
+        } else {
+          if (typeof window !== 'undefined') {
+            window.location.hash = '';
+          }
+          setCurrentPage('dashboard');
+        }
+      }, 100);
     } catch (err: any) {
       const msg = err.message || 'An unexpected authentication error occurred.';
       setGeneralError(msg);

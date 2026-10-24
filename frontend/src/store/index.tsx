@@ -265,7 +265,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [activeCaseId, setActiveCaseId] = useState<string>('');
 
-  // Core Data Stores with Initial Mock Scenarios (2 scenarios: Cobalt Shadow & DarkLock)
+  // Core Data Stores with Initial Mock Scenario (1 baseline reference scenario: Cobalt Shadow)
   const [cases, setCases] = useState<Case[]>(() => INITIAL_SCENARIOS.map(s => s.caseData));
   const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>(() => INITIAL_SCENARIOS.flatMap(s => s.evidenceFiles));
   const [events, setEvents] = useState<NormalizedEvent[]>(() => INITIAL_SCENARIOS.flatMap(s => s.events));
@@ -306,8 +306,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
           setCases(prev => {
             const backendIds = new Set(backendCases.map(c => c.id));
-            const merged = [...backendCases, ...prev.filter(c => !backendIds.has(c.id))];
-            return merged.slice(0, 2); // Cap to strictly 2 mock investigation cases as requested
+            const mockRemaining = prev.filter(c => !backendIds.has(c.id)).slice(0, 1);
+            return [...backendCases, ...mockRemaining];
           });
 
           setActiveCaseId(prev => {
@@ -439,6 +439,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch (e) {
       console.warn('Failed to persist users to localStorage', e);
     }
+
+    // Persist to backend database if reachable
+    authApi.register({
+      name: newUser.name,
+      email: newUser.email,
+      password: userData.password || 'Forensic#Auth2026',
+      role: newUser.role,
+      department: newUser.department,
+      badge_id: newUser.badgeId
+    }).then(res => {
+      const tokenString = res?.data?.token || (res?.data as any)?.access_token;
+      if (tokenString) {
+        apiClient.setToken(tokenString);
+      }
+    }).catch(err => console.warn('Backend live registration notice:', err));
 
     // Tamper-evident Audit logging
     logAuditAction(
@@ -1077,12 +1092,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               /fail|error|attack|malware|shell|sudo|privilege|brute|inject|drop|unauthorized/i.test(String(be.event_type || '') + ' ' + actionText)
             );
             const severityVal = be.severity || be.details?.severity || (isSuspicious ? 'high' : 'medium');
-            let hostVal = be.host || be.details?.host || be.details?.Computer;
+            let hostVal = be.host && be.host !== 'unknown_host' ? be.host : (be.details?.host || be.details?.Computer || be.details?.computer || be.details?.hostname || be.details?.WorkstationName);
+            let hostInferred = Boolean(be.host_inferred ?? be.details?.host_inferred);
+            if (!hostVal && (be.src_ip || be.details?.src_ip || be.details?.source_ip)) {
+              hostVal = be.src_ip || be.details?.src_ip || be.details?.source_ip;
+              hostInferred = true;
+            }
             if (!hostVal && rawMsg) {
               const hostMatch = rawMsg.match(/^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)/);
               if (hostMatch) hostVal = hostMatch[1];
             }
-            if (!hostVal) hostVal = 'SRV-FILE-01';
+            if (!hostVal) {
+              hostVal = 'unknown_host';
+              hostInferred = true;
+            }
 
             return {
               id: String(be.id),
@@ -1091,6 +1114,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
               source_type: be.source_type || be.source || 'syslog',
               host: hostVal,
+              host_inferred: hostInferred,
+              source_file: be.source_file || be.details?.source_file,
+              source_record_id: be.source_record_id || be.details?.source_record_id,
+              event_id: be.event_id || be.details?.event_id,
               user: be.user || be.details?.user || be.details?.username || 'unknown',
               action: actionText,
               outcome: be.outcome || be.details?.outcome || (isSuspicious ? 'failure' : 'unknown'),
@@ -1101,12 +1128,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               src_port: be.src_port || be.details?.source_port,
               dst_port: be.dst_port || be.details?.destination_port,
               protocol: be.protocol || be.details?.protocol || (be.src_port ? 'TCP' : undefined),
+              bytes: be.bytes ?? be.details?.bytes,
               process: be.process || be.details?.process,
+              parent_process: be.parent_process || be.details?.parent_process,
+              command_line: be.command_line || be.details?.command_line,
+              service_name: be.service_name || be.details?.service_name,
+              target_file: be.target_file || be.details?.target_file,
               mitre_technique: be.mitre_technique || be.details?.mitre_technique || (isSuspicious ? 'T1110.001' : undefined),
               mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || (isSuspicious ? 'Credential Access' : undefined),
               is_attack_path: isSuspicious,
               attack_phase: be.attack_phase || be.details?.attack_phase || (isSuspicious ? 'Credential Access' : undefined),
-              metadata: be.details || {}
+              metadata: be.details || {},
+              extra: be.extra || be.details?.extra || {}
             };
           });
 
@@ -1120,11 +1153,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             rule_name: bd.rule_name || bd.title || 'Threat Finding',
             severity: bd.severity || 'high',
             mitre_technique: bd.mitre_technique || 'T1110',
-            mitre_tactic: bd.mitre_tactic || 'Execution',
+            mitre_tactic: bd.mitre_tactic || bd.rule_information?.tactic || 'Execution',
             timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
             description: bd.description || 'Suspicious threat activity detected in case logs',
             matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
             false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+            host: bd.rule_information?.host || bd.entities_involved?.hosts?.[0] || 'unknown',
+            user: bd.rule_information?.user || bd.entities_involved?.users?.[0] || 'unknown',
+            source: bd.rule_information?.source || 'Rule',
+            source_file: bd.rule_information?.source_file,
+            source_record_references: bd.rule_information?.source_record_references,
+            rule_information: bd.rule_information || {},
             entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
           }));
           setDetections(prev => [...backendDetections, ...prev.filter(d => d.case_id !== targetCaseId)]);
@@ -1273,15 +1312,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const resetToInitialScenarios = () => {
-    const twoScenarios = INITIAL_SCENARIOS.slice(0, 2);
-    setCases(twoScenarios.map(s => s.caseData));
-    setEvidenceList(twoScenarios.flatMap(s => s.evidenceFiles));
-    setEvents(twoScenarios.flatMap(s => s.events));
-    setDetections(twoScenarios.flatMap(s => s.detections));
+    const refScenarios = INITIAL_SCENARIOS.slice(0, 1);
+    setCases(refScenarios.map(s => s.caseData));
+    setEvidenceList(refScenarios.flatMap(s => s.evidenceFiles));
+    setEvents(refScenarios.flatMap(s => s.events));
+    setDetections(refScenarios.flatMap(s => s.detections));
     setRules(INITIAL_SIGMA_RULES);
-    setActiveCaseId(twoScenarios[0]?.caseData.id || '');
-    logAuditAction('CASE_UPDATED', 'system', 'all', { message: 'Reset workspace to baseline mock investigation scenarios (2 cases)' });
-    toast.success('Investigation case data reset to baseline (2 mock cases)!');
+    setActiveCaseId(refScenarios[0]?.caseData.id || '');
+    logAuditAction('CASE_UPDATED', 'system', 'all', { message: 'Reset workspace to baseline reference mock scenario (1 case)' });
+    toast.success('Investigation case data reset to reference mock scenario (1 case)!');
   };
 
 

@@ -11,13 +11,24 @@ from app.db.models.event_evidence import EventEvidence
 
 
 def calculate_fingerprint(event_data: dict) -> str:
-    """Create a stable SHA-256 fingerprint for an event."""
-    identifying_data = {
-        "timestamp": event_data["timestamp"],
-        "event_type": event_data["event_type"],
-        "source": event_data["source"],
-        "details": event_data["details"],
-    }
+    """Create a stable SHA-256 fingerprint for an event with de-duplication on (source_file, source_record_id)."""
+    details = event_data.get("details") or {}
+    source_file = details.get("source_file") or ""
+    source_record_id = details.get("source_record_id")
+
+    if source_file and source_record_id is not None:
+        identifying_data = {
+            "source_file": str(source_file),
+            "source_record_id": str(source_record_id),
+        }
+    else:
+        identifying_data = {
+            "timestamp": event_data.get("timestamp"),
+            "event_type": event_data.get("event_type"),
+            "source": event_data.get("source"),
+            "host": details.get("host"),
+            "raw": details.get("raw"),
+        }
 
     canonical_data = json.dumps(
         identifying_data,
@@ -70,6 +81,10 @@ def save_normalized_events(
 
             if existing_event is not None:
                 event_id = existing_event.id
+                # Update details and event_type in place on re-parse
+                existing_event.details = record["details"]
+                existing_event.event_type = record["event_type"]
+                existing_event.timestamp = timestamp
             else:
                 event = Event(
                     case_id=case_id,

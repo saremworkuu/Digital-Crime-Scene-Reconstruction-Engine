@@ -24,7 +24,16 @@ export interface NormalizedEvent {
   src_port?: number;
   dst_port?: number;
   protocol?: string;
+  bytes?: number;
   process?: string;
+  parent_process?: string;
+  command_line?: string;
+  service_name?: string;
+  target_file?: string;
+  host_inferred?: boolean;
+  source_file?: string;
+  source_record_id?: any;
+  event_id?: any;
   action: string;
   outcome: EventOutcome;
   severity: EventSeverity;
@@ -34,6 +43,7 @@ export interface NormalizedEvent {
   is_attack_path?: boolean;
   attack_phase?: string;
   metadata?: Record<string, any>;
+  extra?: Record<string, any>;
 
   // CamelCase accessors
   caseId?: string;
@@ -88,6 +98,12 @@ export interface DetectionResult {
   false_positive: boolean;
   false_positive_reason?: string;
   false_positive_marked_by?: string;
+  host?: string;
+  user?: string;
+  source?: string;
+  source_file?: string;
+  source_record_references?: any[];
+  rule_information?: Record<string, any>;
   entities_involved: {
     hosts?: string[];
     users?: string[];

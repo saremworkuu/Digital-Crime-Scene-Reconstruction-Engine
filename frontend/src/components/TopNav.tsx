@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../store';
 import {
   Shield,
@@ -36,6 +36,41 @@ export const TopNav: React.FC<TopNavProps> = ({
   const isLight = theme === 'light';
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const closeTimeoutRef = useRef<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Clear timeout on unmount and handle outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setRoleDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleMouseEnter = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setRoleDropdownOpen(true);
+  };
+
+  const handleMouseLeave = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setRoleDropdownOpen(false);
+    }, 150);
+  };
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#121110]/95 backdrop-blur-md border-b border-[#282422] px-4 sm:px-6 py-3 transition-colors shadow-lg">
@@ -210,8 +245,14 @@ export const TopNav: React.FC<TopNavProps> = ({
 
           {currentUser ? (
             /* User Avatar & Name only (No role badge like INVESTIGATOR as requested) */
-            <div className="relative">
+            <div
+              ref={dropdownRef}
+              className="relative"
+              onMouseEnter={handleMouseEnter}
+              onMouseLeave={handleMouseLeave}
+            >
               <button
+                type="button"
                 onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
                 className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs transition-colors cursor-pointer ${isLight
                     ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-800'

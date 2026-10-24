@@ -174,23 +174,23 @@ export const Cases: React.FC = () => {
           </div>
 
           <div className="text-xs text-[#a8a29e] font-mono tabular-nums px-2">
-            {Math.min(filteredCases.length, 2)} cases
+            {filteredCases.length} {filteredCases.length === 1 ? 'case' : 'cases'}
           </div>
 
           <button
             type="button"
             onClick={resetToInitialScenarios}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#2b2523] bg-[#0d0c0c] hover:bg-[#1a1715] text-[#a8a29e] hover:text-[#f95721] text-xs font-mono transition-colors cursor-pointer"
-            title="Reset cases to default 2 mock scenarios"
+            title="Reset cases to default reference mock scenario (1 case)"
           >
             <RefreshCw className="w-3 h-3 text-[#f95721]" />
-            <span>Reset Mock Cases</span>
+            <span>Reset Reference Case</span>
           </button>
         </div>
 
       </div>
 
-      {/* Case Grid (FR-CASE-2, FR-CASE-4) - Strictly 2 Mock Cases */}
+      {/* Case Grid (FR-CASE-2, FR-CASE-4) - Reference Mock Case */}
       {filteredCases.length === 0 ? (
         <div className="p-12 rounded-2xl bg-[#161413]/90 border border-[#2b2523] text-center space-y-4 shadow-xl">
           <div className="w-12 h-12 rounded-full bg-[#27130b] border border-[#ea580c]/40 flex items-center justify-center mx-auto text-[#f95721]">
@@ -210,7 +210,7 @@ export const Cases: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredCases.slice(0, 2).map((c) => {
+          {filteredCases.map((c) => {
             const isActive = c.id === activeCaseId;
 
           return (
