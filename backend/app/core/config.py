@@ -1,22 +1,21 @@
-# Configuration settings
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
+
+from pydantic_settings import BaseSettings
+
+
+ROOT = Path(__file__).resolve().parents[3]
+DATA_DIR = ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
-    SECRET_KEY: str
-    ALGORITHM:str="HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int=10080  # 7 days for forensic investigation sessions
+    app_name: str = "support4IR"
+    database_url: str = f"sqlite:///{DATA_DIR / 'dcsre.db'}"
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+    ]
 
 
-    CORS_ORIGINS: str="http://localhost:3000"
-
-    MAX_UPLOADS_SIZE:int=104857600
-
-    UPLOAD_DIR:str="uploads"
-
-    model_config=SettingsConfigDict(
-        env_file=".env",
-        extra="ignore"
-    )
-
-settings=Settings()
+settings = Settings()

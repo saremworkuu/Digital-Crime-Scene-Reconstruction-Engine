@@ -1,55 +1,43 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
-from app.api.v1.router import api_router
-from app.core.rate_limit import limiter
+from app.api import cases, response
 from app.core.config import settings
+from app.core.database import Base, SessionLocal, engine
+from app.core.migrate import ensure_schema
+from app.services.seed import ensure_default_user, seed_playbooks
 
-app = FastAPI(
-    title="Digital Crime Scene Reconstruction Engine API",
-    version="1.0.0",
-)
 
-origins = [
-    orig.strip()
-    for orig in settings.CORS_ORIGINS.split(",")
-    if orig.strip()
-]
-if "http://localhost:3000" not in origins:
-    origins.append("http://localhost:3000")
-if "http://127.0.0.1:3000" not in origins:
-    origins.append("http://127.0.0.1:3000")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    ensure_schema()
+    db = SessionLocal()
+    try:
+        ensure_default_user(db)
+        db.commit()
+        seed_playbooks(db)
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.state.limiter = limiter
-app.add_exception_handler(
-    RateLimitExceeded,
-    _rate_limit_exceeded_handler,
-)
-
-app.include_router(api_router, prefix="/api/v1")
+app.include_router(cases.router, prefix="/api")
+app.include_router(response.router, prefix="/api")
 
 
-from app.db.init_db import init_db
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
-
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "service": "dcsre-backend"}
-
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "service": settings.app_name}
