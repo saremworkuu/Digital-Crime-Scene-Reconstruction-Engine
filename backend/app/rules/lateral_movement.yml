@@ -5,6 +5,7 @@ description: >-
   that may indicate lateral movement during an investigation.
 severity: high
 mitre_technique: T1021
+mitre_tactic: Lateral Movement
 
 detection:
   event_types:

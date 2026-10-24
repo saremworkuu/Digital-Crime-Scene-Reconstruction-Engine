@@ -5,6 +5,7 @@ description: >-
   login from the same IP address.
 severity: high
 mitre_technique: T1078
+mitre_tactic: Initial Access
 
 detection:
   threshold: 3

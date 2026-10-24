@@ -3,6 +3,7 @@ name: SSH Brute Force
 description: Detect repeated failed SSH logins from one source IP.
 severity: high
 mitre_technique: T1110
+mitre_tactic: Credential Access
 
 detection:
   group_by: source_ip

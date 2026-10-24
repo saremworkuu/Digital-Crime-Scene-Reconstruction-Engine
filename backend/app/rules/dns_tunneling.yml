@@ -5,6 +5,7 @@ description: >-
   encoded-looking subdomains, or explicit DNS tunneling indicators.
 severity: high
 mitre_technique: T1071.004
+mitre_tactic: Command and Control
 
 detection:
   event_types:

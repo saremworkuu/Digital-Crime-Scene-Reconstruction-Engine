@@ -65,11 +65,20 @@ def _compile_case_report(case_id: uuid.UUID | str, current_user: User, db: Sessi
 
     detection_dicts = [
         {
+            "id": str(d.id),
+            "rule_id": d.rule_id,
             "rule_name": d.rule_name,
             "mitre_technique": d.mitre_technique or "T1059",
             "mitre_tactic": (d.rule_information or {}).get("tactic", "Execution"),
             "severity": d.severity.value if hasattr(d.severity, "value") else str(d.severity),
             "description": d.description,
+            "first_seen": d.detected_at.isoformat() if hasattr(d.detected_at, "isoformat") else str(d.detected_at),
+            "last_seen": d.detected_at.isoformat() if hasattr(d.detected_at, "isoformat") else str(d.detected_at),
+            "user": (d.rule_information or {}).get("user"),
+            "actor": (d.rule_information or {}).get("actor"),
+            "actor_role": (d.rule_information or {}).get("actor_role"),
+            "target_host": (d.rule_information or {}).get("target_host") or (d.rule_information or {}).get("host"),
+            "target_role": (d.rule_information or {}).get("target_role"),
         }
         for d in detections
     ]

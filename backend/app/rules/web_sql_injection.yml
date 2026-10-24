@@ -7,6 +7,7 @@ description: >-
   common database-specific attack payloads.
 severity: high
 mitre_technique: T1190
+mitre_tactic: Initial Access
 
 detection:
   event_types:

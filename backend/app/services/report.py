@@ -23,6 +23,19 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
+from .report_fixes import (
+    dedupe_detections,
+    build_ip_host_map,
+    resolve_hosts,
+    unique_users,
+    norm_user,
+    merge_timeline,
+    hash_status,
+    esc,
+    build_executive_summary,
+    tactic_for_tracked,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,6 +80,9 @@ def generate_forensic_report_data(
     case_id = str(case_dict.get("id", ""))
     case_name = case_dict.get("name", "Untitled Incident")
     now_iso = _now_iso()
+    tactic_warnings: List[str] = []
+    detections = dedupe_detections(detections, warnings=tactic_warnings)
+    ip_map = build_ip_host_map(events)
 
     gen_name = (
         getattr(generator_user, "name", None)
@@ -116,10 +132,12 @@ def generate_forensic_report_data(
                 # events without tactic context, so we leave adversary_infra empty.
                 _ = src_ip  # intentionally not used
 
+    compromised_hosts = set(resolve_hosts(compromised_hosts, ip_map))
+
     # Sort attack timeline events by event_time (A4 fix: timestamp is event_time)
-    attack_events = sorted(
+    attack_events = merge_timeline(
         [ev for ev in events if ev.get("is_attack_path") or str(ev.get("severity", "")).lower() in ("critical", "high")],
-        key=lambda x: str(x.get("timestamp", ""))
+        ip_map=ip_map,
     )
 
     # Group findings by tactic for attack sequence
@@ -145,14 +163,10 @@ def generate_forensic_report_data(
     chain_of_custody: List[Dict[str, Any]] = []
     for ev in evidence_list:
         stored_hash = ev.get("sha256_hash", "")
-        # Re-verify: mark match/mismatch (we cannot re-read the file at report time,
-        # but we can compare stored hash to expected_sha256 if set)
-        expected_hash = ev.get("expected_sha256") or stored_hash
-        hash_status = "match" if stored_hash == expected_hash else "MISMATCH"
         chain_of_custody.append({
             "filename": ev.get("filename"),
             "sha256_hash": stored_hash,
-            "hash_status": hash_status,
+            "hash_status": hash_status(ev),
             "uploaded_by": ev.get("uploader_name", "Unknown"),
             "uploaded_at": ev.get("uploaded_at"),
             "ingested_at": ev.get("ingested_at"),
@@ -168,9 +182,10 @@ def generate_forensic_report_data(
 
     if adversary_infra:
         finding_ids = [
-            f["id"] for f in detections
+            f.get("id", "") for f in detections
             if f.get("actor_role") == "adversary_infrastructure" or f.get("actor") in adversary_infra
         ]
+        finding_ids = [fid for fid in finding_ids if fid]
         remediation.append({
             "action": f"Block adversary infrastructure at perimeter: {', '.join(sorted(adversary_infra))}",
             "finding_refs": ", ".join(finding_ids[:5]),
@@ -178,42 +193,48 @@ def generate_forensic_report_data(
 
     if compromised_hosts:
         finding_ids = [
-            f["id"] for f in detections if f.get("target_role") == "compromised_host"
+            f.get("id", "") for f in detections if f.get("target_role") == "compromised_host"
         ]
+        finding_ids = [fid for fid in finding_ids if fid]
         remediation.append({
             "action": f"Isolate and reimagine compromised hosts: {', '.join(sorted(compromised_hosts))}",
             "finding_refs": ", ".join(finding_ids[:5]),
         })
 
     if compromised_users:
+        norm_comp_users = {norm_user(u) for u in compromised_users if norm_user(u)}
         finding_ids = [
-            f["id"] for f in detections
-            if f.get("user") in compromised_users or f.get("actor_role") == "compromised_account"
+            f.get("id", "") for f in detections
+            if norm_user(f.get("user")) in norm_comp_users or f.get("actor_role") == "compromised_account"
         ]
+        finding_ids = [fid for fid in finding_ids if fid]
         remediation.append({
-            "action": f"Disable and reset compromised accounts: {', '.join(sorted(compromised_users))}",
+            "action": f"Disable and reset compromised accounts: {', '.join(unique_users(compromised_users))}",
             "finding_refs": ", ".join(finding_ids[:5]),
         })
 
     # Tactic-specific remediations
     tactics_seen = {f.get("mitre_tactic") for f in detections}
     if "Persistence" in tactics_seen:
-        persist_ids = [f["id"] for f in detections if f.get("mitre_tactic") == "Persistence"]
+        persist_ids = [f.get("id", "") for f in detections if f.get("mitre_tactic") == "Persistence"]
+        persist_ids = [fid for fid in persist_ids if fid]
         remediation.append({
             "action": "Audit and remove persistence mechanisms: crontabs, authorized_keys, new accounts, cron jobs, webshells.",
             "finding_refs": ", ".join(persist_ids[:5]),
         })
     if "Exfiltration" in tactics_seen:
-        exfil_ids = [f["id"] for f in detections if f.get("mitre_tactic") == "Exfiltration"]
+        exfil_ids = [f.get("id", "") for f in detections if f.get("mitre_tactic") == "Exfiltration"]
+        exfil_ids = [fid for fid in exfil_ids if fid]
         remediation.append({
             "action": "Assess data exposure: identify what data was accessed or transferred in the exfiltration findings.",
             "finding_refs": ", ".join(exfil_ids[:5]),
         })
     vuln_findings = [f for f in detections if f.get("mitre_tactic") == "Initial Access" and "vuln" in str(f.get("rule_id", "")).lower()]
     if vuln_findings:
+        vuln_ids = [f.get("id", "") for f in vuln_findings if f.get("id")]
         remediation.append({
             "action": "Patch exploited weaknesses identified in initial-access findings: " + "; ".join(f.get("rule_name", "") for f in vuln_findings[:3]),
-            "finding_refs": ", ".join(f["id"] for f in vuln_findings[:5]),
+            "finding_refs": ", ".join(vuln_ids[:5]),
         })
 
     if not remediation:
@@ -222,14 +243,18 @@ def generate_forensic_report_data(
     # ------------------------------------------------------------------
     # Executive summary
     # ------------------------------------------------------------------
-    exec_summary = (
-        f"[DRAFT] Forensic investigation report for incident '{case_name}'. "
-        f"{len(evidence_list)} digital evidence artifact(s) ingested and forensically validated "
-        f"via SHA-256 cryptographic hashing. Analysis reconstructed {len(events)} normalized events "
-        f"(using event timestamps from the evidence, not upload times) and identified "
-        f"{len(detections)} threat detection(s) across the MITRE ATT&CK framework. "
-        f"Adversary activity impacted {len(compromised_hosts)} host(s) and "
-        f"{len(compromised_users)} user account(s) over an estimated dwell time of {dwell_time_str}."
+    first_seen = attack_events[0].get("timestamp") if attack_events else None
+    last_seen = attack_events[-1].get("timestamp") if attack_events else None
+    exec_summary = build_executive_summary(
+        case_name=case_name,
+        n_evidence=len(evidence_list),
+        n_events=len(events),
+        detections=detections,
+        hosts=sorted(compromised_hosts),
+        users=unique_users(compromised_users),
+        dwell=dwell_time_str,
+        first_seen=str(first_seen)[:19] if first_seen else None,
+        last_seen=str(last_seen)[:19] if last_seen else None,
     )
 
     # ------------------------------------------------------------------
@@ -294,9 +319,9 @@ def generate_forensic_report_data(
         },
         "attack_timeline_summary": attack_events,
         "compromised_assets": {
-            "hosts": list(compromised_hosts) or ["None identified"],
-            "users": list(compromised_users) or ["None identified"],
-            "adversary_infrastructure": list(adversary_infra) or ["None identified"],
+            "hosts": sorted(compromised_hosts) or ["None identified"],
+            "users": unique_users(compromised_users) or ["None identified"],
+            "adversary_infrastructure": sorted(adversary_infra) or ["None identified"],
             "dwell_time": dwell_time_str,
         },
         # C2: generated, not boilerplate
@@ -317,6 +342,10 @@ def generate_forensic_report_data(
             "upload times (ingested_at) are stored separately and do not appear as event times. "
             "All timestamps are normalised to UTC. "
             "Rule coverage gaps are listed in the rule coverage matrix."
+            + (
+                " TACTIC WARNINGS: " + " | ".join(tactic_warnings)
+                if tactic_warnings else ""
+            )
         ),
         "rule_set_version": "1.1.0",
         "parser_versions": {
@@ -340,40 +369,48 @@ def generate_forensic_report_data(
 def render_report_html(report_data: Dict[str, Any]) -> str:
     is_draft = report_data.get("status", "DRAFT") == "DRAFT"
 
+    def _hash_cls(st: Any) -> str:
+        s = str(st or "")
+        if s == "match":
+            return "match"
+        if s == "MISMATCH":
+            return "mismatch"
+        return ""
+
     evidence_rows = "".join([
-        f"<tr><td><code>{e.get('filename')}</code></td>"
-        f"<td><code>{e.get('sha256_hash', '')}</code></td>"
+        f"<tr><td><code>{esc(e.get('filename'))}</code></td>"
+        f"<td><code>{esc(e.get('sha256_hash', ''))}</code></td>"
         f"<td>{e.get('size_bytes', 0):,} B</td>"
         f"<td>{e.get('event_count', 0)}</td>"
-        f"<td>{e.get('uploader', 'Unknown')}</td>"
-        f"<td>{e.get('uploaded_at', '')}</td></tr>"
+        f"<td>{esc(e.get('uploader', 'Unknown'))}</td>"
+        f"<td>{esc(e.get('uploaded_at', ''))}</td></tr>"
         for e in report_data.get("evidence_manifest", [])
     ]) or "<tr><td colspan='6'>None identified</td></tr>"
 
     custody_rows = "".join([
-        f"<tr><td><code>{c.get('filename')}</code></td>"
-        f"<td><code>{c.get('sha256_hash', '')[:32]}…</code></td>"
-        f"<td class='{'match' if c.get('hash_status') == 'match' else 'mismatch'}'>{c.get('hash_status')}</td>"
-        f"<td>{c.get('uploaded_by', 'Unknown')}</td>"
-        f"<td>{c.get('uploaded_at', '')}</td></tr>"
+        f"<tr><td><code>{esc(c.get('filename'))}</code></td>"
+        f"<td><code>{esc(str(c.get('sha256_hash', ''))[:32])}…</code></td>"
+        f"<td class='{_hash_cls(c.get('hash_status'))}'>{esc(c.get('hash_status'))}</td>"
+        f"<td>{esc(c.get('uploaded_by', 'Unknown'))}</td>"
+        f"<td>{esc(c.get('uploaded_at', ''))}</td></tr>"
         for c in report_data.get("chain_of_custody", [])
     ]) or "<tr><td colspan='5'>None identified</td></tr>"
 
     timeline_rows = "".join([
-        f"<tr><td><code>{ev.get('timestamp')}</code></td>"
-        f"<td><span class='badge'>{ev.get('severity', '').upper()}</span></td>"
-        f"<td>{ev.get('host', 'N/A')}</td>"
-        f"<td>{ev.get('user', 'N/A')}</td>"
-        f"<td>{ev.get('action', '')}</td></tr>"
-        for ev in report_data.get("attack_timeline_summary", [])[:25]
+        f"<tr><td><code>{esc(ev.get('timestamp'))}</code></td>"
+        f"<td><span class='badge'>{esc(str(ev.get('severity', '')).upper())}</span></td>"
+        f"<td>{esc(ev.get('host', 'N/A'))}</td>"
+        f"<td>{esc(ev.get('user', 'N/A'))}</td>"
+        f"<td>{esc(ev.get('action', ''))}</td></tr>"
+        for ev in report_data.get("attack_timeline_summary", [])
     ]) or "<tr><td colspan='5'>None identified</td></tr>"
 
     detection_rows = "".join([
-        f"<tr><td><strong>{d.get('rule_name')}</strong></td>"
-        f"<td><code>{d.get('mitre_technique', 'N/A')}</code></td>"
-        f"<td>{d.get('mitre_tactic', 'N/A')}</td>"
-        f"<td><span class='badge badge-{str(d.get('severity', '')).lower()}'>{str(d.get('severity', '')).upper()}</span></td>"
-        f"<td>{d.get('description', '')}</td></tr>"
+        f"<tr><td><strong>{esc(d.get('rule_name'))}</strong></td>"
+        f"<td><code>{esc(', '.join(d.get('mitre_techniques_all') or [d.get('mitre_technique', 'N/A')]))}</code></td>"
+        f"<td>{esc(d.get('mitre_tactic', 'N/A'))}</td>"
+        f"<td><span class='badge badge-{str(d.get('severity', '')).lower()}'>{esc(str(d.get('severity', '')).upper())}</span></td>"
+        f"<td>{esc(d.get('description', ''))}</td></tr>"
         for d in report_data.get("mitre_coverage", [])
     ]) or "<tr><td colspan='5'>None identified</td></tr>"
 
@@ -577,13 +614,13 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     ev_rows = [
         [Paragraph(html.escape(str(c.get("filename",""))), cell_code),
          Paragraph(html.escape(str(c.get("sha256_hash",""))[:32]) + "…", cell_code),
-         Paragraph(str(c.get("hash_status","?")), cell_crit if c.get("hash_status") != "match" else cell_style),
+         Paragraph(str(c.get("hash_status","?")), cell_crit if str(c.get("hash_status","")) == "MISMATCH" else cell_style),
          Paragraph(html.escape(str(c.get("uploaded_by",""))), cell_style),
          Paragraph(html.escape(str(c.get("uploaded_at",""))), cell_style)]
         for c in report_data.get("chain_of_custody", [])
     ]
     ev_table_data = ev_hdr + (ev_rows if ev_rows else [[Paragraph("None identified", cell_style)] + [""]*4])
-    t2 = Table(ev_table_data, colWidths=[110, 155, 70, 95, 110])
+    t2 = Table(ev_table_data, colWidths=[110, 155, 70, 95, 110], repeatRows=1)
     t2.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
@@ -606,7 +643,7 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         if ip != "None identified": comp_data.append([Paragraph("Adversary Infra", cell_style), Paragraph(html.escape(str(ip)), cell_bold), Paragraph("ADVERSARY", cell_crit)])
     if len(comp_data) == 1:
         comp_data.append([Paragraph("None identified", cell_style), "", ""])
-    t3 = Table(comp_data, colWidths=[130, 220, 190])
+    t3 = Table(comp_data, colWidths=[130, 220, 190], repeatRows=1)
     t3.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
@@ -620,14 +657,14 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     det_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Rule", "Technique", "Tactic", "Severity", "Description"]]]
     det_rows = [
         [Paragraph(html.escape(str(d.get("rule_name",""))), cell_bold),
-         Paragraph(html.escape(str(d.get("mitre_technique","N/A"))), cell_code),
+         Paragraph(html.escape(", ".join(d.get("mitre_techniques_all") or [d.get("mitre_technique", "N/A")])), cell_code),
          Paragraph(html.escape(str(d.get("mitre_tactic","N/A"))), cell_style),
          Paragraph(str(d.get("severity","")).upper(), cell_crit if str(d.get("severity","")) in ("critical","high") else cell_style),
          Paragraph(html.escape(str(d.get("description",""))), cell_style)]
         for d in report_data.get("mitre_coverage", [])
     ]
     det_data = det_hdr + (det_rows if det_rows else [[Paragraph("None identified", cell_style)] + [""]*4])
-    t4 = Table(det_data, colWidths=[130, 65, 85, 60, 200])
+    t4 = Table(det_data, colWidths=[130, 65, 85, 60, 200], repeatRows=1)
     t4.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
@@ -645,10 +682,10 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
          Paragraph(html.escape(str(ev.get("host","N/A"))), cell_style),
          Paragraph(html.escape(str(ev.get("user","N/A"))), cell_style),
          Paragraph(html.escape(str(ev.get("action",""))), cell_style)]
-        for ev in report_data.get("attack_timeline_summary", [])[:35]
+        for ev in report_data.get("attack_timeline_summary", [])
     ]
     tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph("None identified", cell_style)] + [""]*4])
-    t5 = Table(tl_data, colWidths=[110, 50, 75, 75, 230])
+    t5 = Table(tl_data, colWidths=[110, 50, 75, 75, 230], repeatRows=1)
     t5.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),

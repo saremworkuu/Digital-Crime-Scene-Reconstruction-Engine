@@ -8,6 +8,7 @@ description: >-
   and explicit data exfiltration indicators.
 severity: high
 mitre_technique: T1041
+mitre_tactic: Exfiltration
 
 detection:
   event_types:

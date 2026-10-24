@@ -5,6 +5,7 @@ description: >-
   suspicious privilege elevation activity.
 severity: high
 mitre_technique: T1548
+mitre_tactic: Privilege Escalation
 
 detection:
   event_types:
