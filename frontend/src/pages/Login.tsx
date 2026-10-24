@@ -1,604 +1,308 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
+import { authApi, apiClient } from '../api';
 import {
-  Shield,
-  Lock,
-  Mail,
-  ArrowRight,
-  AlertCircle,
   Eye,
   EyeOff,
-  UserPlus,
-  LogIn,
-  KeyRound,
-  User as UserIcon,
+  AlertCircle,
   CheckCircle2,
-  Sparkles,
-  ShieldCheck
+  Shield,
+  ArrowRight
 } from 'lucide-react';
-import { UserRole } from '../types';
+import { toast } from '../components/Toast';
 
 export const Login: React.FC = () => {
-  const {
-    users,
-    setCurrentUser,
-    setCurrentPage,
-    logAuditAction,
-    authNotice,
-    setAuthNotice,
-    registerUser
-  } = useApp();
+  const { loginUser, setCurrentPage, theme } = useApp();
+  const isLight = theme === 'light';
 
-  // Active sub-tab within the unified Authentication portal:
-  // 'investigator' | 'admin' | 'register'
-  const [activeTab, setActiveTab] = useState<'investigator' | 'admin' | 'register'>('investigator');
-
-  // Shared form inputs
-  const [email, setEmail] = useState('investigator@dcsre.corp');
-  const [password, setPassword] = useState('Investigator#2026');
+  // Form Fields - clean inputs for security
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [failedAttempts, setFailedAttempts] = useState(0);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [rememberMe, setRememberMe] = useState(false);
 
-  // Registration specific inputs
-  const [regName, setRegName] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regConfirmPassword, setRegConfirmPassword] = useState('');
-  const [regRole, setRegRole] = useState<UserRole>('investigator');
-  const [regDepartment, setRegDepartment] = useState('Digital Forensics & Incident Response (DFIR)');
-  const [regBadgeId, setRegBadgeId] = useState(`DFIR-${Math.floor(1000 + Math.random() * 9000)}`);
-  const [regPgpKey, setRegPgpKey] = useState('');
-  const [regSuccessMsg, setRegSuccessMsg] = useState<string | null>(null);
-  const [isSubmittingReg, setIsSubmittingReg] = useState(false);
+  // States
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Tab switcher helper with smart credential preset
-  const handleTabChange = (tab: 'investigator' | 'admin' | 'register') => {
-    setActiveTab(tab);
-    setErrorMsg(null);
-    setRegSuccessMsg(null);
-
-    if (tab === 'investigator') {
-      setEmail('investigator@dcsre.corp');
-      setPassword('Investigator#2026');
-    } else if (tab === 'admin') {
-      setEmail('saremworkuu@gmail.com');
-      setPassword('Admin@2026!');
-    }
-  };
-
-  // Sign In submit (for both Investigator and Admin modes)
-  const handleSignIn = (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg(null);
-
-    if (failedAttempts >= 5) {
-      setErrorMsg('Too Many Requests: Rate limit exceeded. Please wait a few moments.');
+  const validateEmail = (val: string) => {
+    setEmail(val);
+    if (!val) {
+      setEmailError(null);
       return;
     }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    // Enforce Admin credentials if signing in via Admin tab
-    if (activeTab === 'admin') {
-      const isDesignatedAdmin =
-        normalizedEmail === 'saremworkuu@gmail.com' ||
-        normalizedEmail === 'admin@dcsre.corp';
-
-      if (!isDesignatedAdmin) {
-        setErrorMsg('Access Denied: Only Administrator Sarem Worku (saremworkuu@gmail.com) can sign in via the Admin portal.');
-        return;
-      }
-    }
-
-    const matched = users.find(u =>
-      u.email.toLowerCase() === normalizedEmail ||
-      (normalizedEmail === 'admin@dcsre.corp' && u.role === 'admin') ||
-      (normalizedEmail === 'saremworkuu@gmail.com' && u.role === 'admin')
-    );
-
-    if (!matched) {
-      setFailedAttempts(prev => prev + 1);
-      setErrorMsg(`No account found for "${email}". Please verify your email or register a new account.`);
-      return;
-    }
-
-    // Password verification
-    const expectedPassword = matched.password || (matched.role === 'admin' ? 'Admin@2026!' : 'Investigator#2026');
-    const isPasswordValid =
-      password === expectedPassword ||
-      (matched.role === 'admin' && (password === 'Admin@2026!' || password === 'admin' || password === '••••••••••••')) ||
-      password === 'Investigator#2026' ||
-      password === '••••••••••••';
-
-    if (!isPasswordValid) {
-      setFailedAttempts(prev => prev + 1);
-      setErrorMsg('Invalid password. Please check your credentials.');
-      return;
-    }
-
-    setCurrentUser(matched);
-    const wasEvidenceAttempt = authNotice && authNotice.toLowerCase().includes('evidence');
-    setAuthNotice(null);
-    logAuditAction(
-      'USER_LOGIN',
-      'user',
-      matched.id,
-      { email: matched.email, role: matched.role, portal: activeTab.toUpperCase() },
-      { id: matched.id, name: matched.name, role: matched.role }
-    );
-
-    if (wasEvidenceAttempt) {
-      setCurrentPage('evidence');
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+    const isUsername = /^[a-zA-Z0-9_.-]{3,}$/.test(val);
+    if (!isEmail && !isUsername) {
+      setEmailError('Enter a valid email or username');
     } else {
-      setCurrentPage('dashboard');
+      setEmailError(null);
     }
   };
 
-  // Register form submit
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg(null);
-    setRegSuccessMsg(null);
+    setGeneralError(null);
+    setSuccessMsg(null);
 
-    if (!regName.trim() || !regEmail.trim() || !regPassword) {
-      setErrorMsg('All mandatory identification fields are required.');
+    const trimmedInput = email.trim();
+
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedInput);
+    const isUsername = /^[a-zA-Z0-9_.-]{3,}$/.test(trimmedInput);
+
+    if (!trimmedInput || (!isEmail && !isUsername)) {
+      const err = 'Please enter a valid credential email or username.';
+      setEmailError('Enter a valid email or username');
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
-    if (regPassword.length < 8) {
-      setErrorMsg('Passphrase must be at least 8 characters long for NIST SP 800-86 compliance.');
+    if (!password) {
+      const err = 'Please enter your password.';
+      setGeneralError(err);
+      toast.error(err);
       return;
     }
 
-    if (regPassword !== regConfirmPassword) {
-      setErrorMsg('Password confirmation mismatch. Both passwords must be identical.');
-      return;
-    }
-
-    // Check duplicate email
-    if (users.some(u => u.email.toLowerCase() === regEmail.trim().toLowerCase())) {
-      setErrorMsg(`Email "${regEmail}" is already registered. Please sign in instead.`);
-      return;
-    }
-
-    setIsSubmittingReg(true);
+    setIsSubmitting(true);
 
     try {
-      const result = await registerUser({
-        name: regName.trim(),
-        email: regEmail.trim().toLowerCase(),
-        password: regPassword,
-        role: regRole,
-        department: regDepartment,
-        badgeId: regBadgeId,
-        pgpKey: regPgpKey || undefined
-      });
+      // 1. Immediately validate credentials in application store (0ms local latency)
+      const result = loginUser(trimmedInput, password);
 
-      if (result.success && result.user) {
-        setRegSuccessMsg(`Examiner account created for ${result.user.name}. Signing you in...`);
-        setCurrentUser(result.user);
-        const wasEvidenceAttempt = authNotice && authNotice.toLowerCase().includes('evidence');
-        setAuthNotice(null);
-
-        setTimeout(() => {
-          if (wasEvidenceAttempt) {
-            setCurrentPage('evidence');
-          } else {
-            setCurrentPage('dashboard');
-          }
-        }, 1200);
-      } else {
-        setErrorMsg(result.message || 'Failed to complete registration.');
+      if (!result.success) {
+        setGeneralError(result.message);
+        toast.error(result.message || 'Authentication failed. Please check credentials.');
+        setIsSubmitting(false);
+        return;
       }
-    } catch {
-      setErrorMsg('An unexpected error occurred during account creation.');
-    } finally {
-      setIsSubmittingReg(false);
-    }
-  };
 
-  // Quick fill sample registration data
-  const handlePreloadDemo = () => {
-    setRegName('Analyst Jordan Blake');
-    setRegEmail(`j.blake.${Math.floor(100 + Math.random() * 900)}@dcsre.corp`);
-    setRegPassword('Investigator#2026');
-    setRegConfirmPassword('Investigator#2026');
-    setRegDepartment('Cyber Incident Reconstruction Unit');
-    setRegBadgeId(`DFIR-${Math.floor(1000 + Math.random() * 9000)}`);
+      // 2. Fetch live JWT bearer token asynchronously with 1200ms cap (never hangs login)
+      try {
+        const timeoutPromise = new Promise<any>((resolve) => setTimeout(() => resolve(null), 1200));
+        const liveAuthPromise = authApi.login(trimmedInput, password).catch(() => null);
+        const res = await Promise.race([liveAuthPromise, timeoutPromise]);
+        
+        const tokenString = res?.data?.token || res?.data?.access_token;
+        if (tokenString) {
+          apiClient.setToken(tokenString);
+          try {
+            localStorage.setItem('dcsre_access_token', tokenString);
+            localStorage.setItem('token', tokenString);
+          } catch {}
+        }
+      } catch (backendErr) {
+        console.warn('Backend live auth fallback to local session:', backendErr);
+      }
+
+      // 3. Authenticated session active - transition immediately
+      setSuccessMsg(result.message);
+      const welcome = result.user?.role === 'admin'
+        ? `Welcome back, Administrator ${result.user.name.split(' ')[0]}!`
+        : `Signed in as ${result.user?.name || 'Examiner'}!`;
+      toast.success(welcome);
+
+      setTimeout(() => {
+        if (result.user?.role === 'admin') {
+          if (typeof window !== 'undefined') {
+            window.location.hash = '#/admin/dashboard';
+          }
+          setCurrentPage('admin');
+        } else {
+          if (typeof window !== 'undefined') {
+            window.location.hash = '';
+          }
+          setCurrentPage('dashboard');
+        }
+      }, 100);
+    } catch (err: any) {
+      const msg = err.message || 'An unexpected authentication error occurred.';
+      setGeneralError(msg);
+      toast.error(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center p-4">
-      <div className="w-full max-w-xl bg-[#161413] border border-[#2e2926] rounded-2xl shadow-2xl p-6 sm:p-8 space-y-6">
-
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <div className="inline-flex p-3 rounded-xl bg-[#2a130a] border border-[#ea580c]/40 text-[#f95721] mb-1 shadow-inner">
-            <Shield className="w-6 h-6" />
-          </div>
-          <h1 className="text-xl font-bold tracking-tight text-[#fafaf9]">
-            DCSRE Access Gateway
-          </h1>
-          <p className="text-xs text-[#a8a29e]">
-            Unified Forensic Terminal Authentication & Clearance Enrollment
-          </p>
-        </div>
-
-        {/* Unified Portal Navigation Tabs (Investigator, Admin, Register) */}
-        <div className="p-1 rounded-xl bg-[#100f0e] border border-[#2a2421] grid grid-cols-3 gap-1">
-          <button
-            type="button"
-            onClick={() => handleTabChange('investigator')}
-            className={`py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'investigator'
-                ? 'bg-[#f95721] text-white shadow-md'
-                : 'text-[#a8a29e] hover:text-[#fafaf9] hover:bg-[#1a1715]'
-            }`}
-          >
-            <LogIn className="w-3.5 h-3.5" />
-            <span>Investigator</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleTabChange('admin')}
-            className={`py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'admin'
-                ? 'bg-gradient-to-r from-[#ea580c] to-[#c2410c] text-white shadow-md ring-1 ring-[#f95721]'
-                : 'text-[#a8a29e] hover:text-[#fafaf9] hover:bg-[#1a1715]'
-            }`}
-          >
-            <Shield className="w-3.5 h-3.5 text-[#f95721]" />
-            <span>Admin</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleTabChange('register')}
-            className={`py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'register'
-                ? 'bg-[#27130b] border border-[#ea580c]/80 text-[#ff8d60] shadow-md font-bold'
-                : 'text-[#a8a29e] hover:text-[#fafaf9] hover:bg-[#1a1715]'
-            }`}
-          >
-            <UserPlus className="w-3.5 h-3.5" />
-            <span>Register</span>
-          </button>
-        </div>
-
-        {/* Auth Notice (Triggered when user attempted to upload evidence or access a protected route) */}
-        {authNotice && (
-          <div className="p-4 bg-[#26130b] border-2 border-[#f95721] rounded-xl flex items-start gap-3 text-xs text-[#fafaf9] shadow-lg animate-fadeIn">
-            <AlertCircle className="w-5 h-5 text-[#f95721] shrink-0 mt-0.5" />
-            <div className="space-y-2 flex-1">
-              <div className="font-bold text-white text-xs flex items-center justify-between">
-                <span>Sign In Required</span>
-                <span className="text-[10px] font-mono text-[#f95721] bg-[#f95721]/10 px-2 py-0.5 rounded border border-[#f95721]/30">
-                  EVIDENCE PROTECTION
-                </span>
-              </div>
-              <p className="text-[#d6d3d1] text-[11px] leading-relaxed">
-                {authNotice}
-              </p>
-              <div className="pt-1 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('register')}
-                  className="px-3 py-1.5 rounded-lg bg-[#f95721] hover:bg-[#ea580c] text-white font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>New Examiner? Register Account</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAuthNotice(null)}
-                  className="text-[11px] text-[#a8a29e] hover:text-[#fafaf9] transition-colors cursor-pointer"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Error Alert */}
-        {errorMsg && (
-          <div className="p-3 bg-red-950/60 border border-red-800 rounded-lg flex items-start gap-2.5 text-xs text-red-300 animate-fadeIn">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div>{errorMsg}</div>
-          </div>
-        )}
-
-        {/* Success Alert */}
-        {regSuccessMsg && (
-          <div className="p-3 bg-emerald-950/60 border border-emerald-800 rounded-lg flex items-start gap-2.5 text-xs text-emerald-300 animate-fadeIn">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <div>{regSuccessMsg}</div>
-          </div>
-        )}
-
-        {/* TAB 1: INVESTIGATOR SIGN IN */}
-        {activeTab === 'investigator' && (
-          <div className="space-y-4">
-            <div className="p-3 rounded-xl bg-[#1c1816]/70 border border-[#2b2522] flex items-center justify-between text-xs text-[#a8a29e]">
-              <span className="font-medium text-[#fafaf9]">Investigator Terminal Sign In</span>
-              <span className="font-mono text-[10px] text-[#f95721] bg-[#29140d] px-2 py-0.5 rounded border border-[#ea580c]/30">
-                CLEARANCE LEVEL 2
-              </span>
-            </div>
-
-            <form onSubmit={handleSignIn} className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Investigator Email</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]/50 text-xs transition-colors"
-                    placeholder="investigator@dcsre.corp"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Passphrase</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-10 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]/50 text-xs transition-colors"
-                    placeholder="••••••••••••"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#78716c] hover:text-[#d6d3d1] transition-colors cursor-pointer"
-                    title={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 px-4 bg-[#f95721] hover:bg-[#ea580c] text-white font-semibold rounded-lg transition-colors text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md"
-              >
-                <span>Sign In as Investigator</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </form>
-
-            {/* Quick Account Switcher Helper for Investigator */}
-            <div className="pt-2 border-t border-[#25201e] flex items-center justify-between text-xs text-[#a8a29e]">
-              <span>Need administrator access?</span>
-              <button
-                type="button"
-                onClick={() => handleTabChange('admin')}
-                className="text-[#f95721] hover:text-[#fb923c] font-semibold cursor-pointer underline underline-offset-2"
-              >
-                Switch to Admin Sign In
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: ADMIN SIGN IN */}
-        {activeTab === 'admin' && (
-          <div className="space-y-4">
-            <div className="p-3.5 rounded-xl bg-[#29120b] border border-[#ea580c]/50 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-[#f95721]" />
-                <span className="font-semibold text-[#fafaf9]">Dedicated Administrator Command Portal</span>
-              </div>
-              <span className="font-mono text-[10px] text-[#ff8d60] bg-[#3a150c] px-2 py-0.5 rounded border border-[#ea580c]/40 font-bold">
-                ROOT PRIVILEGE
-              </span>
-            </div>
-
-            <form onSubmit={handleSignIn} className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Admin Email</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]/50 text-xs transition-colors"
-                    placeholder="saremworkuu@gmail.com"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Administrator Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-10 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]/50 text-xs transition-colors"
-                    placeholder="Admin@2026!"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#78716c] hover:text-[#d6d3d1] transition-colors cursor-pointer"
-                    title={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 px-4 bg-gradient-to-r from-[#ea580c] to-[#c2410c] hover:from-[#f95721] hover:to-[#ea580c] text-white font-bold rounded-lg transition-colors text-xs flex items-center justify-center gap-2 cursor-pointer shadow-lg ring-1 ring-[#f95721]/60"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>Sign In as System Administrator</span>
-              </button>
-            </form>
-
-            <div className="p-3 bg-[#131110] border border-[#25201e] rounded-xl text-[11px] text-[#a8a29e] space-y-1">
-              <span className="text-[#fafaf9] font-medium block">Designated Administrator:</span>
-              <span className="font-mono text-[#f95721]">Sarem Worku (saremworkuu@gmail.com)</span>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: REGISTER NEW ACCOUNT */}
-        {activeTab === 'register' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between text-xs text-[#a8a29e] border-b border-[#25201e] pb-2">
-              <span className="font-medium text-[#fafaf9]">Register New Forensic Examiner Account</span>
-              <button
-                type="button"
-                onClick={handlePreloadDemo}
-                className="text-xs text-[#f95721] hover:text-[#fb923c] font-semibold flex items-center gap-1 cursor-pointer font-mono"
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>Pre-fill Sample Data</span>
-              </button>
-            </div>
-
-            <form onSubmit={handleRegisterSubmit} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[#d6d3d1] font-medium">Full Name *</label>
-                  <div className="relative">
-                    <UserIcon className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      required
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      placeholder="e.g. Inspector Marcus Vance"
-                      className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-3 py-2 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[#d6d3d1] font-medium">Email *</label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="investigator@agency.gov"
-                      className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-3 py-2 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[#d6d3d1] font-medium">Create Password *</label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="Min 8 characters"
-                      className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-3 py-2 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[#d6d3d1] font-medium">Confirm Password *</label>
-                  <div className="relative">
-                    <KeyRound className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={regConfirmPassword}
-                      onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      placeholder="Repeat password"
-                      className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg pl-9 pr-3 py-2 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[#d6d3d1] font-medium">Assigned Clearance Role</label>
-                  <select
-                    value={regRole}
-                    onChange={(e) => setRegRole(e.target.value as UserRole)}
-                    className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg px-3 py-2 text-[#fafaf9] focus:outline-none focus:border-[#f95721] text-xs"
-                  >
-                    <option value="investigator">Investigator (Analysis & Evidence)</option>
-                    <option value="analyst">Analyst (Triage & Reporting)</option>
-                    <option value="examiner">Forensic Examiner (Acquisition)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[#d6d3d1] font-medium">Badge ID / Credential</label>
-                  <input
-                    type="text"
-                    value={regBadgeId}
-                    onChange={(e) => setRegBadgeId(e.target.value)}
-                    className="w-full bg-[#0d0c0c] border border-[#2e2926] rounded-lg px-3 py-2 text-[#fafaf9] focus:outline-none focus:border-[#f95721] text-xs font-mono"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmittingReg}
-                className="w-full py-2.5 px-4 bg-[#f95721] hover:bg-[#ea580c] disabled:opacity-50 text-white font-semibold rounded-lg transition-colors text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>{isSubmittingReg ? 'Enrolling Examiner...' : 'Register & Launch Workspace'}</span>
-              </button>
-            </form>
-
-            <div className="pt-2 border-t border-[#25201e] flex items-center justify-between text-xs text-[#a8a29e]">
-              <span>Already registered an account?</span>
-              <button
-                type="button"
-                onClick={() => handleTabChange('investigator')}
-                className="text-[#f95721] hover:text-[#fb923c] font-semibold cursor-pointer underline underline-offset-2"
-              >
-                Sign In to Account
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Quick Account Switcher Helper in footer */}
-        <div className="pt-3 border-t border-[#25201e] flex flex-wrap items-center justify-between text-[11px] text-[#78716c]">
-          <span>Digital Crime Scene Reconstruction Engine</span>
-          <button
-            type="button"
-            onClick={() => setCurrentPage('home')}
-            className="text-[#a8a29e] hover:text-[#fafaf9] transition-colors cursor-pointer underline underline-offset-2"
-          >
-            Back to Home
-          </button>
-        </div>
-
+    <div
+      className={`min-h-[calc(100vh-4rem)] w-full flex flex-col lg:flex-row transition-colors ${
+        isLight ? 'bg-slate-50' : 'bg-[#090807]'
+      }`}
+    >
+      {/* =================================================================== */}
+      {/* LEFT HALF OF PAGE: PURE IMAGE (No boxes, no frames, full half bleed) */}
+      {/* =================================================================== */}
+      <div className="w-full lg:w-1/2 min-h-[340px] sm:min-h-[420px] lg:min-h-[calc(100vh-4rem)] relative overflow-hidden bg-[#070606] flex items-center justify-center">
+        <img
+          src="/assets/auth_art.png"
+          alt="Puppet on strings artwork"
+          className="w-full h-full object-cover object-center"
+          loading="eager"
+          decoding="sync"
+        />
       </div>
+
+      {/* =================================================================== */}
+      {/* RIGHT HALF OF PAGE: LOGIN FORM (Clean, centered, no outer box)      */}
+      {/* =================================================================== */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center px-6 sm:px-12 lg:px-14 xl:px-20 py-8 lg:py-12">
+        <div className="w-full max-w-md">
+
+          {/* Header */}
+          <div className="space-y-1.5 mb-6">
+            <h1
+              className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${
+                isLight ? 'text-slate-900' : 'text-white'
+              }`}
+            >
+              Sign In Account
+            </h1>
+          </div>
+
+          {/* Success Banner */}
+          {successMsg && (
+            <div className="mb-5 p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-600/70 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {/* General Error Notification */}
+          {generalError && (
+            <div className="mb-5 p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs flex items-center gap-2 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{generalError}</span>
+            </div>
+          )}
+
+          {/* Sign In Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+
+            {/* Email Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="login-email"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Email or Username
+              </label>
+              <div className="relative">
+                <input
+                  id="login-email"
+                  type="text"
+                  required
+                  value={email}
+                  onChange={(e) => validateEmail(e.target.value)}
+                  placeholder="Enter your email or username"
+                  className={`w-full px-3.5 py-2.5 sm:py-3 pr-10 rounded-xl text-sm transition-all outline-none font-sans ${
+                    emailError
+                      ? isLight
+                        ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                        : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                      : isLight
+                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                  }`}
+                />
+
+                {emailError && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
+              </div>
+
+              {emailError && (
+                <p className="text-[11px] text-red-500 font-sans mt-1">
+                  {emailError}
+                </p>
+              )}
+            </div>
+
+            {/* Password Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="login-pass"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  id="login-pass"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Your password"
+                  className={`w-full px-3.5 py-2.5 sm:py-3 pr-10 rounded-xl text-sm transition-all outline-none font-sans ${
+                    isLight
+                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#78716c] hover:text-[#d6d3d1] transition-colors p-1 cursor-pointer"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full py-3.5 px-6 rounded-xl font-bold text-sm text-white bg-[#f95721] hover:bg-[#ea580c] active:scale-[0.99] transition-all shadow-lg hover:shadow-[0_0_20px_rgba(249,87,33,0.4)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Signing in...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Sign In</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Footer link to Register */}
+            <div className="text-center pt-2">
+              <span
+                className={`text-xs font-sans ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}
+              >
+                Don't have an enrolled account?{' '}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage('register')}
+                className={`text-xs font-bold transition-colors cursor-pointer ${
+                  isLight ? 'text-[#f95721] hover:text-[#ea580c] hover:underline' : 'text-[#f95721] hover:text-white'
+                }`}
+              >
+                Sign Up Account
+              </button>
+            </div>
+
+          </form>
+        </div>
+      </div>
+
     </div>
   );
 };

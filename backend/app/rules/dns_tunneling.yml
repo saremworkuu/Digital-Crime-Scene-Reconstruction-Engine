@@ -1,0 +1,18 @@
+id: dns_tunneling
+name: Potential DNS Tunneling
+description: >-
+  Detects DNS events with unusually long query names, suspicious
+  encoded-looking subdomains, or explicit DNS tunneling indicators.
+severity: high
+mitre_technique: T1071.004
+
+detection:
+  event_types:
+    - dns_query
+    - dns_request
+    - dns_response
+    - dns_lookup
+  group_by: source_ip
+  query_length_threshold: 100
+  subdomain_length_threshold: 50
+  unique_query_threshold: 20

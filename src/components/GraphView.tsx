@@ -61,11 +61,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
     const nodes = filteredNodes;
 
     if (layout === 'hierarchical') {
-      // Stratify by role / type:
-      // Level 1: External IPs
-      // Level 2: DMZ / Web hosts
-      // Level 3: Users & internal accounts
-      // Level 4: Core DC / Internal DB / Target Files
+      // Stratify by role / type with clear left-to-right progression:
+      // Level 1: External IPs & Adversary Infrastructure
+      // Level 2: Ingress Workstations & Edge Gateways (WS-HR-12, mailgw, etc.)
+      // Level 3: Compromised / Active User Accounts
+      // Level 4: Core Domain Controllers & High-Value Target Servers (DC-01, SRV-FS-02, SRV-BKP-01)
       const levels: Record<string, GraphNode[]> = {
         lvl1: [],
         lvl2: [],
@@ -74,20 +74,27 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
       };
 
       nodes.forEach(n => {
-        if (n.type === 'ip') levels.lvl1.push(n);
-        else if (n.type === 'host' && (n.label.includes('web') || n.label.includes('dmz') || n.label.includes('ws'))) levels.lvl2.push(n);
-        else if (n.type === 'user') levels.lvl3.push(n);
-        else levels.lvl4.push(n);
+        const lbl = n.label.toLowerCase();
+        const isExtIp = n.type === 'ip' && !lbl.startsWith('10.') && !lbl.startsWith('192.168.') && !lbl.startsWith('172.');
+        if (isExtIp) {
+          levels.lvl1.push(n);
+        } else if (n.type === 'user') {
+          levels.lvl3.push(n);
+        } else if (lbl.includes('dc-') || lbl.includes('srv-') || lbl.includes('domain') || lbl.includes('file')) {
+          levels.lvl4.push(n);
+        } else {
+          levels.lvl2.push(n);
+        }
       });
 
       const tierKeys = ['lvl1', 'lvl2', 'lvl3', 'lvl4'];
-      const tierWidth = width / (tierKeys.length + 0.5);
+      const tierWidth = (width - 120) / tierKeys.length;
 
       tierKeys.forEach((tier, colIdx) => {
         const tierNodes = levels[tier];
         const count = tierNodes.length;
         tierNodes.forEach((node, rowIdx) => {
-          const x = 90 + colIdx * tierWidth;
+          const x = 75 + colIdx * tierWidth;
           const y = (height / (count + 1)) * (rowIdx + 1);
           positions[node.id] = { x, y };
         });
@@ -420,42 +427,68 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
                     setDraggingNodeId(node.id);
                   }}
                 >
-                  {/* Glowing halo for compromised attack nodes */}
-                  {isCompromised && (
-                    <circle
-                      r="22"
-                      fill={isLight ? '#ea580c' : '#f95721'}
-                      opacity={isLight ? '0.25' : '0.2'}
-                      className="animate-ping"
-                    />
-                  )}
+                  {/* Distinct visual styles per Stage 7: internal host, external IP, user, compromised */}
+                  {(() => {
+                    const lbl = node.label.toLowerCase();
+                    const isExtIp = node.type === 'ip' && !lbl.startsWith('10.') && !lbl.startsWith('192.168.') && !lbl.startsWith('172.');
+                    const isUser = node.type === 'user';
+                    
+                    let strokeColor = isLight ? '#0284c7' : '#38bdf8';
+                    let fillColor = isLight ? '#f0f9ff' : '#082f49';
+                    let markerText = 'HOST';
+                    let textColor = isLight ? '#0369a1' : '#38bdf8';
 
-                  {/* Main Node Circle */}
-                  <circle
-                    r="16"
-                    fill={isCompromised ? (isLight ? '#ffedd5' : '#2e140d') : (isLight ? '#ffffff' : '#191615')}
-                    stroke={
-                      isSelected
-                        ? (isLight ? '#c2410c' : '#f95721')
-                        : isCompromised
-                        ? (isLight ? '#ea580c' : '#ea580c')
-                        : (isLight ? '#cbd5e1' : '#3a322e')
+                    if (isCompromised) {
+                      strokeColor = isLight ? '#ea580c' : '#f95721';
+                      fillColor = isLight ? '#ffedd5' : '#2e140d';
+                      markerText = 'COMP';
+                      textColor = isLight ? '#c2410c' : '#fb923c';
+                    } else if (isExtIp) {
+                      strokeColor = isLight ? '#7c3aed' : '#a855f7';
+                      fillColor = isLight ? '#f5f3ff' : '#2e1065';
+                      markerText = 'EXT';
+                      textColor = isLight ? '#6d28d9' : '#c084fc';
+                    } else if (isUser) {
+                      strokeColor = isLight ? '#059669' : '#10b981';
+                      fillColor = isLight ? '#ecfdf5' : '#064e3b';
+                      markerText = 'USER';
+                      textColor = isLight ? '#047857' : '#34d399';
                     }
-                    strokeWidth={isSelected ? 3 : isCompromised ? 2.4 : 1.5}
-                  />
 
-                  {/* Node Type Letter Marker */}
-                  <text
-                    x="0"
-                    y="4"
-                    textAnchor="middle"
-                    fill={isCompromised ? (isLight ? '#c2410c' : '#fb923c') : (isLight ? '#ea580c' : '#f97316')}
-                    fontSize="10"
-                    fontFamily="JetBrains Mono, monospace"
-                    fontWeight="bold"
-                  >
-                    {node.type === 'host' ? 'H' : node.type === 'user' ? 'U' : node.type === 'ip' ? 'IP' : 'F'}
-                  </text>
+                    if (isSelected) {
+                      strokeColor = isLight ? '#c2410c' : '#f95721';
+                    }
+
+                    return (
+                      <>
+                        {isCompromised && (
+                          <circle
+                            r="24"
+                            fill={isLight ? '#ea580c' : '#f95721'}
+                            opacity={isLight ? '0.25' : '0.2'}
+                            className="animate-ping"
+                          />
+                        )}
+                        <circle
+                          r="17"
+                          fill={fillColor}
+                          stroke={strokeColor}
+                          strokeWidth={isSelected ? 3.5 : isCompromised ? 2.5 : 1.8}
+                        />
+                        <text
+                          x="0"
+                          y="3.5"
+                          textAnchor="middle"
+                          fill={textColor}
+                          fontSize="8"
+                          fontFamily="JetBrains Mono, monospace"
+                          fontWeight="bold"
+                        >
+                          {markerText}
+                        </text>
+                      </>
+                    );
+                  })()}
 
                   {/* Node Label Below */}
                   <text

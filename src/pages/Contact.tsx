@@ -1,361 +1,453 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
 import {
-  Mail,
-  Phone,
-  MapPin,
-  Send,
   CheckCircle2,
-  Copy,
-  Check,
-  Lock,
-  Building,
-  User
+  AlertCircle,
+  Send,
+  Loader2
 } from 'lucide-react';
-import { Forensic3DCore } from '../components/Forensic3DCore';
+import { toast } from '../components/Toast';
+import { messagesService } from '../services/admin/messagesService';
 
 export const Contact: React.FC = () => {
-  const { setCurrentPage, theme } = useApp();
+  const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [name, setName] = useState('');
+  // Form Fields
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [organization, setOrganization] = useState('');
-  const [inquiryType, setInquiryType] = useState('emergency_breach');
-  const [priority, setPriority] = useState<'critical' | 'high' | 'normal'>('critical');
+  const [phone, setPhone] = useState('');
   const [message, setMessage] = useState('');
+
+  // Field-specific validation errors
+  const [firstNameError, setFirstNameError] = useState<string | null>(null);
+  const [lastNameError, setLastNameError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [messageError, setMessageError] = useState<string | null>(null);
+
+  // General state
+  const [generalError, setGeneralError] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
-  const [copiedFingerprint, setCopiedFingerprint] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const pgpFingerprint = 'E4B2 91A0 39F8 D82C 7E10 B149 2C87 F320 9D1A 4E02';
-
-  const handleCopyFingerprint = () => {
-    navigator.clipboard.writeText(pgpFingerprint);
-    setCopiedFingerprint(true);
-    setTimeout(() => setCopiedFingerprint(false), 2000);
+  // Field validation helpers
+  const validateFirstName = (val: string) => {
+    setFirstName(val);
+    if (!val.trim()) {
+      setFirstNameError('First name is required');
+    } else {
+      setFirstNameError(null);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const validateLastName = (val: string) => {
+    setLastName(val);
+    if (!val.trim()) {
+      setLastNameError('Last name is required');
+    } else {
+      setLastNameError(null);
+    }
+  };
+
+  const validateEmail = (val: string) => {
+    setEmail(val);
+    if (!val.trim()) {
+      setEmailError('Official email is required');
+      return;
+    }
+    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
+    if (!isValid) {
+      setEmailError('Enter a valid email address');
+    } else {
+      setEmailError(null);
+    }
+  };
+
+  const validatePhone = (val: string) => {
+    setPhone(val);
+    if (!val.trim()) {
+      setPhoneError('Phone number is required');
+      return;
+    }
+    // Basic phone validation (allowing digits, +, -, (, ), spaces)
+    const digitsOnly = val.replace(/\D/g, '');
+    if (digitsOnly.length < 7 || digitsOnly.length > 15) {
+      setPhoneError('Enter a valid phone number (7-15 digits)');
+    } else {
+      setPhoneError(null);
+    }
+  };
+
+  const validateMessage = (val: string) => {
+    setMessage(val);
+    if (!val.trim()) {
+      setMessageError('Message cannot be empty');
+    } else if (val.trim().length < 10) {
+      setMessageError('Please enter at least 10 characters');
+    } else {
+      setMessageError(null);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setGeneralError(null);
+
+    let hasError = false;
+
+    if (!firstName.trim()) {
+      setFirstNameError('First name is required');
+      hasError = true;
+    }
+    if (!lastName.trim()) {
+      setLastNameError('Last name is required');
+      hasError = true;
+    }
+
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setEmailError('A valid official email is required');
+      hasError = true;
+    }
+
+    const digitsOnly = phone.replace(/\D/g, '');
+    if (!phone.trim() || digitsOnly.length < 7 || digitsOnly.length > 15) {
+      setPhoneError('A valid phone number is required');
+      hasError = true;
+    }
+
+    if (!message.trim() || message.trim().length < 10) {
+      setMessageError('Message must be at least 10 characters');
+      hasError = true;
+    }
+
+    if (hasError) {
+      const err = 'Please resolve all required fields highlighted in red.';
+      setGeneralError(err);
+      toast.error(err);
+      return;
+    }
+
     setIsSubmitting(true);
 
-    // Simulate cryptographic ticket issuance
-    setTimeout(() => {
-      const generatedTicket = `DCSRE-${Date.now().toString().slice(-6)}`;
+    try {
+      const result = await messagesService.submitPublicMessage({
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        message: message.trim(),
+        subject: 'Forensic Incident / Case Inquiry',
+        category: 'Incident Escalation'
+      });
+
+      const generatedTicket = result.reference || `አሻራ-${Date.now().toString().slice(-6)}`;
       setTicketId(generatedTicket);
+
+      // Reset form fields
+      setFirstName('');
+      setLastName('');
+      setEmail('');
+      setPhone('');
+      setMessage('');
+
+      toast.success(`Message transmitted! Reference case ticket #${generatedTicket}`);
+    } catch (err: any) {
+      console.error('Contact transmission failed:', err);
+      const errText = err?.message || 'Transmission failed. Please check network connection.';
+      setGeneralError(errText);
+      toast.error(errText);
+    } finally {
       setIsSubmitting(false);
-    }, 700);
+    }
   };
 
   return (
-    <div className="space-y-10 pb-16 max-w-5xl mx-auto px-2 sm:px-4">
-      {/* Header Banner */}
-      <div className={`relative rounded-3xl overflow-hidden border ${
-        isLight
-          ? 'border-slate-200 bg-gradient-to-b from-white via-slate-50 to-slate-100 shadow-xl'
-          : 'border-[#2b2523] bg-gradient-to-b from-[#181514] via-[#121110] to-[#0d0c0c] shadow-2xl'
-      } p-6 sm:p-10 transition-colors`}>
-        <div className="absolute top-0 right-0 w-80 h-80 bg-[#f95721]/10 rounded-full blur-3xl pointer-events-none" />
+    <div
+      className={`min-h-[calc(100vh-61px)] w-full flex flex-col lg:flex-row transition-colors ${
+        isLight ? 'bg-slate-50' : 'bg-[#090807]'
+      }`}
+    >
+      {/* =================================================================== */}
+      {/* LEFT 50% OF SCREEN: FULL-BLEED EDGE-TO-EDGE ARTWORK IMAGE           */}
+      {/* Spans full viewport height on desktop, stacks on top on mobile      */}
+      {/* =================================================================== */}
+      <div className="w-full lg:w-1/2 min-h-[300px] sm:min-h-[380px] lg:min-h-[calc(100vh-61px)] relative overflow-hidden bg-[#070606] flex items-center justify-center shrink-0">
+        <img
+          src="/assets/contact_art.png"
+          alt="Hooded figure running along forest pathway"
+          className="w-full h-full object-cover object-center"
+          loading="eager"
+          decoding="sync"
+        />
+        {/* Subtle vignette gradient for smooth visual blend */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/20 pointer-events-none" />
+      </div>
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-2xl">
-            <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-[#fafaf9]">
-              Contact Forensic Triage
+      {/* =================================================================== */}
+      {/* RIGHT 50% OF SCREEN: CLEAN CENTERED CONTACT FORM                    */}
+      {/* No outer card boxes, no enclosing borders, exactly matches Sign In  */}
+      {/* =================================================================== */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center px-6 sm:px-12 lg:px-14 xl:px-20 py-8 lg:py-12">
+        <div className="w-full max-w-md">
+
+          {/* Header */}
+          <div className="space-y-1.5 mb-6">
+            <h1
+              className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${
+                isLight ? 'text-slate-900' : 'text-white'
+              }`}
+            >
+              Contact Us
             </h1>
-
-            <p className="text-xs sm:text-sm text-[#a8a29e] leading-relaxed">
-              Direct dispatch for active incident response, evidence handoff, and forensic support.
+            <p
+              className={`text-xs sm:text-sm font-sans ${
+                isLight ? 'text-slate-500' : 'text-[#a8a29e]'
+              }`}
+            >
+              Send us a message and our team will get back to you shortly
             </p>
           </div>
 
-          <div className="shrink-0 flex items-center justify-center">
-            <div className={`p-3 rounded-2xl ${isLight ? 'bg-white border-slate-200' : 'bg-[#161413] border-[#2c2624]'} border shadow-lg`}>
-              <Forensic3DCore size={72} interactive={true} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Ticket Success Confirmation Modal / Banner */}
-      {ticketId && (
-        <div className="p-6 rounded-2xl bg-[#1a1411] border-2 border-[#f95721] shadow-2xl space-y-4 animate-fadeIn">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-[#2b130a] border border-[#ea580c]/60 flex items-center justify-center text-[#f95721] shrink-0">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
-            <div className="space-y-1 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-bold">
-                  Dispatch Recorded
-                </span>
-                <span className="text-xs font-mono text-[#a8a29e]">Ref: {ticketId}</span>
+          {/* Success Banner */}
+          {ticketId && (
+            <div className="mb-5 p-4 rounded-xl bg-emerald-950/70 border border-emerald-600/70 text-emerald-300 text-xs space-y-1 animate-fadeIn">
+              <div className="flex items-center gap-2 font-semibold text-emerald-200">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Message Sent Successfully</span>
               </div>
-              <h3 className="text-base font-bold text-[#fafaf9]">
-                Forensic Incident Triage Request Acknowledged
-              </h3>
-              <p className="text-xs text-[#d6d3d1] leading-relaxed">
-                Your dispatch ticket <strong className="text-[#f95721] font-mono">{ticketId}</strong> has been logged to the DCSRE on-call duty queue. Our standby digital forensics examiner will contact <strong className="text-[#fafaf9]">{email}</strong> within {priority === 'critical' ? '15 minutes' : '2 hours'}.
+              <p className="text-[11px] text-emerald-300/90 pl-6 font-mono">
+                Case Ticket Reference: <strong className="text-white select-all">#{ticketId}</strong>
               </p>
             </div>
-          </div>
+          )}
 
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#2d221e]">
-            <button
-              type="button"
-              onClick={() => {
-                setTicketId(null);
-                setMessage('');
-              }}
-              className="px-4 py-2 bg-[#27130b] hover:bg-[#38180e] border border-[#ea580c]/50 text-[#ff8d60] rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Submit Another Inquiry
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentPage('home')}
-              className="px-4 py-2 bg-[#f95721] hover:bg-[#ea580c] text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Return to Home
-            </button>
-          </div>
-        </div>
-      )}
+          {/* General Error Notification */}
+          {generalError && (
+            <div className="mb-5 p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs flex items-center gap-2 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{generalError}</span>
+            </div>
+          )}
 
-      {/* Main Grid: Contact Cards & Form */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Column: Direct Channels & Information (5 cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Rapid Response Hotline */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-              <Phone className="w-4 h-4 text-[#f95721]" />
-              <span>Incident Hotline</span>
-            </div>
-            <div className="text-xl font-bold font-mono text-[#fafaf9] tracking-tight">
-              +1 (800) 555-DFIR (3347)
-            </div>
-          </div>
+          {/* Contact Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Secure Email */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-              <Mail className="w-4 h-4 text-[#f95721]" />
-              <span>Forensic Inboxes</span>
-            </div>
-            <div className="space-y-1 text-xs font-mono">
-              <div className="flex justify-between items-center text-[#fafaf9]">
-                <span className="text-[#a8a29e]">Incident Response:</span>
-                <span className="text-[#f95721]">triage@dcsre.corp</span>
+            {/* Name Fields: First Name and Last Name */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* First Name */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="contact-first-name"
+                  className={`block text-xs font-medium font-sans ${
+                    isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                  }`}
+                >
+                  First Name <span className="text-[#f95721]">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    id="contact-first-name"
+                    type="text"
+                    required
+                    value={firstName}
+                    onChange={(e) => validateFirstName(e.target.value)}
+                    placeholder=""
+                    className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                      firstNameError
+                        ? isLight
+                          ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                          : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                        : isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                    }`}
+                  />
+                </div>
+                {firstNameError && (
+                  <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                    {firstNameError}
+                  </p>
+                )}
               </div>
-              <div className="flex justify-between items-center text-[#fafaf9]">
-                <span className="text-[#a8a29e]">Evidence Custody:</span>
-                <span>evidence@dcsre.corp</span>
-              </div>
-              <div className="flex justify-between items-center text-[#fafaf9]">
-                <span className="text-[#a8a29e]">Admin Command:</span>
-                <span>saremworkuu@gmail.com</span>
-              </div>
-            </div>
-          </div>
 
-          {/* PGP Fingerprint Card */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-                <Lock className="w-4 h-4 text-[#f95721]" />
-                <span>PGP Fingerprint</span>
+              {/* Last Name */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="contact-last-name"
+                  className={`block text-xs font-medium font-sans ${
+                    isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                  }`}
+                >
+                  Last Name <span className="text-[#f95721]">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    id="contact-last-name"
+                    type="text"
+                    required
+                    value={lastName}
+                    onChange={(e) => validateLastName(e.target.value)}
+                    placeholder=""
+                    className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                      lastNameError
+                        ? isLight
+                          ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                          : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                        : isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                        : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                    }`}
+                  />
+                </div>
+                {lastNameError && (
+                  <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                    {lastNameError}
+                  </p>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={handleCopyFingerprint}
-                className="text-[11px] font-mono text-[#a8a29e] hover:text-[#fafaf9] flex items-center gap-1 transition-colors cursor-pointer"
+            </div>
+
+            {/* Email Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="contact-email"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
               >
-                {copiedFingerprint ? (
+                Official Email <span className="text-[#f95721]">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="contact-email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => validateEmail(e.target.value)}
+                  placeholder=""
+                  className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                    emailError
+                      ? isLight
+                        ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                        : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                      : isLight
+                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                  }`}
+                />
+                {emailError && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
+              </div>
+              {emailError && (
+                <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                  {emailError}
+                </p>
+              )}
+            </div>
+
+            {/* Phone Number Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="contact-phone"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Phone Number <span className="text-[#f95721]">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="contact-phone"
+                  type="tel"
+                  required
+                  value={phone}
+                  onChange={(e) => validatePhone(e.target.value)}
+                  placeholder=""
+                  className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none font-sans ${
+                    phoneError
+                      ? isLight
+                        ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                        : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                      : isLight
+                      ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                      : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                  }`}
+                />
+                {phoneError && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
+              </div>
+              {phoneError && (
+                <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                  {phoneError}
+                </p>
+              )}
+            </div>
+
+            {/* Message Field */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="contact-message"
+                className={`block text-xs font-medium font-sans ${
+                  isLight ? 'text-slate-700' : 'text-[#d6d3d1]'
+                }`}
+              >
+                Message <span className="text-[#f95721]">*</span>
+              </label>
+              <textarea
+                id="contact-message"
+                rows={4}
+                required
+                value={message}
+                onChange={(e) => validateMessage(e.target.value)}
+                placeholder="Tell us what happened or how we can help..."
+                className={`w-full px-3.5 py-2.5 sm:py-3 rounded-xl text-sm transition-all outline-none resize-none font-sans ${
+                  messageError
+                    ? isLight
+                      ? 'bg-red-50/50 border border-red-500 text-red-600 focus:ring-1 focus:ring-red-500'
+                      : 'bg-[#1f0d0a] border border-red-600/90 text-red-400 placeholder:text-red-400/50 focus:ring-1 focus:ring-red-500'
+                    : isLight
+                    ? 'bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-[#f95721] focus:ring-1 focus:ring-[#f95721]'
+                    : 'bg-[#141211] border border-[#2b2523] text-white placeholder:text-[#655f5c] focus:border-[#f95721] focus:bg-[#1a1715] focus:ring-1 focus:ring-[#f95721]'
+                }`}
+              />
+              {messageError && (
+                <p className="text-[11px] text-red-500 font-sans mt-0.5">
+                  {messageError}
+                </p>
+              )}
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full bg-[#f95721] hover:bg-[#ea580c] text-white font-semibold py-2.5 sm:py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(249,87,33,0.3)] hover:shadow-[0_0_28px_rgba(249,87,33,0.5)] cursor-pointer flex items-center justify-center gap-2 font-sans disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
                   <>
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Transmitting Message...</span>
                   </>
                 ) : (
                   <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy</span>
+                    <Send className="w-4 h-4" />
+                    <span>Send Message</span>
                   </>
                 )}
               </button>
             </div>
-            <div className="p-3 bg-[#0d0c0c] border border-[#282321] rounded-xl text-[11px] font-mono text-[#d6d3d1] break-all leading-relaxed select-all">
-              {pgpFingerprint}
-            </div>
-          </div>
 
-          {/* Physical Enclave Location */}
-          <div className="p-5 rounded-2xl bg-[#141211] border border-[#2b2523] space-y-3 shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#ff8d60] uppercase tracking-wider font-mono">
-              <MapPin className="w-4 h-4 text-[#f95721]" />
-              <span>Laboratory Location</span>
-            </div>
-            <div className="text-xs text-[#d6d3d1] space-y-0.5">
-              <div className="font-semibold text-[#fafaf9]">DCSRE Secure Forensics Laboratory</div>
-              <div>Intake Bay 4 · Incident Defense Center</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Interactive Dispatch Form (7 cols) */}
-        <div className="lg:col-span-7 bg-[#141211] border border-[#2b2523] rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
-          <div>
-            <h2 className="text-lg font-bold text-[#fafaf9] tracking-tight">
-              Submit Incident Dispatch / Inquiry
-            </h2>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-            {/* Name & Email */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">
-                  Full Name <span className="text-[#f95721]">*</span>
-                </label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Inspector Alex Thorne"
-                    className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">
-                  Email Address <span className="text-[#f95721]">*</span>
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="e.g. athorne@agency.gov"
-                    className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Organization & Inquiry Type */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Organization / Agency</label>
-                <div className="relative">
-                  <Building className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={organization}
-                    onChange={(e) => setOrganization(e.target.value)}
-                    placeholder="e.g. State Cyber Bureau / Corp SOC"
-                    className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg pl-9 pr-3 py-2.5 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[#d6d3d1] font-medium block">Inquiry Classification</label>
-                <select
-                  value={inquiryType}
-                  onChange={(e) => setInquiryType(e.target.value)}
-                  className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg px-3 py-2.5 text-[#fafaf9] focus:outline-none focus:border-[#f95721] transition-colors cursor-pointer font-mono"
-                >
-                  <option value="emergency_breach">Active Breach / Ransomware Triage</option>
-                  <option value="evidence_intake">Evidence Ingestion & Verification</option>
-                  <option value="expert_testimony">Courtroom Forensic Attestation</option>
-                  <option value="general_inquiry">General Question / Partnership</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Severity / Priority */}
-            <div className="space-y-1.5">
-              <label className="text-[#d6d3d1] font-medium block">Priority Level</label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPriority('critical')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    priority === 'critical'
-                      ? 'bg-red-950/80 border-red-700 text-red-300 shadow-md ring-1 ring-red-500'
-                      : 'bg-[#0d0c0c] border-[#2b2523] text-[#a8a29e] hover:text-[#fafaf9]'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span>P1 Critical (Active)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPriority('high')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    priority === 'high'
-                      ? 'bg-[#29160d] border-[#ea580c] text-[#ff8d60] shadow-md ring-1 ring-[#f95721]'
-                      : 'bg-[#0d0c0c] border-[#2b2523] text-[#a8a29e] hover:text-[#fafaf9]'
-                  }`}
-                >
-                  <span>P2 High</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPriority('normal')}
-                  className={`py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    priority === 'normal'
-                      ? 'bg-[#181615] border-[#443c39] text-[#fafaf9] shadow-md'
-                      : 'bg-[#0d0c0c] border-[#2b2523] text-[#a8a29e] hover:text-[#fafaf9]'
-                  }`}
-                >
-                  <span>P3 Standard</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Message Body */}
-            <div className="space-y-1.5">
-              <label className="text-[#d6d3d1] font-medium block">
-                Incident Summary / Message <span className="text-[#f95721]">*</span>
-              </label>
-              <textarea
-                required
-                rows={4}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Describe the affected hosts, observable IOCs, timeline constraints, or request details..."
-                className="w-full bg-[#0d0c0c] border border-[#2b2523] rounded-lg p-3 text-[#fafaf9] placeholder-[#78716c] focus:outline-none focus:border-[#f95721] transition-colors font-sans text-xs resize-y"
-              />
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3 px-4 bg-gradient-to-r from-[#f95721] to-[#ea580c] hover:from-[#ea580c] hover:to-[#c2410c] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Logging Dispatch Record...</span>
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  <span>Dispatch Incident Request</span>
-                </>
-              )}
-            </button>
           </form>
+
         </div>
       </div>
     </div>
