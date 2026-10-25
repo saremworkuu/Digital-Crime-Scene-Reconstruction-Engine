@@ -98,86 +98,26 @@ DCSRE processes evidence through an 8-stage deterministic pipeline:
 ## 📸 5. Proof of Working System (Live Deployment & Visual Walkthrough)
 
 > [!TIP]
-> ### 🌐 Live Deployed Application Links
-> * 🔗 **Live Web Application (Frontend)**: [https://digital-crime-scene-reconstruction-three.vercel.app/](https://digital-crime-scene-reconstruction-three.vercel.app/)
-> * ⚙️ **Backend Architecture & API Demo**: [Watch Backend Demonstration Video](https://www.awesomescreenshot.com/video/57761370?key=0ca455075891fd2ab94560c28127f4c1)
+> ### 🌐 Live Deployed Application
+> * 🔗 **Live Website**: [https://digital-crime-scene-reconstruction-three.vercel.app/](https://digital-crime-scene-reconstruction-three.vercel.app/)
+
 ---
 
+### 📷 Visual Walkthrough & System Demonstrations
 
 #### 5.1 Public Portal & 3D Global Cyber Threat Sphere
-*Landing page showing real-time incident metrics and interactive 3D attack topology.*
+*Landing page welcoming investigators with real-time incident metrics and an interactive 3D global attack topology.*
 
 ![Public Portal & 3D Threat Sphere](image.png)
 
 ---
 
-#### 5.2 Role-Based Authentication & Session Security
-*Enterprise authentication supporting RBAC boundaries (Admin, Lead Investigator).*
-
-![Role-Based Authentication](image-1.png)
-
----
-
-#### 5.3 Forensic Investigator Dashboard
-*Unified command center with active case telemetry, compliance scoring, and gateway density metrics.*
+#### 5.2 Forensic Investigator Dashboard
+*Unified investigation command center with active case telemetry, compliance scoring, and gateway density metrics.*
 
 ![Forensic Investigator Dashboard](image-2.png)
 
 ---
-
-#### 5.4 Centralized Case Management
-*Workspace for creating, tracking, assigning, and archiving digital forensics investigations.*
-
-![Centralized Case Management Workspace](image-3.png)
-
----
-
-#### 5.5 Evidence Ingestion Vault & Cryptographic Custody Inventory
-*Dropzone validator featuring auto-detect parsers and automatic SHA-256 integrity verification.*
-
-![Evidence Ingestion Vault & Custody Inventory](image-4.png)
-
----
-
-#### 5.6 Chronological Incident Timeline Reconstruction
-*UTC-normalized microsecond event sequence interleaving actions across multi-host environments.*
-
-![Incident Chronological Timeline Reconstruction](image-5.png)
-
----
-
-#### 5.7 Attack Path & Entity Relationship Topology
-*Interactive 2D graph reconstructing adversary lateral movement, privilege escalation, and external C2 communication.*
-
-![Attack Path & Entity Relationship Topology](image-6.png)
-
----
-
-#### 5.8 Adversary Attack Path Trajectory (Kill-Chain Sequence)
-*Chronological kill-chain hops, lateral movement progression, and adversary dwell time analysis.*
-
-![Adversary Attack Path Trajectory](image-7.png)
-
----
-
-#### 5.9 Deterministic Findings & Threat Detections
-*Rules evaluation engine correlating events to MITRE ATT&CK tactics with full traceability to raw event IDs.*
-
-![Deterministic Findings & Threat Detections](image-8.png)
-
----
-
-#### 5.10 Courtroom-Ready Forensic Incident Report
-*Automatically generated report with executive summary, evidence custody log, and a cryptographic integrity seal.*
-
-![Forensic Incident Reconstruction Report](image-9.png)
-
----
-
-#### 5.11 System Health & Ingestion Pipeline Telemetry
-*Real-time performance metrics showing parser status, average parsing latency, storage quotas, and background worker queues.*
-
-![System Health & Engine Telemetry](image-10.png)
 
 ## 🚀 6. Quick Start & Installation
 
