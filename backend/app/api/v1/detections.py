@@ -68,6 +68,36 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         fields["host"] for fields in (extract_event_fields(event) for event in matched_events)
         if fields.get("host") and fields["host"].casefold() not in {"unknown", "unknown_host", "-"}
     )
+    existing_entities = rule_info.get("entities") or {}
+    observed_users = unique_users([
+        *(existing_entities.get("users") or []),
+        *([rule_info.get("user")] if rule_info.get("user") else []),
+    ])
+    observed_ips = list(dict.fromkeys([
+        *(existing_entities.get("ips") or []),
+        *[value for value in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if value],
+    ]))
+
+    return DetectionResponse(
+        id=detection.id,
+        case_id=detection.case_id,
+        rule_id=detection.rule_id,
+        rule_name=canonical_title(detection.rule_name),
+        severity=detection.severity,
+        description=detection.description,
+        mitre_technique=detection.mitre_technique or "T1110",
+        mitre_techniques_all=(rule_info.get("mitre_techniques_all") or [detection.mitre_technique] if detection.mitre_technique else []),
+        mitre_tactic=rule_info.get("tactic") or ("Exfiltration" if detection.mitre_technique == "T1041" else "Execution"),
+        rule_information=rule_info,
+        is_false_positive=detection.is_false_positive,
+        false_positive=detection.is_false_positive,
+        false_positive_reason=rule_info.get("fp_reason"),
+        detected_at=detection.detected_at,
+        timestamp=ts_str,
+        event_ids=event_ids,
+        matched_event_ids=[str(eid) for eid in event_ids],
+        entities_involved={**existing_entities, "hosts": sorted(observed_hosts), "users": observed_users, "ips": observed_ips},
+    )
 
 
 def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> List[dict]:
@@ -164,38 +194,6 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
         if _severity_rank(finding.get("severity")) > _severity_rank(duplicate.get("severity")):
             duplicate["severity"] = finding.get("severity")
     return merged
-    existing_entities = rule_info.get("entities") or {}
-    observed_users = unique_users([
-        *(existing_entities.get("users") or []),
-        *([rule_info.get("user")] if rule_info.get("user") else []),
-    ])
-    observed_ips = list(dict.fromkeys([
-        *(existing_entities.get("ips") or []),
-        *[value for value in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if value],
-    ]))
-
-    return DetectionResponse(
-        id=detection.id,
-        case_id=detection.case_id,
-        rule_id=detection.rule_id,
-        rule_name=canonical_title(detection.rule_name),
-        severity=detection.severity,
-        description=detection.description,
-        mitre_technique=detection.mitre_technique or "T1110",
-        mitre_techniques_all=(rule_info.get("mitre_techniques_all") or [detection.mitre_technique] if detection.mitre_technique else []),
-        mitre_tactic=rule_info.get("tactic") or ("Exfiltration" if detection.mitre_technique == "T1041" else "Execution"),
-        rule_information=rule_info,
-        is_false_positive=detection.is_false_positive,
-        false_positive=detection.is_false_positive,
-        false_positive_reason=rule_info.get("fp_reason"),
-        detected_at=detection.detected_at,
-        timestamp=ts_str,
-        event_ids=event_ids,
-        matched_event_ids=[str(eid) for eid in event_ids],
-        entities_involved={**existing_entities, "hosts": sorted(observed_hosts), "users": observed_users, "ips": observed_ips},
-    )
-
-
 from app.services.detection_engine import (
     execute_detections_on_events,
     get_rule_coverage_matrix,

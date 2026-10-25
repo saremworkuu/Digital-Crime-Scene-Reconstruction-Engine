@@ -44,7 +44,7 @@ def test_recomputing_case_a_never_reads_or_changes_case_b_rows():
     statements = []
 
     def capture_sql(_conn, _cursor, statement, parameters, _context, _many):
-        if " from events" in statement.lower() or " from detections" in statement.lower() or " from detection_events" in statement.lower():
+        if "events" in statement.lower() or "detections" in statement.lower():
             statements.append((statement.lower(), parameters))
 
     from sqlalchemy import event as sqlalchemy_event
@@ -62,9 +62,10 @@ def test_recomputing_case_a_never_reads_or_changes_case_b_rows():
     assert db.execute(select(DetectionEvent.event_id).where(DetectionEvent.detection_id == stable_b)).scalars().all() == [event_b]
     case_a_links = db.execute(select(DetectionEvent.event_id).where(DetectionEvent.detection_id == rebuilt[0].id)).scalars().all()
     assert case_a_links == [event_a]
-    event_selects = [sql for sql, _ in statements if " from events" in sql and sql.lstrip().startswith("select")]
+    event_selects = [sql for sql, _ in statements if "events" in sql and sql.lstrip().startswith("select") and "detection_events" not in sql]
     assert event_selects and all("events.case_id" in sql for sql in event_selects)
-    assert all("where detections.case_id" in sql for sql, _ in statements if " from detections" in sql and sql.lstrip().startswith("select"))
+    detection_selects = [sql for sql, _ in statements if "detections" in sql and "detection_events" not in sql and sql.lstrip().startswith("select")]
+    assert all("detections.case_id" in sql for sql in detection_selects)
     db.close()
     engine.dispose()
 

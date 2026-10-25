@@ -35,7 +35,7 @@ def test_report_generate_view_and_download_append_audit_rows(monkeypatch):
 
 
 def test_audit_router_exposes_no_edit_or_delete_operations():
-    assert {route.methods for route in audit_api.router.routes} == {{"GET"}}
+    assert all(route.methods == {"GET"} for route in audit_api.router.routes)
 
 
 def test_audit_response_field_names_match_frontend_contract():
