@@ -14,10 +14,21 @@ from app.db.models.case import Case
 from app.db.models.evidence import Evidence
 from app.db.models.events import Event
 from app.db.models.detection import Detection
+from app.db.models.detection_event import DetectionEvent
 from app.db.models.report import Report
 from app.db.models.user import User
 from app.schemas.report import ForensicReportResponse
 from app.services.report import generate_forensic_report_data, render_report_html, render_report_pdf
+from app.services.detection_engine import execute_detections_on_events
+from app.services.detection import (
+    detect_repeated_failed_logins,
+    detect_failed_then_successful_login,
+    detect_privilege_escalation,
+    detect_lateral_movement,
+    detect_web_sql_injection,
+    detect_data_exfiltration,
+    detect_dns_tunneling,
+)
 
 router = APIRouter(tags=["reports"])
 
@@ -40,10 +51,58 @@ def _compile_case_report(
     events = db.execute(
         select(Event).where(Event.case_id == case.id).order_by(Event.timestamp.asc())
     ).scalars().all()
+    valid_event_ids = {str(event.id) for event in events}
 
     detections = db.execute(
         select(Detection).where(Detection.case_id == case.id)
     ).scalars().all()
+
+    detection_ids = [d.id for d in detections]
+    associated_events: dict[str, set[str]] = {}
+    if detection_ids:
+        associations = db.execute(
+            select(DetectionEvent.detection_id, DetectionEvent.event_id)
+            .where(DetectionEvent.detection_id.in_(detection_ids))
+        ).all()
+        for detection_id, event_id in associations:
+            associated_events.setdefault(str(detection_id), set()).add(str(event_id))
+
+    # Legacy Detection rows may predate DetectionEvent links. Re-run the
+    # existing deterministic detectors in memory only for unmapped rows, and
+    # use their event IDs to recover report timestamps and timeline coverage.
+    missing_links = [
+        d for d in detections
+        if not any(str(event_id) in valid_event_ids for event_id in ((d.rule_information or {}).get("matching_event_ids") or []))
+        and not (associated_events.get(str(d.id), set()) & valid_event_ids)
+    ]
+    reconstructed_links: dict[str, set[str]] = {}
+    if missing_links:
+        reconstructed_findings = []
+        try:
+            reconstructed_findings.extend(execute_detections_on_events(events, case.id))
+        except Exception:
+            pass
+        for detector in (
+            detect_repeated_failed_logins,
+            detect_failed_then_successful_login,
+            detect_privilege_escalation,
+            detect_lateral_movement,
+            detect_web_sql_injection,
+            detect_data_exfiltration,
+            detect_dns_tunneling,
+        ):
+            try:
+                reconstructed_findings.extend(detector(events))
+            except Exception:
+                continue
+        for finding in reconstructed_findings:
+            keys = {
+                str(finding.get("rule_id") or "").casefold(),
+                str(finding.get("rule_name") or "").casefold(),
+            } - {""}
+            event_ids = {str(event_id) for event_id in (finding.get("matching_event_ids") or []) if event_id}
+            for key in keys:
+                reconstructed_links.setdefault(key, set()).update(event_ids)
 
     evidence_list = [
         {
@@ -68,9 +127,18 @@ def _compile_case_report(
                 (ev.details or {}).get("host")
                 or (ev.details or {}).get("Computer")
                 or (ev.details or {}).get("computer")
+                or (ev.details or {}).get("hostname")
+                or (ev.details or {}).get("computer_name")
+                or (ev.details or {}).get("ComputerName")
                 or "unknown_host"
             ),
-            "user": (ev.details or {}).get("user") or (ev.details or {}).get("username") or "SYSTEM",
+            "user": (
+                (ev.details or {}).get("user")
+                or (ev.details or {}).get("username")
+                or (ev.details or {}).get("account")
+                or (ev.details or {}).get("SubjectUserName")
+                or "SYSTEM"
+            ),
             "action": (ev.details or {}).get("action") or (ev.details or {}).get("message") or ev.event_type,
             "severity": (ev.details or {}).get("severity") or "low",
             "is_attack_path": bool((ev.details or {}).get("is_attack_path")),
@@ -83,41 +151,45 @@ def _compile_case_report(
     ]
     events_by_id = {event["id"]: event for event in event_dicts if event.get("id")}
 
-    detection_dicts = [
-        {
+    detection_dicts = []
+    for d in detections:
+        rule_info = d.rule_information or {}
+        matching_ids = {
+            str(event_id)
+            for event_id in (rule_info.get("matching_event_ids") or [])
+            if str(event_id) in valid_event_ids
+        }
+        matching_ids.update(associated_events.get(str(d.id), set()) & valid_event_ids)
+        if not matching_ids:
+            matching_ids.update(reconstructed_links.get(str(d.rule_id or "").casefold(), set()))
+            matching_ids.update(reconstructed_links.get(str(d.rule_name or "").casefold(), set()))
+        matching_event_times = sorted(
+            events_by_id[event_id]["timestamp"]
+            for event_id in matching_ids
+            if event_id in events_by_id
+        )
+        # Only timestamp linked events here. Legacy metadata may contain a
+        # detection/upload time and must not be presented as event time.
+        first_seen = matching_event_times[0] if matching_event_times else None
+        last_seen = matching_event_times[-1] if matching_event_times else None
+        detection_dicts.append({
             "id": str(d.id),
             "rule_id": d.rule_id,
             "rule_name": d.rule_name,
             "mitre_technique": d.mitre_technique or "T1059",
-            "mitre_tactic": (d.rule_information or {}).get("tactic", "Execution"),
+            "mitre_tactic": rule_info.get("tactic") or ("Exfiltration" if d.mitre_technique == "T1041" else "Execution"),
             "severity": d.severity.value if hasattr(d.severity, "value") else str(d.severity),
             "description": d.description,
-            "first_seen": min(
-                (
-                    events_by_id[str(event_id)]["timestamp"]
-                    for event_id in ((d.rule_information or {}).get("matching_event_ids") or [])
-                    if str(event_id) in events_by_id
-                ),
-                default=d.detected_at.isoformat() if hasattr(d.detected_at, "isoformat") else str(d.detected_at),
-            ),
-            "last_seen": max(
-                (
-                    events_by_id[str(event_id)]["timestamp"]
-                    for event_id in ((d.rule_information or {}).get("matching_event_ids") or [])
-                    if str(event_id) in events_by_id
-                ),
-                default=d.detected_at.isoformat() if hasattr(d.detected_at, "isoformat") else str(d.detected_at),
-            ),
-            "user": (d.rule_information or {}).get("user"),
-            "actor": (d.rule_information or {}).get("actor"),
-            "actor_role": (d.rule_information or {}).get("actor_role"),
-            "target_host": (d.rule_information or {}).get("target_host") or (d.rule_information or {}).get("host"),
-            "target_role": (d.rule_information or {}).get("target_role"),
-            "src_ip": (d.rule_information or {}).get("src_ip"),
-            "matching_event_ids": (d.rule_information or {}).get("matching_event_ids") or [],
-        }
-        for d in detections
-    ]
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "user": rule_info.get("user"),
+            "actor": rule_info.get("actor"),
+            "actor_role": rule_info.get("actor_role"),
+            "target_host": rule_info.get("target_host") or rule_info.get("host"),
+            "target_role": rule_info.get("target_role"),
+            "src_ip": rule_info.get("src_ip"),
+            "matching_event_ids": sorted(matching_ids),
+        })
 
     return generate_forensic_report_data(
         case_dict={"id": str(case.id), "name": case.name},
@@ -307,6 +379,57 @@ def list_reports(
 # ===========================================================================
 # GET a specific saved version — HTML
 # ===========================================================================
+@router.get("/{case_id}/reports/{report_id}/data", response_model=ForensicReportResponse)
+@router.get("/cases/{case_id}/reports/{report_id}/data", response_model=ForensicReportResponse)
+def get_saved_report(
+    case_id: str,
+    report_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
+    try:
+        cid = uuid.UUID(str(case_id))
+        rid = uuid.UUID(str(report_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid ID")
+
+    row = db.execute(
+        select(Report).where(Report.case_id == cid, Report.id == rid)
+    ).scalars().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+    data = _load_report_data(row)
+    if not data:
+        raise HTTPException(status_code=404, detail="Report content missing")
+    return data
+
+
+@router.delete("/{case_id}/reports/{report_id}")
+@router.delete("/cases/{case_id}/reports/{report_id}")
+def delete_saved_report(
+    case_id: str,
+    report_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=False)
+    try:
+        cid = uuid.UUID(str(case_id))
+        rid = uuid.UUID(str(report_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid ID")
+
+    row = db.execute(
+        select(Report).where(Report.case_id == cid, Report.id == rid)
+    ).scalars().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+    db.delete(row)
+    db.commit()
+    return {"message": "Saved report deleted successfully"}
+
+
 @router.get("/{case_id}/reports/{report_id}/html", response_class=HTMLResponse)
 @router.get("/cases/{case_id}/reports/{report_id}/html", response_class=HTMLResponse)
 def download_saved_html(

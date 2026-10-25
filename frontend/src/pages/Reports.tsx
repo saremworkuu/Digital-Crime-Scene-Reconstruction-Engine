@@ -13,6 +13,8 @@ import {
   FileDown,
   AlertTriangle,
   ShieldCheck,
+  Eye,
+  Trash2,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +62,9 @@ export const Reports: React.FC = () => {
   // ---------------------------------------------------------------------------
   const [reportData, setReportData] = useState<BackendReport | null>(null);
   const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [viewingHistory, setViewingHistory] = useState<{ item: ReportHistoryItem; html: string } | null>(null);
+  const [loadingHistoryReport, setLoadingHistoryReport] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
@@ -95,6 +100,7 @@ export const Reports: React.FC = () => {
       const res = await reportsApi.latest(activeCase.id);
       if (res?.data) {
         setReportData(res.data as BackendReport);
+        setSelectedHistoryId(null);
       }
     } catch (err) {
       console.warn('Could not load report from backend:', err);
@@ -106,6 +112,8 @@ export const Reports: React.FC = () => {
   useEffect(() => {
     setReportData(null);
     setReportHistory([]);
+    setSelectedHistoryId(null);
+    setViewingHistory(null);
     if (activeCase?.id) {
       loadLatestReport();
       loadReportHistory();
@@ -122,6 +130,7 @@ export const Reports: React.FC = () => {
       const res = await reportsApi.generate(activeCase.id);
       if (res?.data) {
         setReportData(res.data as BackendReport);
+        setSelectedHistoryId(null);
         logAuditAction('REPORT_GENERATED', 'case', activeCase.id, {
           version: (res.data as BackendReport).version,
         });
@@ -131,6 +140,53 @@ export const Reports: React.FC = () => {
       console.warn('Could not generate report via backend:', err);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleViewSavedReport = async (item: ReportHistoryItem) => {
+    if (!activeCase?.id) return;
+    setLoadingHistoryReport(true);
+    try {
+      const res = await reportsApi.downloadSavedHtml(activeCase.id, item.id);
+      if (res.data) {
+        setViewingHistory({ item, html: res.data });
+        setSelectedHistoryId(item.id);
+      } else {
+        throw new Error(res.error || 'Could not load saved report HTML');
+      }
+    } catch (err) {
+      console.error('Could not open saved report:', err);
+    } finally {
+      setLoadingHistoryReport(false);
+    }
+  };
+
+  const handleDeleteSavedReport = async (item: ReportHistoryItem) => {
+    if (!activeCase?.id) return;
+    const shouldDelete = window.confirm(`Delete saved report v${item.version}? This cannot be undone.`);
+    if (!shouldDelete) return;
+
+    try {
+      const res = await reportsApi.deleteSaved(activeCase.id, item.id);
+      if (res.error) throw new Error(res.error);
+
+      const nextHistory = reportHistory.filter((saved) => saved.id !== item.id);
+      setReportHistory(nextHistory);
+      if (viewingHistory?.item.id === item.id) setViewingHistory(null);
+      const deletingDisplayedReport =
+        selectedHistoryId === item.id ||
+        (!selectedHistoryId && reportData?.version === item.version);
+      if (deletingDisplayedReport) {
+        setSelectedHistoryId(null);
+        if (nextHistory.length > 0) {
+          await loadLatestReport();
+        } else {
+          setReportData(null);
+        }
+      }
+      await loadReportHistory();
+    } catch (err) {
+      console.error('Could not delete saved report:', err);
     }
   };
 
@@ -192,7 +248,9 @@ export const Reports: React.FC = () => {
   const handleExportHtml = async () => {
     if (!activeCase) return;
     try {
-      const res = await reportsApi.exportHtml(activeCase.id);
+      const res = selectedHistoryId
+        ? await reportsApi.downloadSavedHtml(activeCase.id, selectedHistoryId)
+        : await reportsApi.exportHtml(activeCase.id);
       if (res.data) {
         const blob = new Blob([res.data], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
@@ -236,7 +294,9 @@ export const Reports: React.FC = () => {
     if (!activeCase) return;
     setIsDownloadingPdf(true);
     try {
-      const res = await reportsApi.exportPdf(activeCase.id);
+      const res = selectedHistoryId
+        ? await reportsApi.downloadSavedPdf(activeCase.id, selectedHistoryId)
+        : await reportsApi.exportPdf(activeCase.id);
       if (res.blob && res.blob.size > 0) {
         const url = URL.createObjectURL(res.blob);
         const a = document.createElement('a');
@@ -307,6 +367,29 @@ export const Reports: React.FC = () => {
     );
   }
 
+  if (viewingHistory) {
+    return (
+      <main className="min-h-screen space-y-4 p-4 sm:p-6">
+        <div className="no-print flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#2b2523] bg-[#161413]/90 p-4">
+          <div>
+            <h1 className="text-base font-bold text-[#fafaf9]">Saved Report v{viewingHistory.item.version}</h1>
+            <p className="mt-1 text-xs text-[#a8a29e]">{viewingHistory.item.title} · {viewingHistory.item.generated_at.slice(0, 19).replace('T', ' ')} UTC</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setViewingHistory(null); setSelectedHistoryId(null); }} className="rounded-lg border border-[#38312d] bg-[#241e1b] px-3 py-2 text-xs text-[#fafaf9]">Back to Reports</button>
+            <button onClick={() => handleDownloadSavedVersion(viewingHistory.item, 'pdf')} className="rounded-lg bg-[#f95721] px-3 py-2 text-xs font-semibold text-white">Download PDF</button>
+            <button onClick={() => handleDownloadSavedVersion(viewingHistory.item, 'html')} className="rounded-lg border border-[#38312d] bg-[#241e1b] px-3 py-2 text-xs text-[#fafaf9]">Download HTML</button>
+          </div>
+        </div>
+        <iframe title={`Forensic report version ${viewingHistory.item.version}`} srcDoc={viewingHistory.html} sandbox="" className="min-h-[80vh] w-full rounded-xl border border-[#2b2523] bg-white" />
+      </main>
+    );
+  }
+
+  if (loadingHistoryReport) {
+    return <div className="p-10 text-center text-sm text-[#a8a29e]">Opening saved report…</div>;
+  }
+
   if (!reportData) {
     return (
       <div className="max-w-xl mx-auto my-12 p-6 rounded-2xl border border-[#38312d] bg-[#161413]/90 text-center space-y-3">
@@ -332,11 +415,12 @@ export const Reports: React.FC = () => {
   const hosts = rd.compromised_assets?.hosts || [];
   const users = rd.compromised_assets?.users || [];
   const advIps = rd.compromised_assets?.adversary_infrastructure || [];
+  const observedIps = rd.compromised_assets?.observed_ips || [];
   const timeline = rd.attack_timeline_summary || [];
   const detections = rd.mitre_coverage || [];
-  const evidenceRows = rd.chain_of_custody || rd.evidence_manifest?.map((e: any) => ({
+  const evidenceRows = rd.chain_of_custody?.length ? rd.chain_of_custody : rd.evidence_manifest?.map((e: any) => ({
     ...e,
-    hash_status: 'recorded (not re-verified)',
+    hash_status: e.sha256_hash ? 'recorded (not re-verified)' : 'not recorded',
     uploaded_by: e.uploader || e.uploaded_by || 'Unattributed',
   })) || [];
 
@@ -454,7 +538,9 @@ export const Reports: React.FC = () => {
         ) : (
           <div className="divide-y divide-[#26201e] border border-[#2b2523] rounded-xl overflow-hidden">
             {reportHistory.map((item) => {
-              const isCurrent = item.version === reportVersion;
+              const isCurrent = selectedHistoryId
+                ? item.id === selectedHistoryId
+                : item.version === reportVersion;
               const isDownloading = downloadingReportId === item.id;
               return (
                 <div
@@ -484,6 +570,14 @@ export const Reports: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2 font-mono text-[11px]">
                     <button
+                      onClick={() => handleViewSavedReport(item)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer"
+                      title="View this saved report version"
+                    >
+                      <Eye className="w-3 h-3 text-[#f95721]" />
+                      <span>View</span>
+                    </button>
+                    <button
                       onClick={() => handleDownloadSavedVersion(item, 'pdf')}
                       disabled={isDownloading}
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer disabled:opacity-50"
@@ -501,6 +595,14 @@ export const Reports: React.FC = () => {
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#a8a29e] hover:text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer disabled:opacity-50"
                     >
                       <span>HTML</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSavedReport(item)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#2a1513] hover:bg-[#471c18] text-[#fca5a5] border border-[#7f1d1d]/50 transition-colors cursor-pointer"
+                      title="Delete this saved report version"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Delete</span>
                     </button>
                   </div>
                 </div>
@@ -740,17 +842,17 @@ export const Reports: React.FC = () => {
           </table>
         </section>
 
-        {/* 5. Compromised Scope */}
+        {/* 5. Observed Scope */}
         <section className="space-y-3 print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
-            5. Compromised Scope &amp; Adversary Infrastructure
+            5. Observed Scope &amp; Network Indicators
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
             {/* Hosts — IPs that resolve to a hostname are merged */}
             <div className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1">
               <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">
-                Compromised Hosts:
+                Hosts in Matching Findings:
               </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fafaf9] print:text-black">
                 {hosts.length > 0 ? (
@@ -764,7 +866,7 @@ export const Reports: React.FC = () => {
             {/* Accounts — deduplicated, DOMAIN\user format */}
             <div className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1">
               <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">
-                Compromised Accounts:
+                Accounts in Matching Findings/Events:
               </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fafaf9] print:text-black">
                 {users.length > 0 ? (
@@ -775,20 +877,21 @@ export const Reports: React.FC = () => {
               </ul>
             </div>
 
-            {/* Adversary C2 IPs */}
+            {/* Observed IP addresses; presence alone does not prove attribution. */}
             <div className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1">
               <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">
-                Adversary C2 IPs:
+                Observed IP Addresses:
               </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fca5a5] print:text-black">
-                {advIps.length > 0 ? (
-                  advIps.filter((ip: string) => ip !== 'None identified').map((ip: string) => (
+                {[...new Set([...observedIps, ...advIps])].filter((ip: string) => ip !== 'None identified').length > 0 ? (
+                  [...new Set([...observedIps, ...advIps])].filter((ip: string) => ip !== 'None identified').map((ip: string) => (
                     <li key={ip}>{ip}</li>
                   ))
                 ) : (
                   <li className="text-[#78716c] list-none">None detected</li>
                 )}
               </ul>
+              <p className="text-[10px] text-[#78716c]">Addresses present in evidence; attribution is not established by presence alone.</p>
             </div>
           </div>
 

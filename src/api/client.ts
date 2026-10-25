@@ -101,6 +101,24 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'GET' });
   }
 
+  async getText(endpoint: string): Promise<ApiResponse<string>> {
+    const headers = new Headers();
+    const token = this.getToken();
+    if (token && token !== 'null' && token !== 'undefined' && token.trim() !== '') {
+      headers.set('Authorization', `Bearer ${token.trim()}`);
+    }
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, { method: 'GET', headers });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        return { error: errorData.detail || `Request failed with status ${response.status}`, status: response.status };
+      }
+      return { data: await response.text(), status: response.status };
+    } catch (err: any) {
+      return { error: err.message || 'Request failed', status: 0 };
+    }
+  }
+
   async getBlob(endpoint: string): Promise<{ blob?: Blob; error?: string; status: number }> {
     const headers = new Headers();
     const token = this.getToken();

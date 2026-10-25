@@ -448,6 +448,22 @@ def dedupe_detections(
             m["mitre_techniques_all"] = list(seed)
             m["merged_ids"] = []
             merged[title.lower()] = m
+        for event_id in d.get("matching_event_ids") or []:
+            if event_id:
+                ids = m.setdefault("matching_event_ids", [])
+                if str(event_id) not in {str(existing) for existing in ids}:
+                    ids.append(str(event_id))
+        for field in ("source_files", "sources", "source_record_references"):
+            values = d.get(field) or []
+            if not isinstance(values, (list, tuple, set)):
+                values = [values]
+            merged_values = m.get(field)
+            if not isinstance(merged_values, list):
+                merged_values = [merged_values] if merged_values else []
+                m[field] = merged_values
+            for value in values:
+                if value and value not in merged_values:
+                    merged_values.append(value)
         # Add individual technique if not already present
         for tech in (d.get("mitre_techniques_all") or [d.get("mitre_technique")]):
             if tech and tech not in m["mitre_techniques_all"]:
@@ -484,26 +500,58 @@ def norm_user(u: Any) -> Optional[str]:
     if not u:
         return None
     s = re.sub(r"^user:\s*", "", str(u).strip(), flags=re.I)
-    s = s.split("\\")[-1].split("@")[0].strip().lower()
-    return None if s in ("", "unknown", "system", "-", "n/a") else s
+    if "\\" in s:
+        domain, username = s.split("\\", 1)
+    elif "@" in s:
+        username, domain = s.split("@", 1)
+        domain = domain.split(".")[0]
+    else:
+        domain, username = "DOMAIN", s
+    domain, username = domain.strip().lower() or "domain", username.strip().lower()
+    return None if username in ("", "unknown", "system", "-", "n/a") else f"{domain}\\{username}"
+
+
+def format_user(u: Any) -> str:
+    """Render an account as DOMAIN\\user, preserving an observed domain."""
+    raw = re.sub(r"^user:\s*", "", str(u or "").strip(), flags=re.I)
+    if not raw or raw.lower() in ("unknown", "system", "-", "n/a"):
+        return raw or "unknown"
+    if "\\" in raw:
+        domain, username = raw.split("\\", 1)
+    elif "@" in raw:
+        username, domain = raw.split("@", 1)
+        domain = domain.split(".")[0]
+    else:
+        domain, username = "DOMAIN", raw
+    return f"{domain.strip().upper() or 'DOMAIN'}\\{username.strip()}"
 
 
 def unique_users(users: Iterable[Any]) -> List[str]:
-    best: Dict[str, str] = {}
+    candidates: List[tuple[str, str, str]] = []
     for u in users:
         key = norm_user(u)
         if not key:
             continue
         raw = re.sub(r"^user:\s*", "", str(u).strip(), flags=re.I)
         if "\\" in raw:
-            account = raw
+            domain, username = raw.split("\\", 1)
         elif "@" in raw:
             username, domain = raw.split("@", 1)
-            account = f"{domain.split('.')[0].upper()}\\{username}"
+            domain = domain.split(".")[0]
         else:
-            account = f"DOMAIN\\{raw}"
-        if key not in best or ("\\" in account and best[key].startswith("DOMAIN\\")):
-            best[key] = account
+            domain, username = "DOMAIN", raw
+        candidates.append((key, domain.upper(), username))
+    concrete_domains: Dict[str, set] = {}
+    for _, domain, username in candidates:
+        if domain != "DOMAIN":
+            concrete_domains.setdefault(username.lower(), set()).add(domain)
+    best: Dict[str, str] = {}
+    for key, domain, username in candidates:
+        # DOMAIN is our placeholder when the source supplied no domain. Prefer
+        # a concrete domain for that same username when matching evidence has one.
+        if domain == "DOMAIN" and concrete_domains.get(username.lower()):
+            continue
+        best.setdefault(key, f"{domain}\\{username}")
     return sorted(best.values(), key=str.lower)
 
 
@@ -547,14 +595,15 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
         user = ev.get("user")
         if timestamp and host and user and not str(user).lower().startswith("unknown"):
             if str(user).upper() not in ("SYSTEM", "-"):
-                known_user_candidates.setdefault((timestamp, str(host)), set()).add(str(user))
+                known_user_candidates.setdefault((timestamp, str(host)), set()).add(format_user(user))
     # Fill unknown users only when exactly one account is present on that host
     # and second; do not guess when events disagree.
-    known_users = {
-        key: next(iter(users))
-        for key, users in known_user_candidates.items()
-        if len(users) == 1
-    }
+    known_users = {}
+    for key, users in known_user_candidates.items():
+        concrete = {user for user in users if not user.upper().startswith("DOMAIN\\")}
+        candidates = concrete or users
+        if len(candidates) == 1:
+            known_users[key] = next(iter(candidates))
 
     merged: Dict[tuple, Dict[str, Any]] = {}
     for ev in events:
@@ -570,6 +619,16 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
             and (timestamp, str(e.get("host", ""))) in known_users
         ):
             e["user"] = known_users[(timestamp, str(e.get("host", "")))]
+        elif e.get("user"):
+            formatted = format_user(e["user"])
+            known = known_users.get((timestamp, str(e.get("host", ""))))
+            if (
+                formatted.upper().startswith("DOMAIN\\")
+                and known
+                and known.split("\\", 1)[-1].casefold() == formatted.split("\\", 1)[-1].casefold()
+            ):
+                formatted = known
+            e["user"] = formatted
         src = str(e.get("source_file") or e.get("source") or "")
         key = (timestamp, str(e.get("host", "")), str(e.get("action", "")))
         if key in merged:
@@ -594,10 +653,13 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
 # 6. Honest hash status (the old code reported "match" even when nothing was checked)
 # ---------------------------------------------------------------------------
 def hash_status(ev: Dict[str, Any]) -> str:
+    recorded = ev.get("sha256_hash")
+    if not recorded:
+        return "not recorded"
     expected = ev.get("expected_sha256")
     if not expected:
         return "recorded (not re-verified)"
-    return "match" if ev.get("sha256_hash", "") == expected else "MISMATCH"
+    return "match" if recorded == expected else "MISMATCH"
 
 
 # ---------------------------------------------------------------------------
@@ -630,11 +692,10 @@ def build_executive_summary(case_name: str, n_evidence: int, n_events: int,
         p.append(f"Likely initial access: {facts['initial_access']}.")
     p.append(f"{len(detections)} distinct detections ({crit} critical) span these tactics: "
              f"{', '.join(ordered) or 'none'}. "
-             f"{len(hosts)} host(s) ({', '.join(hosts) or 'none'}) and {len(users)} account(s) "
-             f"({', '.join(users) or 'none'}) were involved.")
+             f"{len(hosts)} host(s) with matching findings ({', '.join(hosts) or 'none'}) and {len(users)} account(s) "
+             f"observed in matching findings/events ({', '.join(users) or 'none'}).")
     if facts.get("exfil_gib"):
-        p.append(f"About {facts['exfil_gib']} GiB were sent to {facts.get('exfil_dest', 'an external host')}.")
+        p.append(f"Transfer detections covered about {facts['exfil_gib']} GiB of recorded bytes; direction, destination, and intent require review.")
     if facts.get("encrypted_files"):
-        fam = facts.get("ransomware_family")
-        p.append(f"{facts['encrypted_files']} files were encrypted" + (f" by {fam} ransomware." if fam else "."))
+        p.append(f"An impact detection referenced {facts['encrypted_files']} file operation(s); encryption and attribution have not been independently confirmed.")
     return " ".join(p)

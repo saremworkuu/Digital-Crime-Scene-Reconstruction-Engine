@@ -1,9 +1,13 @@
 # Report schemas
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ForensicReportResponse(BaseModel):
+    # Reports intentionally include forensic evidence, custody and hash fields
+    # beyond the legacy response shape. Preserve the complete saved snapshot.
+    model_config = ConfigDict(extra="allow")
+
     id: str
     case_id: str
     case_name: str

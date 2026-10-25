@@ -51,7 +51,7 @@ export interface BackendReport extends ForensicReport {
     mitre_techniques_all?: string[];
     mitre_tactic?: string;
     severity: string;
-    first_seen: string;     // event_time, NOT upload time
+    first_seen?: string | null; // first linked event_time; absent if no matching event is available
     last_seen?: string;
     target_host?: string;
     host?: string;
@@ -73,6 +73,7 @@ export interface BackendReport extends ForensicReport {
     hosts: string[];
     users: string[];
     adversary_infrastructure: string[];
+    observed_ips?: string[];
     dwell_time: string;
   };
 
@@ -99,6 +100,16 @@ export const reportsApi = {
     return apiClient.get<ReportHistoryItem[]>(`/reports/${caseId}/reports`);
   },
 
+  /** Load one saved report version for viewing. */
+  getSaved: async (caseId: string, reportId: string) => {
+    return apiClient.get<BackendReport>(`/reports/${caseId}/reports/${reportId}/data`);
+  },
+
+  /** Delete one saved report version. */
+  deleteSaved: async (caseId: string, reportId: string) => {
+    return apiClient.delete<{ message: string }>(`/reports/${caseId}/reports/${reportId}`);
+  },
+
   /** Current-version PDF (always freshly compiled) */
   exportPdf: async (caseId: string) => {
     return apiClient.getBlob(`/reports/${caseId}/reports/pdf`);
@@ -106,7 +117,7 @@ export const reportsApi = {
 
   /** Current-version HTML (always freshly compiled) */
   exportHtml: async (caseId: string) => {
-    return apiClient.get<string>(`/reports/${caseId}/reports/html`);
+    return apiClient.getText(`/reports/${caseId}/reports/html`);
   },
 
   /** Download a specific saved version as PDF */
@@ -116,6 +127,6 @@ export const reportsApi = {
 
   /** Download a specific saved version as HTML */
   downloadSavedHtml: async (caseId: string, reportId: string) => {
-    return apiClient.get<string>(`/reports/${caseId}/reports/${reportId}/html`);
+    return apiClient.getText(`/reports/${caseId}/reports/${reportId}/html`);
   },
 };

@@ -50,7 +50,7 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         severity=detection.severity,
         description=detection.description,
         mitre_technique=detection.mitre_technique or "T1110",
-        mitre_tactic=rule_info.get("tactic", "Execution"),
+        mitre_tactic=rule_info.get("tactic") or ("Exfiltration" if detection.mitre_technique == "T1041" else "Execution"),
         rule_information=rule_info,
         is_false_positive=detection.is_false_positive,
         false_positive=detection.is_false_positive,
@@ -127,6 +127,8 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
             sev_enum = DetectionSeverity.MEDIUM
 
         rule_info = finding.get("rule_information", {}) or {}
+        if finding.get("mitre_tactic") and not rule_info.get("tactic"):
+            rule_info["tactic"] = finding["mitre_tactic"]
         if finding.get("source"):
             rule_info["source"] = finding["source"]
         if finding.get("host"):
