@@ -1,5 +1,7 @@
 import uuid
+import json
 from typing import List, Optional
+from datetime import timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,6 +22,9 @@ from app.services.detection import (
     detect_web_sql_injection,
     detect_data_exfiltration,
     detect_dns_tunneling,
+    detect_macro_attachment_delivery,
+    detect_smb_lateral_movement,
+    detect_periodic_beaconing,
 )
 from app.services.rule_loader import load_all_rules
 from app.services.audit import log_audit_event
@@ -28,19 +33,32 @@ from app.core.permissions import get_authorized_case
 router = APIRouter()
 
 
+def _severity_rank(value) -> int:
+    """Order finding severities when overlapping rules are coalesced."""
+    return {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}.get(
+        str(getattr(value, "value", value) or "").lower(), 0
+    )
+
+
 def build_detection_response(db: Session, detection: Detection) -> DetectionResponse:
     event_ids = db.execute(
-        select(DetectionEvent.event_id).where(
-            DetectionEvent.detection_id == detection.id
+        select(DetectionEvent.event_id).join(Event, Event.id == DetectionEvent.event_id).where(
+            DetectionEvent.detection_id == detection.id,
+            Event.case_id == detection.case_id,
         )
     ).scalars().all()
 
     rule_info = detection.rule_information or {}
-    ts_str = (
-        detection.detected_at.isoformat()
-        if hasattr(detection.detected_at, "isoformat")
-        else str(detection.detected_at or "")
-    )
+    matched_events = db.execute(
+        select(Event.timestamp).where(
+            Event.case_id == detection.case_id,
+            Event.id.in_(event_ids),
+        ).order_by(Event.timestamp.asc())
+    ).scalars().all() if event_ids else []
+    event_time = matched_events[0] if matched_events else None
+    if event_time and event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=timezone.utc)
+    ts_str = event_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if event_time else None
 
     return DetectionResponse(
         id=detection.id,
@@ -59,7 +77,11 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         timestamp=ts_str,
         event_ids=event_ids,
         matched_event_ids=[str(eid) for eid in event_ids],
-        entities_involved=rule_info.get("entities", {"hosts": [], "users": [], "ips": []}),
+        entities_involved=rule_info.get("entities", {
+            "hosts": [v for v in (rule_info.get("target_host"), rule_info.get("host")) if v],
+            "users": [rule_info["user"]] if rule_info.get("user") else [],
+            "ips": [v for v in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if v],
+        }),
     )
 
 
@@ -76,6 +98,20 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         .where(Event.case_id == case_id)
         .order_by(Event.timestamp.asc(), Event.id.asc())
     ).scalars().all()
+    valid_ids = {event.id for event in events}
+
+    # Preserve examiner false-positive decisions only when the exact finding
+    # (rule, description, and matched evidence events) is still present.
+    old_rows = db.execute(select(Detection).where(Detection.case_id == case_id)).scalars().all()
+    old_review = {}
+    for row in old_rows:
+        linked = set(db.execute(select(DetectionEvent.event_id).where(DetectionEvent.detection_id == row.id)).scalars().all()) & valid_ids
+        signature = (row.rule_id, row.description, tuple(sorted(map(str, linked))))
+        old_review[signature] = (row.is_false_positive, dict(row.rule_information or {}))
+    if old_rows:
+        db.query(DetectionEvent).filter(DetectionEvent.detection_id.in_([row.id for row in old_rows])).delete(synchronize_session=False)
+        db.query(Detection).filter(Detection.case_id == case_id).delete(synchronize_session=False)
+        db.flush()
 
     findings = []
     # 1. Deterministic Sigma detection engine + correlation rules + EDR findings
@@ -94,24 +130,52 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         detect_web_sql_injection,
         detect_data_exfiltration,
         detect_dns_tunneling,
+        detect_macro_attachment_delivery,
+        detect_smb_lateral_movement,
+        detect_periodic_beaconing,
     ):
         try:
             findings.extend(detector(events))
         except Exception:
             pass
 
+    # Collapse overlapping rules that describe the same ATT&CK technique on
+    # the same evidence event. Preserve the supporting rule names as sources.
+    coalesced: List[dict] = []
+    for finding in findings:
+        event_ids = {str(value) for value in (finding.get("matching_event_ids") or [])}
+        technique = str(finding.get("mitre_technique") or "")
+        tactic = str(finding.get("mitre_tactic") or (finding.get("rule_information") or {}).get("tactic") or "")
+        duplicate = next((existing for existing in coalesced
+                          if technique and technique == str(existing.get("mitre_technique") or "")
+                          and tactic == str(existing.get("mitre_tactic") or (existing.get("rule_information") or {}).get("tactic") or "")
+                          and event_ids & {str(value) for value in (existing.get("matching_event_ids") or [])}), None)
+        if duplicate is None:
+            coalesced.append(finding)
+            continue
+        duplicate_ids = {str(value) for value in (duplicate.get("matching_event_ids") or [])} | event_ids
+        duplicate["matching_event_ids"] = sorted(duplicate_ids)
+        duplicate_info = duplicate.setdefault("rule_information", {})
+        incoming_info = finding.get("rule_information") or {}
+        for key in ("source_file_references", "source_record_references", "attachment_names", "domains"):
+            values = duplicate_info.get(key) or []
+            incoming = incoming_info.get(key) or []
+            if not isinstance(values, list): values = [values]
+            if not isinstance(incoming, list): incoming = [incoming]
+            if values or incoming:
+                duplicate_info[key] = sorted({str(value) for value in values + incoming if value})
+        sources = duplicate_info.setdefault("corroborating_rules", [])
+        for rule_name in (finding.get("rule_name"), finding.get("rule_id")):
+            if rule_name and rule_name not in sources:
+                sources.append(str(rule_name))
+        if _severity_rank(finding.get("severity")) > _severity_rank(duplicate.get("severity")):
+            duplicate["severity"] = finding.get("severity")
+    findings = coalesced
+
     saved_detections = []
     for finding in findings:
         rule_id = finding.get("rule_id", finding.get("rule_name", "detection-rule"))
         description = finding["description"]
-
-        detection = db.execute(
-            select(Detection).where(
-                Detection.case_id == case_id,
-                Detection.rule_id == rule_id,
-                Detection.description == description,
-            )
-        ).scalar_one_or_none()
 
         matching_ids = set()
         for event_id in finding.get("matching_event_ids", []):
@@ -119,6 +183,9 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
                 matching_ids.add(uuid.UUID(str(event_id)))
             except Exception:
                 pass
+        matching_ids &= valid_ids
+        if not matching_ids:
+            continue
 
         sev_val = finding.get("severity", "medium").lower()
         try:
@@ -127,6 +194,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
             sev_enum = DetectionSeverity.MEDIUM
 
         rule_info = finding.get("rule_information", {}) or {}
+        rule_info["matching_event_ids"] = sorted(str(event_id) for event_id in matching_ids)
         if finding.get("mitre_tactic") and not rule_info.get("tactic"):
             rule_info["tactic"] = finding["mitre_tactic"]
         if finding.get("source"):
@@ -139,13 +207,15 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
             rule_info["source_file"] = finding["source_file"]
         if finding.get("source_record_references"):
             rule_info["source_record_references"] = finding["source_record_references"]
+        for key in ("actor", "actor_role", "target_host", "target_role", "src_ip", "dst_ip"):
+            if finding.get(key) is not None:
+                rule_info[key] = finding[key]
         if finding.get("first_seen"):
             rule_info["first_seen"] = str(finding["first_seen"])
         if finding.get("last_seen"):
             rule_info["last_seen"] = str(finding["last_seen"])
 
-        if detection is None:
-            detection = Detection(
+        detection = Detection(
                 case_id=case_id,
                 rule_id=rule_id,
                 rule_name=finding.get("rule_name") or finding.get("display_name") or "Security Alert",
@@ -155,29 +225,18 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
                 rule_information=rule_info,
                 is_false_positive=False,
             )
-            db.add(detection)
-            db.flush()
-        else:
-            detection.severity = sev_enum
-            detection.mitre_technique = finding.get("mitre_technique", detection.mitre_technique)
-            # Preserve existing false-positive flags and notes on findings that are still detected
-            if detection.rule_information and isinstance(detection.rule_information, dict):
-                for fp_key in ("fp_reason", "fp_marked_by", "fp_timestamp"):
-                    if fp_key in detection.rule_information and fp_key not in rule_info:
-                        rule_info[fp_key] = detection.rule_information[fp_key]
+        signature = (rule_id, description, tuple(sorted(map(str, matching_ids))))
+        if signature in old_review:
+            was_fp, old_info = old_review[signature]
+            detection.is_false_positive = was_fp
+            for fp_key in ("fp_reason", "fp_marked_by", "fp_timestamp"):
+                if fp_key in old_info:
+                    rule_info[fp_key] = old_info[fp_key]
             detection.rule_information = rule_info
-
-        if matching_ids:
-            existing_ids = set(
-                db.execute(
-                    select(DetectionEvent.event_id).where(
-                        DetectionEvent.detection_id == detection.id,
-                        DetectionEvent.event_id.in_(matching_ids),
-                    )
-                ).scalars().all()
-            )
-            for event_id in matching_ids - existing_ids:
-                db.add(DetectionEvent(detection_id=detection.id, event_id=event_id))
+        db.add(detection)
+        db.flush()
+        for event_id in matching_ids:
+            db.add(DetectionEvent(detection_id=detection.id, event_id=event_id))
 
         saved_detections.append(detection)
 
@@ -198,7 +257,8 @@ def run_detection(
 ):
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=False)
     detections = _execute_case_detections(case.id, db)
-    return [build_detection_response(db, d) for d in detections]
+    responses = [build_detection_response(db, d) for d in detections]
+    return sorted(responses, key=lambda response: response.timestamp or "")
 
 
 @router.get(
@@ -212,15 +272,7 @@ def get_case_detections(
 ):
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
 
-    detections = db.execute(
-        select(Detection)
-        .where(Detection.case_id == case.id)
-        .order_by(Detection.detected_at.desc())
-    ).scalars().all()
-
-    if not detections:
-        # Run detectors automatically so findings appear immediately
-        detections = _execute_case_detections(case.id, db)
+    detections = _execute_case_detections(case.id, db)
 
     return [build_detection_response(db, d) for d in detections]
 
@@ -280,6 +332,8 @@ def get_case_rule_coverage(
         .order_by(Event.timestamp.asc(), Event.id.asc())
     ).scalars().all()
     findings = execute_detections_on_events(events, case.id)
+    for detector in (detect_macro_attachment_delivery, detect_smb_lateral_movement, detect_periodic_beaconing):
+        findings.extend(detector(events))
     return get_rule_coverage_matrix(findings)
 
 
@@ -352,7 +406,12 @@ def get_detections(
         query = query.where(Case.created_by == current_user.id)
 
     detections = db.execute(query.order_by(Detection.detected_at.desc())).scalars().all()
-    return [build_detection_response(db, detection) for detection in detections]
+    responses = []
+    for detection in detections:
+        response = build_detection_response(db, detection)
+        if response.event_ids:
+            responses.append(response)
+    return sorted(responses, key=lambda response: response.timestamp or "", reverse=True)
 
 
 @router.get(

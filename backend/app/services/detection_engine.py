@@ -22,6 +22,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
+from app.services.entity_classification import is_internal_ip
 
 
 # ---------------------------------------------------------------------------
@@ -627,12 +628,7 @@ BUILTIN_SIGMA_RULES: List[Dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 def _is_private(ip: str) -> bool:
-    import ipaddress
-    try:
-        a = ipaddress.ip_address(ip.strip())
-        return a.is_private or a.is_loopback or a.is_link_local
-    except ValueError:
-        return False
+    return is_internal_ip(ip)
 
 
 def _determine_roles(
@@ -1072,10 +1068,18 @@ def get_rule_coverage_matrix(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
             for item in str(t).split(","):
                 covered_techniques.add(item.strip())
 
-    catalog_techniques = {r["mitre_technique"] for r in BUILTIN_SIGMA_RULES}
+    from app.services.rule_loader import load_all_rules
+    yaml_rules = load_all_rules()
+    catalog = list(BUILTIN_SIGMA_RULES)
+    seen = {r["id"] for r in catalog}
+    for rule in yaml_rules:
+        if rule.get("id") not in seen:
+            catalog.append({"id": rule.get("id"), "name": rule.get("title", rule.get("id")), "severity": rule.get("severity", "medium"), "mitre_tactic": rule.get("mitre_tactic", "Execution"), "mitre_technique": rule.get("mitre_technique", "T1059")})
+            seen.add(rule.get("id"))
+    catalog_techniques = {r["mitre_technique"] for r in catalog}
 
     rules_summary = []
-    for r in BUILTIN_SIGMA_RULES:
+    for r in catalog:
         rules_summary.append({
             "id": r["id"],
             "name": r["name"],
@@ -1087,7 +1091,7 @@ def get_rule_coverage_matrix(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     return {
         "rules": rules_summary,
-        "total_rules": len(BUILTIN_SIGMA_RULES),
+        "total_rules": len(catalog),
         "total_findings": len(findings),
         "covered_techniques": sorted(list(covered_techniques)),
         "uncovered_techniques": sorted(list(catalog_techniques - covered_techniques)),

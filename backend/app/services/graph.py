@@ -5,18 +5,15 @@
 # - Adversary styling only on *adversary_infrastructure* entities from findings.
 # - Victim/compromised highlight only on target hosts confirmed by findings.
 # - One node per entity; no duplicate HOST and EXT for the same address.
-import ipaddress
 import re
 from typing import Any, Dict, List, Set, Tuple
+from app.services.entity_classification import is_internal_ip
+from app.services.report_fixes import norm_user, format_user
 
 
 def is_private_ip(ip_str: str) -> bool:
     """Returns True if the given IP address is private (RFC 1918 / loopback)."""
-    try:
-        ip = ipaddress.ip_address(ip_str.strip())
-        return ip.is_private or ip.is_loopback or ip.is_link_local
-    except ValueError:
-        return False
+    return is_internal_ip(ip_str)
 
 
 def extract_event_fields(event: Any) -> Dict[str, Any]:
@@ -195,11 +192,17 @@ def build_attack_graph(
 
         # 2. User Node
         if evt["user"]:
-            u_id = f"user-{evt['user']}"
+            identity = norm_user(evt["user"]) or str(evt["user"]).casefold()
+            display_user = format_user(evt["user"])
+            user_domain = display_user.split("\\", 1)[0] if "\\" in display_user else ""
+            user_name = display_user.split("\\", 1)[-1]
+            u_id = f"user-{identity}"
             if u_id not in nodes_map:
                 nodes_map[u_id] = {
                     "id": u_id,
-                    "label": evt["user"],
+                    "label": display_user,
+                    "username": user_name,
+                    "domain": user_domain,
                     "type": "user",
                     "role": "user_account",
                     "is_compromised": is_attack,

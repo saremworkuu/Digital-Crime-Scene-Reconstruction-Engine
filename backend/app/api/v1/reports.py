@@ -1,5 +1,8 @@
 import json
+import hashlib
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -43,6 +46,12 @@ def _compile_case_report(
     version: str = "1.0",
 ) -> dict[str, Any]:
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
+
+    # Reconcile detections against the case's current event set before using
+    # them. This also removes stale findings without changing evidence upload
+    # or report-history behavior.
+    from app.api.v1.detections import _execute_case_detections
+    _execute_case_detections(case.id, db)
 
     evidence_records = db.execute(
         select(Evidence).where(Evidence.case_id == case.id)
@@ -104,17 +113,27 @@ def _compile_case_report(
             for key in keys:
                 reconstructed_links.setdefault(key, set()).update(event_ids)
 
-    evidence_list = [
-        {
+    verification_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    evidence_list = []
+    for e in evidence_records:
+        path = Path(e.file_path)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            hash_status = "verified now: match" if actual_hash.casefold() == str(e.sha256_hash or "").casefold() else "verified now: MISMATCH"
+        except OSError:
+            hash_status = "verified now: unavailable"
+        evidence_list.append({
             "filename": e.filename,
             "sha256_hash": e.sha256_hash,
             "size_bytes": e.file_size,
+            "hash_status": hash_status,
+            "hash_verified_at": verification_time,
             "event_count": len([ev for ev in events if ev.evidence_id == e.id]),
             "uploaded_at": e.uploaded_at.isoformat() if hasattr(e.uploaded_at, "isoformat") else str(e.uploaded_at),
             "uploader_name": getattr(e, "uploader_name", None) or "Forensics Examiner",
-        }
-        for e in evidence_records
-    ]
+        })
 
     event_dicts = [
         {
@@ -146,6 +165,7 @@ def _compile_case_report(
             "src_ip": (ev.details or {}).get("source_ip") or (ev.details or {}).get("src_ip"),
             "dst_ip": (ev.details or {}).get("destination_ip") or (ev.details or {}).get("dst_ip"),
             "evidence_id": str(ev.evidence_id) if ev.evidence_id else None,
+            "source_record_id": (ev.details or {}).get("source_record_id") or (ev.details or {}).get("record_id") or (ev.details or {}).get("event_record_id"),
         }
         for ev in events
     ]
@@ -172,6 +192,8 @@ def _compile_case_report(
         # detection/upload time and must not be presented as event time.
         first_seen = matching_event_times[0] if matching_event_times else None
         last_seen = matching_event_times[-1] if matching_event_times else None
+        if first_seen is None:
+            continue
         detection_dicts.append({
             "id": str(d.id),
             "rule_id": d.rule_id,
@@ -188,7 +210,13 @@ def _compile_case_report(
             "target_host": rule_info.get("target_host") or rule_info.get("host"),
             "target_role": rule_info.get("target_role"),
             "src_ip": rule_info.get("src_ip"),
+            "dst_ip": rule_info.get("dst_ip"),
+            "rule_information": rule_info,
             "matching_event_ids": sorted(matching_ids),
+            "source_file_references": sorted({
+                str(events_by_id[event_id].get("source_file") or events_by_id[event_id].get("source") or "")
+                for event_id in matching_ids if events_by_id.get(event_id)
+            } - {""}),
         })
 
     return generate_forensic_report_data(

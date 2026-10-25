@@ -7,6 +7,9 @@ class GraphNode(BaseModel):
     id: str
     label: str
     type: str  # 'host' | 'user' | 'ip' | 'process' | 'domain' | 'file'
+    role: Optional[str] = None
+    username: Optional[str] = None
+    domain: Optional[str] = None
     is_compromised: bool = False
     is_attack_path: bool = False
     event_count: int = 1

@@ -18,10 +18,12 @@ B1 fix:
 import hashlib
 import html
 import json
+import copy
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
+from .entity_classification import is_internal_ip, infrastructure_role
 
 from .report_fixes import (
     dedupe_detections,
@@ -46,19 +48,39 @@ def _now_iso() -> str:
 
 
 def _compute_report_hash(report_dict: Dict[str, Any]) -> str:
-    """SHA-256 over the serialised report, excluding the hash field itself."""
-    scratch = {k: v for k, v in report_dict.items() if k != "report_hash"}
+    """Hash substantive report content, excluding its hash and volatile metadata."""
+    scratch = copy.deepcopy({k: v for k, v in report_dict.items() if k not in {"report_hash", "id", "generated_at"}})
+    for entry in scratch.get("evidence_manifest", []) + scratch.get("evidence_inventory", []):
+        if isinstance(entry, dict):
+            entry.pop("hash_verified_at", None)
+    for entry in scratch.get("chain_of_custody", []):
+        if isinstance(entry, dict):
+            entry.pop("hash_verified_at", None)
     canonical = json.dumps(scratch, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _is_private(ip: str) -> bool:
-    import ipaddress
+def _format_size(value: Any) -> str:
     try:
-        a = ipaddress.ip_address(ip.strip())
-        return a.is_private or a.is_loopback or a.is_link_local
-    except ValueError:
-        return False
+        size = int(value or 0)
+    except (TypeError, ValueError):
+        size = 0
+    return f"{size:,} bytes ({size / 1024:.2f} KiB)"
+
+
+def _format_event_time(value: Any) -> str:
+    raw = str(value or "")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (ValueError, TypeError):
+        return "Not available"
+
+
+def _is_private(ip: str) -> bool:
+    return is_internal_ip(ip)
 
 
 def _looks_like_ip(value: Any) -> bool:
@@ -92,6 +114,11 @@ def generate_forensic_report_data(
     now_iso = _now_iso()
     tactic_warnings: List[str] = []
     detections = dedupe_detections(detections, warnings=tactic_warnings)
+    valid_event_ids = {str(ev.get("id") or ev.get("event_id") or "") for ev in events} - {""}
+    detections = [
+        finding for finding in detections
+        if set(map(str, finding.get("matching_event_ids") or [])) & valid_event_ids
+    ]
     for finding in detections:
         if finding.get("mitre_technique") == "T1041":
             finding["rule_name"] = "Potential Data Exfiltration Activity"
@@ -115,6 +142,7 @@ def generate_forensic_report_data(
     compromised_hosts: set = set()
     compromised_users: set = set()
     adversary_infra: set = set()
+    infrastructure_roles: Dict[str, set] = {}
 
     # Resolve only evidence-linked finding events; use conservative text matching
     # when legacy detections lack persisted associations. Never substitute a
@@ -170,7 +198,8 @@ def generate_forensic_report_data(
                 finding["user"] = next(iter(linked_accounts))
 
         target = finding.get("target_host") or finding.get("host")
-        if target and str(target).lower() not in ("unknown", "unknown_host"):
+        compromise_tactics = {"Execution", "Privilege Escalation", "Persistence", "Defense Evasion", "Credential Access", "Exfiltration", "Impact", "Lateral Movement"}
+        if target and str(target).lower() not in ("unknown", "unknown_host") and (finding.get("target_role") == "compromised_host" or finding.get("mitre_tactic") in compromise_tactics):
             resolved_target = resolve_hosts([str(target)], ip_map)[0]
             if not _looks_like_ip(resolved_target):
                 compromised_hosts.add(resolved_target)
@@ -178,17 +207,80 @@ def generate_forensic_report_data(
         if user and str(user).upper() not in ("SYSTEM", "-") and not str(user).lower().startswith("unknown"):
             compromised_users.add(str(user))
         actor = finding.get("actor")
-        if finding.get("actor_role") == "adversary_infrastructure" and actor and _looks_like_ip(actor):
+        if finding.get("actor_role") == "adversary_infrastructure" and actor and _looks_like_ip(actor) and not _is_private(str(actor)):
+            actor_role = infrastructure_role(tactic=str(finding.get("mitre_tactic") or ""), field_role=str((finding.get("rule_information") or {}).get("infrastructure_role") or "attack_source")) or "Other Observed Addresses"
+            infrastructure_roles.setdefault(str(actor), set()).add(actor_role)
             adversary_infra.add(str(actor))
+        rule_info = finding.get("rule_information") or {}
+        for value in (rule_info.get("destination_ip"), rule_info.get("dest_ip"), finding.get("dst_ip")):
+            if value and _looks_like_ip(value) and not _is_private(str(value)):
+                role = infrastructure_role(tactic=str(finding.get("mitre_tactic") or ""), field_role=str(rule_info.get("infrastructure_role") or ""))
+                if role:
+                    infrastructure_roles.setdefault(str(value), set()).add(role)
+                    adversary_infra.add(str(value))
+        role = infrastructure_role(tactic=str(finding.get("mitre_tactic") or ""), field_role=str(rule_info.get("infrastructure_role") or ""))
+        domains = rule_info.get("domains") or rule_info.get("domain") or []
+        if isinstance(domains, str):
+            domains = [domains]
+        if role:
+            for domain in domains:
+                if domain and not _looks_like_ip(domain):
+                    infrastructure_roles.setdefault(str(domain).rstrip("."), set()).add(role)
+                    adversary_infra.add(str(domain).rstrip("."))
+        # Correlate closely timed network evidence with a finding when the
+        # network record is not itself one of the detector's matched rows.
+        linked_times = []
+        for linked_id in finding.get("matching_event_ids") or []:
+            linked = events_by_id.get(str(linked_id))
+            if linked and linked.get("timestamp"):
+                try:
+                    linked_times.append(datetime.fromisoformat(str(linked["timestamp"]).replace("Z", "+00:00")))
+                except ValueError:
+                    pass
+        tactic = str(finding.get("mitre_tactic") or "")
+        if linked_times and tactic in {"Execution", "Initial Access", "Exfiltration"}:
+            for support in events:
+                details = support.get("details") or {}
+                if not any(token in str(support.get("event_type") or "").lower() for token in ("network", "connection", "flow", "pcap")):
+                    continue
+                destination = support.get("dst_ip") or details.get("dst_ip") or details.get("destination_ip")
+                if not destination or not _looks_like_ip(destination) or _is_private(str(destination)):
+                    continue
+                try:
+                    support_time = datetime.fromisoformat(str(support.get("timestamp") or "").replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if min(abs((support_time - linked_time).total_seconds()) for linked_time in linked_times) > 10:
+                    continue
+                port = str(details.get("dst_port") or details.get("destination_port") or "")
+                support_role = "Exfiltration" if tactic == "Exfiltration" else "Payload" if tactic in {"Execution", "Initial Access"} and port in {"80", "443"} else None
+                if support_role:
+                    infrastructure_roles.setdefault(str(destination), set()).add(support_role)
+                    adversary_infra.add(str(destination))
 
     # Include every event explicitly associated with a finding, as well as
     # separately marked attack-path events. Severity alone does not prove an
     # event is attack activity.
-    selected_events = [
-        ev for ev in events
-        if _ev_id(ev) in finding_event_ids or ev.get("is_attack_path")
-    ]
+    related_addresses = set()
+    for event_id in finding_event_ids:
+        ev = events_by_id.get(event_id, {})
+        for address in (ev.get("src_ip"), ev.get("dst_ip"), (ev.get("details") or {}).get("source_ip"), (ev.get("details") or {}).get("destination_ip")):
+            if address and _looks_like_ip(address) and not _is_private(str(address)):
+                related_addresses.add(str(address))
+    selected_events = []
+    for ev in events:
+        details = ev.get("details") or {}
+        observed = {str(v) for v in (ev.get("src_ip"), ev.get("dst_ip"), details.get("source_ip"), details.get("destination_ip"), details.get("src_ip"), details.get("dst_ip")) if v}
+        is_network = any(word in str(ev.get("event_type", "")).lower() for word in ("network", "dns", "http", "connection", "flow", "pcap"))
+        if _ev_id(ev) in finding_event_ids or ev.get("is_attack_path") or (is_network and observed & related_addresses):
+            selected_events.append(ev)
 
+    for selected in selected_events:
+        selected_id = _ev_id(selected)
+        linked_findings = [f for f in detections if selected_id in {str(v) for v in (f.get("matching_event_ids") or [])}]
+        selected["mitre_tactic"] = ", ".join(sorted({str(f.get("mitre_tactic")) for f in linked_findings if f.get("mitre_tactic")}))
+        selected["mitre_technique"] = ", ".join(sorted({str(f.get("mitre_technique")) for f in linked_findings if f.get("mitre_technique")}))
+        selected["source_record_references"] = [str((selected.get("details") or {}).get(k)) for k in ("source_record_id", "record_id", "event_record_id") if (selected.get("details") or {}).get(k)]
     attack_events = merge_timeline(
         selected_events,
         ip_map=ip_map,
@@ -196,7 +288,15 @@ def generate_forensic_report_data(
 
     # Timeline events and findings make observed scope; they do not by
     # themselves establish that an account or endpoint was compromised.
+    compromised_event_ids = {
+        str(event_id)
+        for finding in detections
+        if finding.get("target_role") == "compromised_host" or finding.get("mitre_tactic") in {"Execution", "Privilege Escalation", "Persistence", "Defense Evasion", "Credential Access", "Exfiltration", "Impact", "Lateral Movement"}
+        for event_id in (finding.get("matching_event_ids") or [])
+    }
     for ev in attack_events:
+        if str(ev.get("id") or "") not in compromised_event_ids:
+            continue
         host = str(ev.get("host") or "")
         if host and host.lower() not in ("unknown", "unknown_host", "n/a") and not _looks_like_ip(host):
             compromised_hosts.add(host)
@@ -205,15 +305,49 @@ def generate_forensic_report_data(
             compromised_users.add(str(user))
     compromised_hosts = set(resolve_hosts(compromised_hosts, ip_map))
     observed_ips = set()
+    indicators: List[Dict[str, Any]] = []
     for ev in events:
         for ip in (ev.get("src_ip"), ev.get("dst_ip"),
                    (ev.get("details") or {}).get("source_ip"),
                    (ev.get("details") or {}).get("destination_ip")):
             if ip and _looks_like_ip(ip):
                 observed_ips.add(str(ip))
+        details = ev.get("details") or {}
+        domain = details.get("query_name") or details.get("query") or details.get("domain")
+        if domain:
+            indicators.append({"type": "domain", "value": str(domain).rstrip("."), "source_event_id": _ev_id(ev), "source_file": ev.get("source_file") or ev.get("source")})
+        for key, kind in (("filename", "file"), ("target_file", "file"), ("target_filename", "file"), ("TargetFilename", "file"), ("hash", "file_hash"), ("sha256", "file_hash"), ("file_hash", "file_hash"), ("SHA256", "file_hash"), ("service_name", "service"), ("ServiceName", "service"), ("registry_key", "registry_run_key"), ("TargetObject", "registry_run_key")):
+            value = details.get(key)
+            if value and str(value).strip().lower() not in {"-", "unknown", "n/a", "none"} and (kind != "registry_run_key" or "\\run" in str(value).lower() or "\\runonce" in str(value).lower()):
+                indicators.append({"type": kind, "value": str(value), "source_event_id": _ev_id(ev), "source_file": ev.get("source_file") or ev.get("source")})
     for finding in detections:
         if finding.get("src_ip") and _looks_like_ip(finding["src_ip"]):
             observed_ips.add(str(finding["src_ip"]))
+        ref = finding.get("id") or finding.get("rule_id") or finding.get("rule_name")
+        for key, kind in (("attachment_names", "file"), ("domains", "domain"), ("destination_ip", "ip"), ("src_ip", "ip")):
+            values = (finding.get("rule_information") or {}).get(key) or finding.get(key)
+            if isinstance(values, str):
+                values = [values]
+            for value in values or []:
+                if kind != "ip" or not _is_private(str(value)):
+                    role = infrastructure_role(tactic=str(finding.get("mitre_tactic") or ""), field_role=str((finding.get("rule_information") or {}).get("infrastructure_role") or "")) if kind == "ip" else None
+                    indicators.append({"type": kind, "value": str(value), "role": role, "source_finding": ref})
+    for evidence in evidence_list:
+        evidence_name = str(evidence.get("filename") or "")
+        if evidence_name:
+            indicators.append({"type": "file", "value": evidence_name, "source_finding": "Evidence inventory"})
+        if evidence.get("sha256_hash"):
+            indicators.append({"type": "file_hash", "value": str(evidence["sha256_hash"]), "source_finding": "Evidence inventory"})
+    for indicator in indicators:
+        indicator.setdefault("source_finding", next((str(f.get("id") or f.get("rule_id")) for f in detections if set(f.get("matching_event_ids") or []) & {indicator.get("source_event_id")}), "Observed event"))
+    for roles in infrastructure_roles.values():
+        if "C2" in roles:
+            roles.discard("Payload")
+    for address, roles in infrastructure_roles.items():
+        source_finding = next((str(f.get("rule_name") or f.get("rule_id")) for f in detections if address in {str(f.get("actor") or ""), str(f.get("dst_ip") or ""), str((f.get("rule_information") or {}).get("destination_ip") or "")} or address in [str(v) for v in ((f.get("rule_information") or {}).get("destinations") or [])]), "Finding-linked network evidence")
+        indicators.append({"type": "ip" if _looks_like_ip(address) else "domain", "value": address, "role": ", ".join(sorted(roles)), "source_finding": source_finding})
+    indicator_rows = {(i["type"], i["value"], i.get("role"), i.get("source_finding"), i.get("source_file")) for i in indicators}
+    indicators = [dict(type=t, value=v, role=role, source_finding=fr, source_file=sf) for t, v, role, fr, sf in sorted(indicator_rows, key=lambda row: tuple(str(value or "") for value in row))]
 
     # Group findings by tactic for attack sequence
     findings_by_tactic: Dict[str, List] = {}
@@ -244,11 +378,15 @@ def generate_forensic_report_data(
         chain_of_custody.append({
             "filename": ev.get("filename"),
             "sha256_hash": stored_hash,
-            "hash_status": hash_status(ev),
+            "hash_status": ev.get("hash_status") or hash_status(ev),
+            "hash_verified_at": ev.get("hash_verified_at"),
             "uploaded_by": uploader,
             "uploaded_at": ev.get("uploaded_at"),
             "ingested_at": ev.get("ingested_at"),
             "event_count": ev.get("event_count", 0),
+            "size_bytes": ev.get("size_bytes", 0),
+            "hash_verified_at": ev.get("hash_verified_at"),
+            "document_artifact": (ev.get("event_count", 0) == 0 and str(ev.get("filename", "")).lower().endswith((".txt", ".pdf", ".docx", ".doc", ".eml", ".msg", ".md", ".rtf"))),
         })
 
     audit_count = len(audit_entries) if audit_entries else None
@@ -274,7 +412,7 @@ def generate_forensic_report_data(
         ]
         finding_ids = list(dict.fromkeys(fid for fid in finding_ids if fid))  # dedupe
         remediation.append({
-            "action": f"Validate attribution for infrastructure explicitly tagged by a finding before considering blocks: {', '.join(sorted(adversary_infra))}.",
+            "action": f"Block at perimeter only after examiner review confirms the infrastructure indicators explicitly tagged by findings: {', '.join(sorted(adversary_infra))}.",
             "finding_refs": ", ".join(finding_ids[:6]),
         })
 
@@ -425,7 +563,10 @@ def generate_forensic_report_data(
         {
             "filename": ev.get("filename"),
             "sha256_hash": ev.get("sha256_hash"),
-            "size_bytes": ev.get("size_bytes") or ev.get("file_size", 0),
+            "size_bytes": ev.get("size_bytes") if ev.get("size_bytes") is not None else ev.get("file_size", 0),
+            "size_display": _format_size(ev.get("size_bytes") if ev.get("size_bytes") is not None else ev.get("file_size", 0)),
+            "hash_status": ev.get("hash_status") or "recorded (not re-verified)",
+            "hash_verified_at": ev.get("hash_verified_at"),
             "event_count": ev.get("event_count", 0),
             "uploaded_at": ev.get("uploaded_at"),
             "uploader": ev.get("uploader_name", "Unknown"),
@@ -437,7 +578,7 @@ def generate_forensic_report_data(
     # Assemble report dict (hash computed last)
     # ------------------------------------------------------------------
     report_dict: Dict[str, Any] = {
-        "id": f"rep-{case_id[:8]}-{uuid.uuid4().hex[:6]}",
+        "id": f"rep-{case_id[:8]}-v{str(version).replace('.', '-')}",
         "case_id": case_id,
         "case_name": case_name,
         "generated_at": now_iso,
@@ -456,9 +597,9 @@ def generate_forensic_report_data(
         "chain_of_custody": chain_of_custody,
         # fix-6: omit N/A audit line when no audit data
         "chain_of_custody_note": (
-            f"SHA-256 values were recorded at upload time; they were not re-verified against the original files. "
-            + (f"{audit_count} audit log entries recorded for this case. " if audit_count is not None else "")
-            + "Any comparison result is shown per file above."
+            "SHA-256 values are recorded at upload; current file comparisons were performed at the generation time shown for each file. "
+            + (f"{audit_count} audit log entries are recorded for this case. " if audit_count is not None else "")
+            + "A match reflects only the file available at generation time."
         ),
         "mitre_coverage": detections,
         # Attack sequence ordered by event_time, grouped by tactic
@@ -487,6 +628,16 @@ def generate_forensic_report_data(
             "observed_ips": sorted(observed_ips) or ["None identified"],
             "dwell_time": dwell_time_str,
         },
+        "entity_groups": {
+            "compromised_hosts": sorted(compromised_hosts),
+            "compromised_accounts": unique_users(compromised_users),
+            "adversary_infrastructure": [
+                {"address": address, "roles": sorted(roles)}
+                for address, roles in sorted(infrastructure_roles.items())
+            ],
+            "other_observed_addresses": sorted(ip for ip in observed_ips if ip not in adversary_infra),
+        },
+        "indicators": indicators,
         # C2: generated, not boilerplate
         "remediation": remediation,
         # Legacy field kept
@@ -504,7 +655,7 @@ def generate_forensic_report_data(
             "Event timestamps are sourced from the evidence files (event_time); "
             "upload times (ingested_at) are stored separately and do not appear as event times. "
             "All timestamps are normalised to UTC. "
-            "Rule coverage gaps are listed in the rule coverage matrix."
+            "Coverage depends on the enabled deterministic rules and parsers."
             + (
                 " TACTIC WARNINGS: " + " | ".join(tactic_warnings)
                 if tactic_warnings else ""
@@ -558,15 +709,15 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
         s = str(st or "")
         if s == "match":
             return "match"
-        if s == "MISMATCH":
+        if "MISMATCH" in s:
             return "mismatch"
         return ""
 
     evidence_rows = "".join([
         f"<tr><td><code>{esc(e.get('filename'))}</code></td>"
         f"<td><code>{esc(e.get('sha256_hash', ''))}</code></td>"
-        f"<td>{e.get('size_bytes', 0):,} B</td>"
-        f"<td>{e.get('event_count', 0)}</td>"
+        f"<td>{esc(e.get('size_display') or _format_size(e.get('size_bytes')))}</td>"
+        f"<td>{'Document artifact' if e.get('document_artifact') else e.get('event_count', 0)}</td>"
         f"<td>{esc(e.get('uploader', 'Unknown'))}</td>"
         f"<td>{esc(e.get('uploaded_at', ''))}</td></tr>"
         for e in report_data.get("evidence_manifest", [])
@@ -576,20 +727,22 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
         f"<tr><td><code>{esc(c.get('filename'))}</code></td>"
         f"<td><code style='word-break:break-all;font-size:9px'>{esc(str(c.get('sha256_hash', '')))}</code></td>"
         f"<td class='{_hash_cls(c.get('hash_status'))}'>{esc(c.get('hash_status'))}</td>"
+        f"<td>{esc(c.get('hash_verified_at') or 'Not available')}</td>"
+        f"<td>{esc(_format_size(c.get('size_bytes')))}</td>"
         f"<td>{esc(c.get('uploaded_by', 'Unattributed'))}</td>"
         f"<td>{esc(c.get('uploaded_at', ''))}</td></tr>"
         for c in _custody_entries(report_data)
-    ]) or "<tr><td colspan='5'>None identified</td></tr>"
+    ]) or "<tr><td colspan='7'>None identified</td></tr>"
 
     timeline_rows = "".join([
-        f"<tr><td><code>{esc(ev.get('timestamp'))}</code></td>"
-        f"<td><span class='badge'>{esc(str(ev.get('severity', '')).upper())}</span></td>"
-        f"<td>{esc(ev.get('host', 'N/A'))}</td>"
-        f"<td>{esc(ev.get('user', 'N/A'))}</td>"
-        f"<td>{esc(ev.get('action', ''))}</td>"
-        f"<td>{esc(', '.join(ev.get('corroborated_by') or []))}</td></tr>"
+        f"<tr><td><code>{esc(_format_event_time(ev.get('timestamp')))}</code></td>"
+        f"<td>{esc(ev.get('host', 'N/A'))}</td><td>{esc(ev.get('user', 'N/A'))}</td>"
+        f"<td>{esc(ev.get('mitre_tactic', ''))}</td><td><code>{esc(ev.get('mitre_technique', ''))}</code></td>"
+        f"<td>{esc(ev.get('action', ''))}</td><td>{esc(', '.join(ev.get('corroborated_by') or []))}</td>"
+        f"<td>{esc(ev.get('source_file') or ev.get('source') or '')}</td>"
+        f"<td>{esc(', '.join(ev.get('source_record_references') or []))}</td></tr>"
         for ev in report_data.get("attack_timeline_summary", [])
-    ]) or "<tr><td colspan='6'>None identified</td></tr>"
+    ]) or "<tr><td colspan='9'>None identified</td></tr>"
 
     detection_rows = "".join([
         f"<tr><td><strong>{esc(d.get('rule_name'))}</strong></td>"
@@ -597,10 +750,18 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
         f"<td>{esc(d.get('mitre_tactic', 'N/A'))}</td>"
         f"<td><span class='badge badge-{str(d.get('severity', '')).lower()}'>{esc(str(d.get('severity', '')).upper())}</span></td>"
         f"<td>{esc(d.get('target_host') or d.get('host', 'N/A'))}</td>"
-        f"<td><code>{esc(str(d.get('first_seen') or 'Not available')[:19])}</code></td>"
+        f"<td><code>{esc(_format_event_time(d.get('first_seen')))}</code></td>"
         f"<td>{esc(d.get('description', ''))}</td></tr>"
         for d in report_data.get("mitre_coverage", [])
     ]) or "<tr><td colspan='7'>None identified</td></tr>"
+    indicator_rows = "".join(
+        f"<tr><td>{esc(item.get('type'))}</td><td><code>{esc(item.get('value'))}</code></td><td>{esc(item.get('role') or 'Observed')}</td><td>{esc(item.get('source_finding') or 'Observed event')}</td></tr>"
+        for item in report_data.get("indicators", [])
+    ) or "<tr><td colspan='4'>None identified</td></tr>"
+    artifact_rows = "".join(
+        f"<li><strong>{esc(e.get('filename'))}</strong> — document artifact; {esc(e.get('size_display', _format_size(e.get('size_bytes'))))}</li>"
+        for e in report_data.get("evidence_manifest", []) if e.get("document_artifact")
+    ) or "<li>None identified</li>"
 
     rems_html = "".join([
         f"<li><strong>{html.escape(str(r.get('action', r if isinstance(r, str) else '')))}</strong>"
@@ -609,11 +770,12 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
     ]) or "<li>None identified</li>"
 
     comp = report_data.get("compromised_assets", {})
+    groups = report_data.get("entity_groups", {})
     comp_rows = (
-        "".join(f"<tr><td>Host</td><td><strong>{esc(h)}</strong></td><td>Observed in matching findings/events</td></tr>" for h in comp.get("hosts", []) if h != "None identified")
-        + "".join(f"<tr><td>User Account</td><td><strong>{esc(u)}</strong></td><td>Observed in matching findings/events</td></tr>" for u in comp.get("users", []) if u != "None identified")
-        + "".join(f"<tr><td>Observed IP</td><td><strong>{esc(ip)}</strong></td><td>Present in case evidence events; attribution not established</td></tr>" for ip in comp.get("observed_ips", []) if ip != "None identified")
-        + "".join(f"<tr><td>Tagged Infrastructure</td><td><strong>{esc(ip)}</strong></td><td>Attribution requires examiner review</td></tr>" for ip in comp.get("adversary_infrastructure", []) if ip != "None identified")
+        "".join(f"<tr><td>Compromised Host</td><td><strong>{esc(h)}</strong></td><td>Observed in finding-linked events</td></tr>" for h in groups.get("compromised_hosts", comp.get("hosts", [])) if h != "None identified")
+        + "".join(f"<tr><td>Compromised Account</td><td><strong>{esc(u)}</strong></td><td>Observed in finding-linked events</td></tr>" for u in groups.get("compromised_accounts", comp.get("users", [])) if u != "None identified")
+        + "".join(f"<tr><td>Adversary Infrastructure: {esc(', '.join(item.get('roles') or ['Other Observed Addresses']))}</td><td><strong>{esc(item.get('address'))}</strong></td><td>Finding-linked indicator; attribution requires review</td></tr>" for item in groups.get("adversary_infrastructure", []))
+        + "".join(f"<tr><td>Other Observed Address</td><td><strong>{esc(ip)}</strong></td><td>Observed in evidence; no adversary role assigned</td></tr>" for ip in groups.get("other_observed_addresses", []))
     ) or "<tr><td colspan='3'>None identified</td></tr>"
 
     draft_banner = ""
@@ -655,7 +817,7 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
   <table>
     <tr><th>Incident</th><td>{html.escape(report_data.get('case_name', ''))}</td><th>Report ID</th><td>{report_data.get('id', '')}</td></tr>
     <tr><th>Generated (UTC)</th><td>{report_data.get('generated_at', '')}</td><th>Investigator</th><td>{html.escape(str(report_data.get('generator_name', '')))}</td></tr>
-    <tr><th>Status</th><td class="{'mismatch' if is_draft else 'match'}">{report_data.get('status', 'DRAFT')}</td><th>Timezone</th><td>UTC</td></tr>
+    <tr><th>Report Version</th><td>{esc(report_data.get('version', '1.0'))}</td><th>Status</th><td class="{'mismatch' if is_draft else 'match'}">{report_data.get('status', 'DRAFT')}</td></tr>
   </table>
 
   <h2>1. Executive Summary</h2>
@@ -664,32 +826,33 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
   <h2>2. Evidence Custody Manifest (all SHA-256 hashes)</h2>
   <p>{html.escape(report_data.get('chain_of_custody_note', ''))}</p>
   <table>
-    <thead><tr><th>Filename</th><th>SHA-256 (full)</th><th>Hash Status</th><th>Uploaded By</th><th>Uploaded At (UTC)</th></tr></thead>
+    <thead><tr><th>Filename</th><th>SHA-256 (full)</th><th>Hash Status</th><th>Verified At (UTC)</th><th>Size</th><th>Uploaded By</th><th>Uploaded At (UTC)</th></tr></thead>
     <tbody>{custody_rows}</tbody>
   </table>
 
-  <h2>3. Observed Scope &amp; Network Indicators</h2>
+  <h3>Document artifacts</h3><ul>{artifact_rows}</ul>
+
+  <h2>3. Chronological Attack Sequence</h2>
+  <table><thead><tr><th>Event Time (UTC)</th><th>Host</th><th>User</th><th>Tactic</th><th>Technique</th><th>Activity</th><th>Sources</th><th>Source File</th><th>Record References</th></tr></thead><tbody>{timeline_rows}</tbody></table>
+
+  <h2>4. MITRE ATT&amp;CK Detections (first matching event time, UTC)</h2>
+  <table>
+    <thead><tr><th>Rule</th><th>Technique</th><th>Tactic</th><th>Severity</th><th>Host</th><th>First Seen (UTC)</th><th>Description</th></tr></thead>
+    <tbody>{detection_rows}</tbody>
+  </table>
+
+  <h2>5. Compromised Scope &amp; Adversary Infrastructure</h2>
   <table>
     <thead><tr><th>Entity Type</th><th>Identifier</th><th>Status</th></tr></thead>
     <tbody>{comp_rows}</tbody>
   </table>
 
-  <h2>4. MITRE ATT&amp;CK Detections (first matching event time)</h2>
-  <table>
-    <thead><tr><th>Rule</th><th>Technique</th><th>Tactic</th><th>Severity</th><th>Host</th><th>First Seen</th><th>Description</th></tr></thead>
-    <tbody>{detection_rows}</tbody>
-  </table>
+  <h2>6. Indicators</h2><table><thead><tr><th>Type</th><th>Indicator</th><th>Role</th><th>Source Finding</th></tr></thead><tbody>{indicator_rows}</tbody></table>
 
-  <h2>5. Reconstructed Attack Timeline (ordered by event_time)</h2>
-  <table>
-    <thead><tr><th>Event Time (UTC)</th><th>Severity</th><th>Host</th><th>User</th><th>Activity</th><th>Sources</th></tr></thead>
-    <tbody>{timeline_rows}</tbody>
-  </table>
-
-  <h2>6. Remediation Directives (generated from findings)</h2>
+  <h2>7. Remediation Directives (generated from findings)</h2>
   <ul>{rems_html}</ul>
 
-  <h2>7. Methodology &amp; Limitations</h2>
+  <h2>8. Methodology &amp; Limitations</h2>
   <p><strong>Methodology:</strong> {html.escape(report_data.get('methodology', ''))}</p>
   <p><strong>Limitations:</strong> {html.escape(report_data.get('limitations', ''))}</p>
 
@@ -733,12 +896,6 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
             self.setFont("Helvetica-Bold", 7.5)
             self.setFillColor(colors.HexColor("#c2410c"))
             self.drawString(36, 762, "CONFIDENTIAL // TLP:AMBER - DFIR EVIDENTIARY")
-            if report_data.get("status", "DRAFT") == "DRAFT":
-                self.setFillColor(colors.HexColor("#fef3c7"))
-                self.roundRect(36, 740, 540, 15, 3, fill=1, stroke=0)
-                self.setFont("Helvetica-Bold", 7)
-                self.setFillColor(colors.HexColor("#92400e"))
-                self.drawString(42, 745, "DRAFT - EXAMINER REVIEW AND APPROVAL REQUIRED")
             self.setStrokeColor(colors.HexColor("#e2e8f0"))
             self.setLineWidth(0.6)
             self.line(36, 32, 576, 32)
@@ -789,10 +946,10 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     meta = [
         [Paragraph(f"<b>Incident:</b> {html.escape(str(report_data.get('case_name', '')))}",  cell_style),
          Paragraph(f"<b>Report ID:</b> {html.escape(str(report_data.get('id', '')))}",          cell_style),
-         Paragraph(f"<b>Generated:</b> {html.escape(str(report_data.get('generated_at', '')))}",cell_style)],
+         Paragraph(f"<b>Generated (UTC):</b> {html.escape(str(report_data.get('generated_at', '')))}",cell_style)],
         [Paragraph(f"<b>Investigator:</b> {html.escape(str(report_data.get('generator_name', '')))}",cell_style),
-         Paragraph(f"<b>Status:</b> {html.escape(str(report_data.get('status', 'DRAFT')))}",    cell_style),
-         Paragraph(f"<b>Timezone:</b> UTC",                                                      cell_style)],
+         Paragraph(f"<b>Version:</b> {html.escape(str(report_data.get('version', '1.0')))}", cell_style),
+         Paragraph(f"<b>Status:</b> {html.escape(str(report_data.get('status', 'DRAFT')))}", cell_style)],
     ]
     t = Table(meta, colWidths=[180, 180, 180])
     t.setStyle(TableStyle([
@@ -812,9 +969,9 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     story.append(Paragraph(html.escape(report_data.get("chain_of_custody_note", "")), body_style))
     ev_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Filename", "SHA-256 (full)", "Hash Status", "Uploaded By", "Uploaded At"]]]
     ev_rows = [
-        [Paragraph(html.escape(str(c.get("filename",""))), cell_code),
+        [Paragraph(html.escape(str(c.get("filename",""))) + "<br/>" + html.escape(_format_size(c.get("size_bytes"))), cell_code),
          Paragraph(html.escape(str(c.get("sha256_hash",""))), cell_code),
-         Paragraph(str(c.get("hash_status","?")), cell_crit if str(c.get("hash_status","")) == "MISMATCH" else cell_style),
+         Paragraph(html.escape(str(c.get("hash_status","?"))) + "<br/>" + html.escape(str(c.get("hash_verified_at") or "Verification time unavailable")), cell_crit if "MISMATCH" in str(c.get("hash_status","")) else cell_style),
          Paragraph(html.escape(str(c.get("uploaded_by","") or "Unattributed")), cell_style),
          Paragraph(html.escape(str(c.get("uploaded_at",""))), cell_style)]
         for c in _custody_entries(report_data)
@@ -830,8 +987,10 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     ]))
     story.append(t2)
     story.append(Spacer(1, 4))
+    artifact_names = [str(item.get("filename")) for item in report_data.get("evidence_manifest", []) if item.get("document_artifact")]
+    story.append(Paragraph("<b>Document artifacts:</b> " + (html.escape(", ".join(artifact_names)) if artifact_names else "None identified"), body_style))
 
-    story.append(Paragraph("3. Observed Scope & Network Indicators", h2_style))
+    story.append(Paragraph("5. Compromised Scope & Adversary Infrastructure", h2_style))
     comp = report_data.get("compromised_assets", {})
     comp_data = [
         [Paragraph("<b>Entity Type</b>", cell_bold), Paragraph("<b>Identifier</b>", cell_bold), Paragraph("<b>Status</b>", cell_bold)]
@@ -840,10 +999,11 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         if h != "None identified": comp_data.append([Paragraph("Host", cell_style), Paragraph(html.escape(str(h)), cell_bold), Paragraph("Observed in matching findings/events", cell_style)])
     for u in comp.get("users", []):
         if u != "None identified": comp_data.append([Paragraph("User Account", cell_style), Paragraph(html.escape(str(u)), cell_bold), Paragraph("Observed in matching findings/events", cell_style)])
-    for ip in comp.get("observed_ips", []):
-        if ip != "None identified": comp_data.append([Paragraph("Observed IP", cell_style), Paragraph(html.escape(str(ip)), cell_bold), Paragraph("Present in case evidence; attribution not established", cell_style)])
-    for ip in comp.get("adversary_infrastructure", []):
-        if ip != "None identified": comp_data.append([Paragraph("Tagged Infra", cell_style), Paragraph(html.escape(str(ip)), cell_bold), Paragraph("Attribution needs examiner review", cell_style)])
+    groups = report_data.get("entity_groups", {})
+    for item in groups.get("adversary_infrastructure", []):
+        comp_data.append([Paragraph("Adversary Infrastructure", cell_style), Paragraph(html.escape(str(item.get("address"))), cell_bold), Paragraph(html.escape(", ".join(item.get("roles") or ["Other Observed Addresses"])), cell_style)])
+    for ip in groups.get("other_observed_addresses", []):
+        comp_data.append([Paragraph("Other Observed Address", cell_style), Paragraph(html.escape(str(ip)), cell_bold), Paragraph("Observed in evidence; no adversary role assigned", cell_style)])
     if len(comp_data) == 1:
         comp_data.append([Paragraph("None identified", cell_style), "", ""])
     t3 = Table(comp_data, colWidths=[130, 220, 190], repeatRows=1)
@@ -864,7 +1024,7 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
          Paragraph(html.escape(str(d.get("mitre_tactic","N/A"))), cell_style),
          Paragraph(str(d.get("severity","")).upper(), cell_crit if str(d.get("severity","")) in ("critical","high") else cell_style),
          Paragraph(html.escape(str(d.get("target_host") or d.get("host","N/A"))), cell_style),
-         Paragraph(html.escape(str(d.get("first_seen") or "Not available")[:19]), cell_code),
+         Paragraph(html.escape(_format_event_time(d.get("first_seen"))), cell_code),
          Paragraph(html.escape(str(d.get("description",""))), cell_style)]
         for d in report_data.get("mitre_coverage", [])
     ]
@@ -879,19 +1039,18 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     story.append(t4)
     story.append(Spacer(1, 4))
 
-    story.append(Paragraph("5. Attack Timeline (event_time, UTC)", h2_style))
-    tl_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Event Time (UTC)", "Severity", "Host", "User", "Activity", "Sources"]]]
+    story.append(Paragraph("3. Chronological Attack Sequence (event_time, UTC)", h2_style))
+    tl_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Event Time (UTC)", "Host", "User", "Tactic / Technique / Activity", "Source files / records"]]]
     tl_rows = [
-        [Paragraph(html.escape(str(ev.get("timestamp",""))), cell_code),
-         Paragraph(str(ev.get("severity","")).upper(), cell_style),
+        [Paragraph(html.escape(_format_event_time(ev.get("timestamp"))), cell_code),
          Paragraph(html.escape(str(ev.get("host","N/A"))), cell_style),
          Paragraph(html.escape(str(ev.get("user","N/A"))), cell_style),
-         Paragraph(html.escape(str(ev.get("action",""))), cell_style),
-         Paragraph(html.escape(", ".join(ev.get("corroborated_by") or [])), cell_style)]
+         Paragraph(html.escape(f"{ev.get('mitre_tactic', '')} {ev.get('mitre_technique', '')}: {ev.get('action', '')}"), cell_style),
+         Paragraph(html.escape("; ".join((ev.get("corroborated_by") or []) + [str(ev.get("source_file") or ev.get("source") or ""), ", ".join(ev.get("source_record_references") or [])]).strip("; ")), cell_style)]
         for ev in report_data.get("attack_timeline_summary", [])
     ]
-    tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph("None identified", cell_style)] + [""]*5])
-    t5 = Table(tl_data, colWidths=[100, 45, 70, 70, 185, 70], repeatRows=1)
+    tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph("None identified", cell_style)] + [""]*4])
+    t5 = Table(tl_data, colWidths=[100, 80, 80, 165, 115], repeatRows=1)
     t5.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
@@ -901,7 +1060,26 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     story.append(t5)
     story.append(Spacer(1, 4))
 
-    story.append(Paragraph("6. Remediation Directives (generated from findings)", h2_style))
+    story.append(Paragraph("6. Indicators", h2_style))
+    ind_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ("Type", "Indicator", "Role", "Source Finding")]]
+    ind_rows = [
+        [Paragraph(html.escape(str(item.get("type", ""))), cell_style),
+         Paragraph(html.escape(str(item.get("value", ""))), cell_code),
+         Paragraph(html.escape(str(item.get("role") or "Observed")), cell_style),
+         Paragraph(html.escape(str(item.get("source_finding") or "Observed event")), cell_style)]
+        for item in report_data.get("indicators", [])
+    ]
+    ind_data = ind_hdr + (ind_rows if ind_rows else [[Paragraph("None identified", cell_style)] + [""] * 3])
+    ind_table = Table(ind_data, colWidths=[65, 230, 90, 155], repeatRows=1)
+    ind_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+    ]))
+    story.append(ind_table)
+    story.append(Spacer(1, 4))
+
+    story.append(Paragraph("7. Remediation Directives (generated from findings)", h2_style))
     for idx, r in enumerate(report_data.get("remediation", []), 1):
         action = r.get("action", r) if isinstance(r, dict) else str(r)
         refs = r.get("finding_refs", "") if isinstance(r, dict) else ""
@@ -911,7 +1089,7 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         story.append(Paragraph(txt, body_style))
         story.append(Spacer(1, 2))
 
-    story.append(Paragraph("7. Methodology & Limitations", h2_style))
+    story.append(Paragraph("8. Methodology & Limitations", h2_style))
     story.append(Paragraph(f"<b>Methodology:</b> {html.escape(report_data.get('methodology',''))}", body_style))
     story.append(Spacer(1, 3))
     story.append(Paragraph(f"<b>Limitations:</b> {html.escape(report_data.get('limitations',''))}", body_style))
@@ -920,6 +1098,19 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     hash_style = ParagraphStyle('Hash', parent=styles['Normal'],
         fontName='Courier', fontSize=7, leading=9, textColor=colors.HexColor('#64748b'))
     story.append(Paragraph(f"Report content SHA-256: {report_data.get('report_hash','not computed')}", hash_style))
+
+    # Keep the PDF's sequence, detections, and scope in the same section order
+    # as the HTML report (the builders share the underlying report data).
+    def _section_index(prefix: str) -> int:
+        return next(i for i, item in enumerate(story) if hasattr(item, "getPlainText") and item.getPlainText().startswith(prefix))
+    scope_start = _section_index("5. Compromised Scope")
+    detections_start = _section_index("4. Threat Detections")
+    sequence_start = _section_index("3. Chronological Attack Sequence")
+    indicators_start = _section_index("6. Indicators")
+    scope_block = story[scope_start:detections_start]
+    detections_block = story[detections_start:sequence_start]
+    sequence_block = story[sequence_start:indicators_start]
+    story[scope_start:indicators_start] = sequence_block + detections_block + scope_block
 
     doc.build(story, canvasmaker=NumberedCanvas)
     return buf.getvalue()

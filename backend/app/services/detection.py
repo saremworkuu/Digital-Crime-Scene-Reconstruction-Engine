@@ -1,8 +1,160 @@
 
 from collections import defaultdict, deque
 from datetime import timedelta
+from datetime import datetime
 
 from app.services.rule_loader import load_rule
+from app.services.entity_classification import is_internal_ip
+
+
+def _event_fields(event):
+    details = getattr(event, "details", None) or (event.get("details", {}) if isinstance(event, dict) else {}) or {}
+    get = (lambda key, default=None: event.get(key, default)) if isinstance(event, dict) else (lambda key, default=None: getattr(event, key, default))
+    timestamp = get("timestamp")
+    if isinstance(timestamp, str):
+        try:
+            timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            timestamp = None
+    return details, timestamp, str(get("id", ""))
+
+
+def _is_ip_address(value) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_address(str(value).strip())
+        return True
+    except ValueError:
+        return False
+
+
+def detect_macro_attachment_delivery(events):
+    """Detect delivered macro documents or script-bearing archives (T1566.001)."""
+    macro_ext = (".docm", ".xlsm", ".pptm")
+    script_ext = (".js", ".vbs", ".ps1", ".bat", ".cmd", ".hta", ".wsf")
+    findings = []
+    for event in events:
+        details, _, event_id = _event_fields(event)
+        extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+        text = " ".join(str(details.get(k, "")) for k in ("message", "description", "action", "attachment", "filename", "attachments")) + " " + " ".join(str(extra.get(k, "")) for k in ("subject", "attachment", "status", "to", "from"))
+        text = text.lower()
+        files = [str(details.get(k, "")) for k in ("attachment", "filename", "attachments") if details.get(k)] + [str(extra.get("attachment"))] if extra.get("attachment") else [str(details.get(k, "")) for k in ("attachment", "filename", "attachments") if details.get(k)]
+        delivered = any(word in text for word in ("delivered", "delivery", "received", "mailbox", "inbound"))
+        has_attachment = any(name.lower().endswith(macro_ext) for name in files) or (any(x in text for x in macro_ext))
+        archive = any(name.lower().endswith((".zip", ".7z", ".rar")) for name in files) or any(x in text for x in (".zip", ".7z", ".rar"))
+        has_script = any(name.lower().endswith(script_ext) for name in files) or any(x in text for x in script_ext)
+        recipient = details.get("recipient") or details.get("user") or details.get("username") or details.get("to") or extra.get("to")
+        if not event_id or not delivered or not recipient or not (has_attachment or (archive and has_script)):
+            continue
+        findings.append({"rule_id": "mail_macro_attachment", "rule_name": "Macro-Enabled or Script Archive Delivered", "severity": "high", "mitre_technique": "T1566.001", "mitre_tactic": "Initial Access", "description": "A delivered email to a user contains a macro-enabled attachment or an archive referencing a script; execution is not established.", "user": str(recipient), "matching_event_ids": [event_id], "rule_information": {"tactic": "Initial Access", "attachment_names": files}})
+    return findings
+
+
+def detect_smb_lateral_movement(events, window_seconds: int = 60, min_targets: int = 3):
+    """Detect short-window SMB/admin-share movement across distinct hosts."""
+    records = []
+    for event in events:
+        details, ts, event_id = _event_fields(event)
+        if not ts or not event_id:
+            continue
+        port = str(details.get("destination_port") or details.get("dst_port") or "")
+        share = str(details.get("share") or details.get("path") or details.get("message") or "").lower()
+        logon_type = str(details.get("logon_type") or details.get("LogonType") or "")
+        is_smb = port in ("445", "139") or any(x in share for x in ("admin$", "ipc$", "c$"))
+        is_type3 = logon_type == "3" and (details.get("source_host") or details.get("workstation") or details.get("WorkstationName"))
+        if not (is_smb or is_type3):
+            continue
+        src = details.get("source_host") or details.get("src_host") or details.get("workstation") or details.get("WorkstationName") or details.get("source_ip") or details.get("src_ip")
+        dst = details.get("target_host") or details.get("dest_host") or details.get("destination_host") or details.get("host") or details.get("Computer")
+        if src and _is_ip_address(src) and not is_internal_ip(str(src)):
+            continue
+        if dst and _is_ip_address(dst) and not is_internal_ip(str(dst)):
+            continue
+        if src and dst and str(src).casefold() != str(dst).casefold():
+            records.append((ts, str(src), str(dst), event_id, event))
+    findings = []
+    for ts, src, _, _, _ in records:
+        window = [r for r in records if r[1] == src and abs((r[0] - ts).total_seconds()) <= window_seconds]
+        targets = {r[2] for r in window}
+        if len(targets) >= min_targets:
+            ids = sorted({r[3] for r in window})
+            if not any(f["matching_event_ids"] == ids for f in findings):
+                findings.append({"rule_id": "smb_lateral_movement", "rule_name": "SMB or Remote Logon Lateral Movement", "severity": "high", "mitre_technique": "T1021.002", "mitre_tactic": "Lateral Movement", "description": f"SMB/admin-share or type 3 logon activity from {src} reached {len(targets)} distinct internal targets within {window_seconds} seconds.", "host": src, "target_host": src, "matching_event_ids": ids, "rule_information": {"tactic": "Lateral Movement", "source_host": src, "target_hosts": sorted(targets)}})
+    return findings
+
+
+def detect_periodic_beaconing(events, minimum_connections: int = 4, tolerance_seconds: float = 5.0):
+    """Detect periodic connections to a repeated external destination (T1071)."""
+    import ipaddress
+    by_destination = defaultdict(list)
+    dns = defaultdict(list)
+    for event in events:
+        details, ts, event_id = _event_fields(event)
+        if not ts or not event_id:
+            continue
+        kind = str(getattr(event, "event_type", "") or (event.get("event_type", "") if isinstance(event, dict) else "")).lower()
+        extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+        query = details.get("query_name") or details.get("query") or details.get("domain") or extra.get("query_name")
+        answers = details.get("answer") or details.get("resolved_ip") or extra.get("query_results") or details.get("destination_ip") or details.get("dst_ip")
+        if query and answers:
+            if not isinstance(answers, (list, tuple, set)):
+                answers = [answers]
+            for answer in answers:
+                dns[str(answer)].append((ts, str(query), event_id))
+        dst = details.get("destination_ip") or details.get("dst_ip") or details.get("dest_ip")
+        if not dst:
+            continue
+        try:
+            addr = ipaddress.ip_address(str(dst))
+        except ValueError:
+            continue
+        if is_internal_ip(str(dst)):
+            continue
+        source_ip = details.get("source_ip") or details.get("src_ip")
+        if source_ip:
+            try:
+                source_address = ipaddress.ip_address(str(source_ip))
+                if not is_internal_ip(str(source_address)):
+                    continue
+            except ValueError:
+                pass
+        is_connection = any(word in kind for word in ("network", "connection", "flow", "netflow", "tcp", "http")) or details.get("destination_port") or details.get("dst_port")
+        if is_connection:
+            by_destination[str(dst)].append((ts, event_id))
+    findings = []
+    for dst, rows in by_destination.items():
+        rows.sort()
+        if len(rows) < minimum_connections:
+            continue
+        # Collapse packet/retransmit records belonging to one connection burst.
+        unique_times = {}
+        for time in sorted({row[0] for row in rows}):
+            previous = next(reversed(unique_times), None) if unique_times else None
+            event_ids_at_time = [row[1] for row in rows if row[0] == time]
+            if previous is not None and (time - previous).total_seconds() <= 10:
+                unique_times[previous].extend(event_ids_at_time)
+            else:
+                unique_times[time] = event_ids_at_time
+        times = sorted(unique_times)
+        beacon_window = None
+        median = 0
+        for start in range(max(0, len(times) - minimum_connections + 1)):
+            window_times = times[start:start + minimum_connections]
+            intervals = [(window_times[i] - window_times[i - 1]).total_seconds() for i in range(1, len(window_times))]
+            if not intervals or any(value <= 0 for value in intervals):
+                continue
+            candidate_median = sorted(intervals)[len(intervals) // 2]
+            if candidate_median > 0 and max(abs(value - candidate_median) for value in intervals) <= max(tolerance_seconds, candidate_median * .15):
+                beacon_window = window_times
+                median = candidate_median
+                break
+        if not beacon_window:
+            continue
+        ids = [event_id for time in beacon_window for event_id in unique_times[time]]
+        domains = sorted({domain for t, domain, _ in dns.get(dst, []) if t <= beacon_window[-1]})
+        dns_ids = [event_id for t, _, event_id in dns.get(dst, []) if t <= beacon_window[-1]]
+        findings.append({"rule_id": "periodic_c2_beaconing", "rule_name": "Periodic External Beaconing", "severity": "high", "mitre_technique": "T1071", "mitre_tactic": "Command and Control", "description": f"Periodic connections to external address {dst} were observed at an approximately {median:g}-second interval.", "dst_ip": dst, "matching_event_ids": sorted(set(ids + dns_ids)), "rule_information": {"tactic": "Command and Control", "destination_ip": dst, "domains": domains, "interval_seconds": median}})
+    return findings
 
 
 def detect_repeated_failed_logins(
@@ -57,13 +209,12 @@ def detect_repeated_failed_logins(
                 "invalid password",
                 "authentication failure",
             ])
-            and any(word in searchable_text for word in [
-                "login",
-                "logon",
-                "authentication",
-                "ssh",
-                "4625",
-            ])
+            and (
+                "ssh" in searchable_text
+                or str(details.get("protocol") or details.get("service") or "").lower() == "ssh"
+                or str(details.get("destination_port") or details.get("dst_port") or "") == "22"
+                or str(details.get("source_port") or details.get("src_port") or "") == "22"
+            )
         )
 
         if not is_failed_login:
@@ -524,7 +675,7 @@ def detect_lateral_movement(events) -> list[dict]:
             "mitre_technique": rule.get("mitre_technique"),
             "description": (
                 f"Potential lateral movement: user '{username}' "
-                f"successfully authenticated from "
+                f"recorded a successful login from "
                 f"'{source_host}' to '{destination_host}'. "
                 f"Supporting events: {len(matching_events)}."
             ),

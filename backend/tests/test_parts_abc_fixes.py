@@ -421,11 +421,15 @@ def _sample_findings():
     ]
 
 
+def _sample_linked_event():
+    return {"id": "e1", "timestamp": "2026-07-22T00:15:00Z", "event_type": "web_access", "source": "apache.log", "source_file": "apache.log", "host": "WEB-01", "user": "www-data", "src_ip": "203.0.113.140", "action": "SQL injection detected", "severity": "high"}
+
+
 def test_report_is_draft():
     """Report must be marked DRAFT (C2)."""
     report = generate_forensic_report_data(
         case_dict={"id": str(uuid.uuid4()), "name": "Test"},
-        evidence_list=[], events=[], detections=_sample_findings(),
+        evidence_list=[], events=[_sample_linked_event()], detections=_sample_findings(),
     )
     assert report.get("status") == "DRAFT", "Report status must be DRAFT"
     assert "DRAFT" in report.get("draft_notice", ""), "draft_notice must contain DRAFT"
@@ -467,7 +471,7 @@ def test_report_remediation_generated_from_findings():
     """Remediation section must be generated from findings, not boilerplate (C2)."""
     report = generate_forensic_report_data(
         case_dict={"id": str(uuid.uuid4()), "name": "Rem test"},
-        evidence_list=[], events=[], detections=_sample_findings(),
+        evidence_list=[], events=[_sample_linked_event()], detections=_sample_findings(),
     )
     remediation = report.get("remediation", [])
     assert len(remediation) >= 1, "Remediation must not be empty when findings present"
@@ -481,6 +485,7 @@ def test_adversary_infra_only_from_findings():
     """B1/C2: adversary_infrastructure in report must come from findings roles, not all external IPs."""
     # Add a normal customer event (external IP, not attack)
     events_with_normal_traffic = [
+        _sample_linked_event(),
         {"id": "e-normal", "timestamp": "2026-07-22T00:30:00Z",
          "event_type": "web_access", "source": "web",
          "host": "WEB-01", "src_ip": "192.0.2.21", "dst_ip": None,

@@ -42,6 +42,20 @@ export interface BackendReport extends ForensicReport {
     event_count: number;
   }>;
   chain_of_custody_note: string;
+  entity_groups?: {
+    compromised_hosts: string[];
+    compromised_accounts: string[];
+    adversary_infrastructure: Array<{ address: string; roles: string[] }>;
+    other_observed_addresses: string[];
+  };
+  indicators?: Array<{ type: string; value: string; role?: string; source_finding?: string; source_file?: string }>;
+  entity_groups?: {
+    compromised_hosts: string[];
+    compromised_accounts: string[];
+    adversary_infrastructure: Array<{ address: string; roles: string[] }>;
+    other_observed_addresses: string[];
+  };
+  indicators?: Array<{ type: string; value: string; role?: string; source_finding?: string; source_file?: string }>;
 
   mitre_coverage: Array<{
     id: string;
@@ -65,8 +79,11 @@ export interface BackendReport extends ForensicReport {
     user: string;
     action: string;
     src_ip?: string;
+    mitre_tactic?: string;
     mitre_technique?: string;
     corroborated_by?: string[];
+    source_file?: string;
+    source_record_references?: string[];
   }>;
 
   compromised_assets: {

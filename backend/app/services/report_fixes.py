@@ -5,7 +5,9 @@ Put this file next to your report generator module and import from it.
 import html
 import ipaddress
 import re
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Set
+from .entity_classification import is_internal_ip
 
 # ---------------------------------------------------------------------------
 # 1. Tactic is derived from the technique ID, never trusted from rule defaults.
@@ -506,9 +508,9 @@ def norm_user(u: Any) -> Optional[str]:
         username, domain = s.split("@", 1)
         domain = domain.split(".")[0]
     else:
-        domain, username = "DOMAIN", s
-    domain, username = domain.strip().lower() or "domain", username.strip().lower()
-    return None if username in ("", "unknown", "system", "-", "n/a") else f"{domain}\\{username}"
+        domain, username = "", s
+    domain, username = domain.strip().lower(), username.strip().lower()
+    return None if username in ("", "unknown", "system", "-", "n/a") else username
 
 
 def format_user(u: Any) -> str:
@@ -522,8 +524,8 @@ def format_user(u: Any) -> str:
         username, domain = raw.split("@", 1)
         domain = domain.split(".")[0]
     else:
-        domain, username = "DOMAIN", raw
-    return f"{domain.strip().upper() or 'DOMAIN'}\\{username.strip()}"
+        domain, username = "", raw
+    return f"{domain.strip().upper()}\\{username.strip()}" if domain.strip() else username.strip()
 
 
 def unique_users(users: Iterable[Any]) -> List[str]:
@@ -539,28 +541,25 @@ def unique_users(users: Iterable[Any]) -> List[str]:
             username, domain = raw.split("@", 1)
             domain = domain.split(".")[0]
         else:
-            domain, username = "DOMAIN", raw
+            domain, username = "", raw
         candidates.append((key, domain.upper(), username))
     concrete_domains: Dict[str, set] = {}
     for _, domain, username in candidates:
-        if domain != "DOMAIN":
+        if domain:
             concrete_domains.setdefault(username.lower(), set()).add(domain)
     best: Dict[str, str] = {}
     for key, domain, username in candidates:
         # DOMAIN is our placeholder when the source supplied no domain. Prefer
         # a concrete domain for that same username when matching evidence has one.
-        if domain == "DOMAIN" and concrete_domains.get(username.lower()):
+        if not domain and concrete_domains.get(username.lower()):
             continue
-        best.setdefault(key, f"{domain}\\{username}")
+        if key not in best or ("\\" not in best[key] and domain):
+            best[key] = f"{domain}\\{username}" if domain else username
     return sorted(best.values(), key=str.lower)
 
 
 def _is_private(ip: str) -> bool:
-    try:
-        a = ipaddress.ip_address(str(ip).strip())
-        return a.is_private or a.is_loopback or a.is_link_local
-    except ValueError:
-        return False
+    return is_internal_ip(ip)
 
 
 def build_ip_host_map(events: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -583,7 +582,7 @@ def resolve_hosts(hosts: Iterable[str], ip_map: Dict[str, str]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# 5. Timeline: merge exact duplicates, fill unknown hosts, no row limit
+# 5. Timeline: merge repeated source records, fill unknown hosts, no row limit
 # ---------------------------------------------------------------------------
 def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]] = None,
                    max_rows: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -630,7 +629,29 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
                 formatted = known
             e["user"] = formatted
         src = str(e.get("source_file") or e.get("source") or "")
-        key = (timestamp, str(e.get("host", "")), str(e.get("action", "")))
+        host_key = str(e.get("host", ""))
+        action_key = re.sub(r"[^a-z0-9]+", " ", str(e.get("action", "")).lower()).strip()
+        key = (timestamp, host_key, action_key)
+        if key not in merged and action_key:
+            try:
+                current_time = datetime.fromisoformat(str(e.get("timestamp", "")).replace("Z", "+00:00"))
+            except ValueError:
+                current_time = None
+            if current_time:
+                for candidate_key, candidate in merged.items():
+                    if candidate_key[1] != host_key or candidate_key[2] != action_key:
+                        continue
+                    try:
+                        previous_time = datetime.fromisoformat(str(candidate.get("timestamp", "")).replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if previous_time.tzinfo is None and current_time.tzinfo is not None:
+                        previous_time = previous_time.replace(tzinfo=current_time.tzinfo)
+                    if current_time.tzinfo is None and previous_time.tzinfo is not None:
+                        current_time = current_time.replace(tzinfo=previous_time.tzinfo)
+                    if abs((current_time - previous_time).total_seconds()) <= 60:
+                        key = candidate_key
+                        break
         if key in merged:
             m = merged[key]
             if src and src not in m["corroborated_by"]:
@@ -642,6 +663,13 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
                 m["user"] = e["user"]
             if SEV_RANK.get(_sev(e), 0) > SEV_RANK.get(_sev(m), 0):
                 m["severity"] = e.get("severity")
+            for field in ("source_record_references",):
+                refs = list(m.get(field) or [])
+                refs.extend(e.get(field) or [])
+                m[field] = sorted(set(refs))
+            for field in ("mitre_tactic", "mitre_technique"):
+                values = {part.strip() for item in (m.get(field), e.get(field)) if item for part in str(item).split(",") if part.strip()}
+                m[field] = ", ".join(sorted(values))
         else:
             e["corroborated_by"] = [src] if src else []
             merged[key] = e
@@ -684,7 +712,7 @@ def build_executive_summary(case_name: str, n_evidence: int, n_events: int,
     ordered = [t for t in TACTIC_ORDER if t in tactics] + sorted(t for t in tactics if t not in TACTIC_ORDER and t)
     crit = sum(1 for d in detections if _sev(d) == "critical")
     p = [f"[DRAFT] Forensic investigation report for incident '{case_name}'. "
-         f"{n_evidence} evidence artifact(s) were ingested; SHA-256 values were recorded at upload and have not been re-verified. "
+         f"{n_evidence} evidence artifact(s) were ingested; upload-time SHA-256 values are recorded and generation-time file checks are reported per artifact where available. "
          f"{n_events} normalized events were analyzed."]
     if first_seen and last_seen:
         p.append(f"Attack activity ran from {first_seen} to {last_seen} UTC (dwell time {dwell}).")
