@@ -50,11 +50,39 @@ app.include_router(api_router, prefix="/api/v1")
 
 
 from app.db.init_db import init_db
+import shutil
+from pathlib import Path
 
 
 @app.on_event("startup")
 def on_startup():
     init_db()
+    try:
+        root_dir = Path(__file__).resolve().parent.parent.parent
+        src_dir = root_dir / "qa" / "artifacts"
+        dst_dir = root_dir / "screenshots"
+        if src_dir.exists():
+            dst_dir.mkdir(exist_ok=True)
+            for img_name in [
+                "01_landing_page.png",
+                "05_login_page.png",
+                "07_investigator_dashboard.png",
+                "08_cases_page.png",
+                "10_evidence_vault.png",
+                "11_timeline_visual.png",
+                "13_attack_graph_2d.png",
+                "15_attack_path.png",
+                "16_findings_detections.png",
+                "17_reports_page.png",
+                "18_audit_trail.png",
+                "23_admin_rules.png",
+                "25_admin_system_health.png",
+            ]:
+                src_file = src_dir / img_name
+                if src_file.exists():
+                    shutil.copy2(src_file, dst_dir / img_name)
+    except Exception:
+        pass
 
 
 @app.get("/health")

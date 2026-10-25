@@ -44,17 +44,18 @@ backend/.env.*
 backend/package-lock.json
 scratch/
 
-# Security Risk & Assessment Documents (Local only - do not push to GitHub)
-security/
-SECURITY.md
-
-# QA Testing Reports & Artifacts (Local only - do not push to GitHub)
-QA_REPORT.md
-QA_TEST_CHECKLIST.md
-qa/
-
-# Admin Page Descriptions & Documentation (Local only - do not push to GitHub)
+# Documentation, Internal Guides & Reports (Local only - do not push to GitHub)
+docs/
+*.doc
+*.docx
+API_INTEGRATION.md
 ADMIN_DASHBOARD_PAGES.md
 ADMIN_DASHBOARD_GUIDE.md
-docs/admin/
-QA_INVESTIGATOR_CHECK.md/
+QA_INVESTIGATOR_CHECK.md
+QA_REPORT.md
+QA_TEST_CHECKLIST.md
+SECURITY.md
+security/
+qa/
+qa_samples/
+
