@@ -79,6 +79,18 @@ def _format_event_time(value: Any) -> str:
         return "Not available"
 
 
+def _format_timeline_time(event: Dict[str, Any]) -> str:
+    if event.get("timestamp_timezone_known") is False:
+        raw = str(event.get("timestamp") or "")
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            value = parsed.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            value = raw or "Not available"
+        return f"{value} (source timezone unspecified)"
+    return _format_event_time(event.get("timestamp"))
+
+
 def _is_private(ip: str) -> bool:
     return is_internal_ip(ip)
 
@@ -113,7 +125,13 @@ def generate_forensic_report_data(
     case_name = case_dict.get("name", "Untitled Incident")
     now_iso = _now_iso()
     tactic_warnings: List[str] = []
-    detections = dedupe_detections(detections, warnings=tactic_warnings)
+    ip_map = build_ip_host_map(events)
+    event_hosts = {
+        str(ev.get("id") or ev.get("event_id")): resolve_hosts([str(ev.get("host"))], ip_map)[0]
+        for ev in events
+        if (ev.get("id") or ev.get("event_id")) and ev.get("host")
+    }
+    detections = dedupe_detections(detections, warnings=tactic_warnings, event_hosts=event_hosts)
     valid_event_ids = {str(ev.get("id") or ev.get("event_id") or "") for ev in events} - {""}
     detections = [
         finding for finding in detections
@@ -126,8 +144,6 @@ def generate_forensic_report_data(
         description = str(finding.get("description") or "")
         if finding.get("mitre_technique") == "T1567.002" and "adversary exfiltration" in description.lower():
             finding["description"] = "Detection rule matched rclone-associated outbound transfer activity; transfer purpose and attribution have not been independently confirmed."
-    ip_map = build_ip_host_map(events)
-
     gen_name = (
         getattr(generator_user, "name", None)
         or getattr(generator_user, "username", "Lead Forensics Investigator")
@@ -222,11 +238,6 @@ def generate_forensic_report_data(
         domains = rule_info.get("domains") or rule_info.get("domain") or []
         if isinstance(domains, str):
             domains = [domains]
-        if role:
-            for domain in domains:
-                if domain and not _looks_like_ip(domain):
-                    infrastructure_roles.setdefault(str(domain).rstrip("."), set()).add(role)
-                    adversary_infra.add(str(domain).rstrip("."))
         # Correlate closely timed network evidence with a finding when the
         # network record is not itself one of the detector's matched rows.
         linked_times = []
@@ -357,10 +368,11 @@ def generate_forensic_report_data(
 
     # Compute dwell time
     dwell_time_str = "Not determinable"
-    if len(attack_events) >= 2:
+    timed_attack_events = [ev for ev in attack_events if ev.get("timestamp_timezone_known") is not False]
+    if len(timed_attack_events) >= 2:
         try:
-            t0 = datetime.fromisoformat(str(attack_events[0]["timestamp"]).replace("Z", "+00:00"))
-            t1 = datetime.fromisoformat(str(attack_events[-1]["timestamp"]).replace("Z", "+00:00"))
+            t0 = datetime.fromisoformat(str(timed_attack_events[0]["timestamp"]).replace("Z", "+00:00"))
+            t1 = datetime.fromisoformat(str(timed_attack_events[-1]["timestamp"]).replace("Z", "+00:00"))
             delta_mins = int((t1 - t0).total_seconds() / 60)
             dwell_time_str = f"{delta_mins} minutes" if delta_mins < 60 else f"{delta_mins / 60:.1f} hours"
         except Exception:
@@ -507,8 +519,8 @@ def generate_forensic_report_data(
     # ------------------------------------------------------------------
     # fix-9: Executive summary with GiB, ransomware family, phishing facts
     # ------------------------------------------------------------------
-    first_seen = attack_events[0].get("timestamp") if attack_events else None
-    last_seen = attack_events[-1].get("timestamp") if attack_events else None
+    first_seen = timed_attack_events[0].get("timestamp") if timed_attack_events else None
+    last_seen = timed_attack_events[-1].get("timestamp") if timed_attack_events else None
 
     # Compute summary facts from evidence and detections
     total_bytes = sum(ev.get("size_bytes") or ev.get("file_size") or 0 for ev in evidence_list)
@@ -541,7 +553,7 @@ def generate_forensic_report_data(
                 facts["ransomware_family"] = m2.group(1).upper()
         # Phishing email from T1566.001 finding description
         if f.get("mitre_technique") in ("T1566", "T1566.001") and not facts.get("initial_access"):
-            facts["initial_access"] = "Phishing email with malicious macro attachment (" + str(f.get("rule_name", "")) + ")"
+            facts["initial_access"] = "macro-capable or script-bearing attachment delivery was observed; malicious content and execution are not established"
 
     exec_summary = build_executive_summary(
         case_name=case_name,
@@ -735,7 +747,7 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
     ]) or "<tr><td colspan='7'>None identified</td></tr>"
 
     timeline_rows = "".join([
-        f"<tr><td><code>{esc(_format_event_time(ev.get('timestamp')))}</code></td>"
+        f"<tr><td><code>{esc(_format_timeline_time(ev))}</code></td>"
         f"<td>{esc(ev.get('host', 'N/A'))}</td><td>{esc(ev.get('user', 'N/A'))}</td>"
         f"<td>{esc(ev.get('mitre_tactic', ''))}</td><td><code>{esc(ev.get('mitre_technique', ''))}</code></td>"
         f"<td>{esc(ev.get('action', ''))}</td><td>{esc(', '.join(ev.get('corroborated_by') or []))}</td>"
@@ -833,7 +845,7 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
   <h3>Document artifacts</h3><ul>{artifact_rows}</ul>
 
   <h2>3. Chronological Attack Sequence</h2>
-  <table><thead><tr><th>Event Time (UTC)</th><th>Host</th><th>User</th><th>Tactic</th><th>Technique</th><th>Activity</th><th>Sources</th><th>Source File</th><th>Record References</th></tr></thead><tbody>{timeline_rows}</tbody></table>
+  <table><thead><tr><th>Event Time (UTC where source specifies it)</th><th>Host</th><th>User</th><th>Tactic</th><th>Technique</th><th>Activity</th><th>Sources</th><th>Source File</th><th>Record References</th></tr></thead><tbody>{timeline_rows}</tbody></table>
 
   <h2>4. MITRE ATT&amp;CK Detections (first matching event time, UTC)</h2>
   <table>
@@ -1040,9 +1052,9 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     story.append(Spacer(1, 4))
 
     story.append(Paragraph("3. Chronological Attack Sequence (event_time, UTC)", h2_style))
-    tl_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Event Time (UTC)", "Host", "User", "Tactic / Technique / Activity", "Source files / records"]]]
+    tl_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Event Time (UTC where source specifies it)", "Host", "User", "Tactic / Technique / Activity", "Source files / records"]]]
     tl_rows = [
-        [Paragraph(html.escape(_format_event_time(ev.get("timestamp"))), cell_code),
+        [Paragraph(html.escape(_format_timeline_time(ev)), cell_code),
          Paragraph(html.escape(str(ev.get("host","N/A"))), cell_style),
          Paragraph(html.escape(str(ev.get("user","N/A"))), cell_style),
          Paragraph(html.escape(f"{ev.get('mitre_tactic', '')} {ev.get('mitre_technique', '')}: {ev.get('action', '')}"), cell_style),

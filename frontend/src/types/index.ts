@@ -16,6 +16,7 @@ export interface NormalizedEvent {
   case_id: string;
   evidence_id: string;
   timestamp: string;
+  timestamp_timezone_known?: boolean;
   source_type: string;
   host: string;
   user: string;
@@ -91,6 +92,7 @@ export interface DetectionResult {
   rule_name: string;
   severity: EventSeverity;
   mitre_technique: string;
+  mitre_techniques_all?: string[];
   mitre_tactic: string;
   timestamp: string;
   description: string;

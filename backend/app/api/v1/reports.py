@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,7 +21,9 @@ from app.db.models.detection_event import DetectionEvent
 from app.db.models.report import Report
 from app.db.models.user import User
 from app.schemas.report import ForensicReportResponse
+from app.schemas.events import EventResponse
 from app.services.report import generate_forensic_report_data, render_report_html, render_report_pdf
+from app.services.audit import log_audit_event
 from app.services.detection_engine import execute_detections_on_events
 from app.services.detection import (
     detect_repeated_failed_logins,
@@ -34,6 +36,17 @@ from app.services.detection import (
 )
 
 router = APIRouter(tags=["reports"])
+
+
+def _audit_report_action(db: Session, user: User, case_id: uuid.UUID | str, action: str,
+                         request: Request | None = None, report_id: str | None = None,
+                         details: dict[str, Any] | None = None) -> None:
+    """Append one report audit event; audit entries are never updated or removed."""
+    log_audit_event(
+        db, user, action, f"report:{report_id or case_id}", request=request,
+        case_id=uuid.UUID(str(case_id)), details={"report_id": report_id, **(details or {})},
+    )
+    db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -135,40 +148,28 @@ def _compile_case_report(
             "uploader_name": getattr(e, "uploader_name", None) or "Forensics Examiner",
         })
 
-    event_dicts = [
-        {
+    event_dicts = []
+    for ev in events:
+        canonical = EventResponse.model_validate(ev)
+        event_dicts.append({
             "id": str(ev.id),
             "timestamp": ev.timestamp.isoformat() if hasattr(ev.timestamp, "isoformat") else str(ev.timestamp),
+            "timestamp_timezone_known": canonical.timestamp_timezone_known,
             "event_type": ev.event_type,
             "source": ev.source,
-            "source_file": (ev.details or {}).get("source_file") or ev.source,
-            "host": (
-                (ev.details or {}).get("host")
-                or (ev.details or {}).get("Computer")
-                or (ev.details or {}).get("computer")
-                or (ev.details or {}).get("hostname")
-                or (ev.details or {}).get("computer_name")
-                or (ev.details or {}).get("ComputerName")
-                or "unknown_host"
-            ),
-            "user": (
-                (ev.details or {}).get("user")
-                or (ev.details or {}).get("username")
-                or (ev.details or {}).get("account")
-                or (ev.details or {}).get("SubjectUserName")
-                or "SYSTEM"
-            ),
-            "action": (ev.details or {}).get("action") or (ev.details or {}).get("message") or ev.event_type,
-            "severity": (ev.details or {}).get("severity") or "low",
+            "source_file": canonical.source_file or ev.source,
+            "host": canonical.host or "unknown_host",
+            "user": canonical.user or "unknown",
+            "action": canonical.action or ev.event_type,
+            "severity": canonical.severity or "low",
             "is_attack_path": bool((ev.details or {}).get("is_attack_path")),
             "attack_phase": (ev.details or {}).get("attack_phase"),
-            "src_ip": (ev.details or {}).get("source_ip") or (ev.details or {}).get("src_ip"),
-            "dst_ip": (ev.details or {}).get("destination_ip") or (ev.details or {}).get("dst_ip"),
+            "src_ip": canonical.src_ip,
+            "dst_ip": canonical.dst_ip,
             "evidence_id": str(ev.evidence_id) if ev.evidence_id else None,
             "source_record_id": (ev.details or {}).get("source_record_id") or (ev.details or {}).get("record_id") or (ev.details or {}).get("event_record_id"),
-        }
-        for ev in events
-    ]
+            "details": ev.details or {},
+        })
     events_by_id = {event["id"]: event for event in event_dicts if event.get("id")}
 
     detection_dicts = []
@@ -328,13 +329,15 @@ def _latest_saved_report_data(case_id: uuid.UUID | str, db: Session) -> dict[str
 @router.post("/cases/{case_id}/reports/generate", response_model=ForensicReportResponse)
 def generate_report(
     case_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Generate a new forensic report, persist it to the reports table, and return it."""
     next_ver = _next_version(case_id, db)
     report_data = _compile_case_report(case_id, current_user, db, version=next_ver)
-    _save_report(case_id, report_data, db)
+    saved = _save_report(case_id, report_data, db)
+    _audit_report_action(db, current_user, case_id, "report.generated", request, str(saved.id), {"version": report_data.get("version")})
     return report_data
 
 
@@ -349,6 +352,7 @@ def generate_report(
 @router.get("/cases/{case_id}/report", response_model=ForensicReportResponse)
 def get_report(
     case_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -359,11 +363,16 @@ def get_report(
     # Return latest saved if it exists; otherwise generate + save
     latest_data = _latest_saved_report_data(case_id, db)
     if latest_data:
+        cid = uuid.UUID(str(case_id))
+        latest = db.execute(select(Report).where(Report.case_id == cid).order_by(Report.generated_at.desc())).scalars().first()
+        _audit_report_action(db, current_user, case_id, "report.viewed", request, str(latest.id) if latest else None)
         return latest_data
 
     next_ver = _next_version(case_id, db)
     report_data = _compile_case_report(case_id, current_user, db, version=next_ver)
-    _save_report(case_id, report_data, db)
+    saved = _save_report(case_id, report_data, db)
+    _audit_report_action(db, current_user, case_id, "report.generated", request, str(saved.id), {"version": report_data.get("version")})
+    _audit_report_action(db, current_user, case_id, "report.viewed", request, str(saved.id))
     return report_data
 
 
@@ -412,6 +421,7 @@ def list_reports(
 def get_saved_report(
     case_id: str,
     report_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -430,6 +440,7 @@ def get_saved_report(
     data = _load_report_data(row)
     if not data:
         raise HTTPException(status_code=404, detail="Report content missing")
+    _audit_report_action(db, current_user, case_id, "report.viewed", request, str(row.id))
     return data
 
 
@@ -463,6 +474,7 @@ def delete_saved_report(
 def download_saved_html(
     case_id: str,
     report_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -484,7 +496,9 @@ def download_saved_html(
     if not data:
         raise HTTPException(status_code=404, detail="Report content missing")
 
-    return HTMLResponse(content=render_report_html(data))
+    rendered = render_report_html(data)
+    _audit_report_action(db, current_user, case_id, "report.downloaded", request, str(row.id), {"format": "html"})
+    return HTMLResponse(content=rendered)
 
 
 # ===========================================================================
@@ -495,6 +509,7 @@ def download_saved_html(
 def download_saved_pdf(
     case_id: str,
     report_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -517,6 +532,7 @@ def download_saved_pdf(
         raise HTTPException(status_code=404, detail="Report content missing")
 
     pdf_bytes = render_report_pdf(data)
+    _audit_report_action(db, current_user, case_id, "report.downloaded", request, str(row.id), {"format": "pdf"})
     ver = getattr(row, "version", "1.0") or "1.0"
     clean_name = data.get("case_name", "incident").replace(" ", "_").lower()
     return Response(
@@ -537,6 +553,7 @@ def download_saved_pdf(
 @router.get("/cases/{case_id}/html", response_class=HTMLResponse)
 def export_html(
     case_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -544,6 +561,7 @@ def export_html(
     if report_data is None:
         report_data = _compile_case_report(case_id, current_user, db)
     html_content = render_report_html(report_data)
+    _audit_report_action(db, current_user, case_id, "report.downloaded", request, details={"format": "html", "version": report_data.get("version")})
     return HTMLResponse(content=html_content)
 
 
@@ -553,6 +571,7 @@ def export_html(
 @router.get("/cases/{case_id}/pdf")
 def export_pdf(
     case_id: str,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -560,6 +579,7 @@ def export_pdf(
     if report_data is None:
         report_data = _compile_case_report(case_id, current_user, db)
     pdf_bytes = render_report_pdf(report_data)
+    _audit_report_action(db, current_user, case_id, "report.downloaded", request, details={"format": "pdf", "version": report_data.get("version")})
     clean_name = report_data.get("case_name", "incident").replace(" ", "_").lower()
     return Response(
         content=pdf_bytes,

@@ -10,6 +10,11 @@ from app.services.detection import (
 from app.services.entity_classification import is_internal_ip
 from app.services.report_fixes import unique_users
 from app.services.report import generate_forensic_report_data
+from app.services.graph import build_attack_graph
+from app.services.report import _format_timeline_time
+from app.services.report_fixes import merge_timeline
+from app.schemas.events import EventResponse
+from uuid import uuid4
 
 
 def _event(event_id, seconds, event_type="network_connection", **details):
@@ -79,3 +84,73 @@ def test_report_content_hash_is_repeatable_for_same_data():
     first = generate_forensic_report_data(*args, version="1.0")
     second = generate_forensic_report_data(*args, version="1.0")
     assert first["report_hash"] == second["report_hash"]
+
+
+def test_report_adversary_infrastructure_contains_addresses_not_domains():
+    event = {"id": "net-1", "timestamp": "2026-09-03T07:41:30Z", "event_type": "network_connection",
+             "host": "WS-01", "src_ip": "10.0.0.2", "dst_ip": "203.0.113.9", "action": "connection"}
+    finding = {"id": "finding-1", "rule_id": "beacon", "rule_name": "External Beacon",
+               "matching_event_ids": ["net-1"], "first_seen": event["timestamp"],
+               "mitre_technique": "T1071", "mitre_tactic": "Command and Control",
+               "actor": "203.0.113.9", "actor_role": "adversary_infrastructure",
+               "rule_information": {"domains": ["updates.example"]}}
+    report = generate_forensic_report_data({"id": "case-1", "name": "Case"}, [], [event], [finding], version="1.0")
+    assert "203.0.113.9" in report["compromised_assets"]["adversary_infrastructure"]
+    assert "updates.example" not in report["compromised_assets"]["adversary_infrastructure"]
+
+
+def test_report_qualifies_attachment_delivery_without_claiming_malicious_execution():
+    event = {"id": "mail-1", "timestamp": "2026-09-03T02:14:10", "event_type": "email_delivery",
+             "host": "mailgw", "user": "mlee", "action": "delivered Resume_Candidate.docm",
+             "timestamp_timezone_known": False}
+    finding = {"id": "mail-finding", "rule_id": "mail_macro_attachment", "rule_name": "Macro-Enabled or Script Archive Delivered",
+               "matching_event_ids": ["mail-1"], "first_seen": event["timestamp"], "mitre_technique": "T1566.001",
+               "mitre_tactic": "Initial Access", "severity": "high", "description": "Delivery observed; execution is not established."}
+    report = generate_forensic_report_data({"id": "case-1", "name": "Case"}, [], [event], [finding], version="1.0")
+    assert "malicious content and execution are not established" in report["executive_summary"]
+    assert "Likely initial access" not in report["executive_summary"]
+
+
+def test_event_response_extracts_timestamped_text_host_and_explicit_timezone():
+    response = EventResponse.model_validate({
+        "id": uuid4(), "case_id": uuid4(), "evidence_id": uuid4(),
+        "timestamp": "2026-09-03T10:12:38Z", "event_type": "text_log", "source": "fileserver",
+        "details": {"raw_message": "2026-09-03T10:12:38Z SRV-FS-02 FSAUDIT user=admin_svc rename", "user": "admin_svc", "extra": {"TargetDomainName": "ACME"}},
+    })
+    assert response.host == "SRV-FS-02"
+    assert response.user == r"ACME\admin_svc"
+    assert response.timestamp_timezone_known is True
+
+
+def test_event_response_marks_syslog_timezone_as_unspecified():
+    response = EventResponse.model_validate({
+        "id": uuid4(), "case_id": uuid4(), "evidence_id": uuid4(),
+        "timestamp": "2026-09-03T02:14:10Z", "event_type": "mail_log", "source": "mailgw",
+        "details": {"host": "unknown_host", "host_inferred": True, "extra": {"raw_message": "Sep  3 02:14:10 mailgw postfix: from=<sender@example.invalid> to=<mlee@acme.example> status=delivered"}},
+    })
+    assert response.host == "mailgw"
+    assert response.user == "mlee@acme.example"
+    assert response.timestamp_timezone_known is False
+
+
+def test_report_timeline_marks_unzoned_source_time():
+    rows = merge_timeline([{"id": "mail-1", "timestamp": "2026-09-03T02:14:10", "host": "mailgw",
+                            "user": "unknown", "action": "delivery", "source": "mailgw",
+                            "timestamp_timezone_known": False}])
+    rendered = _format_timeline_time(rows[0])
+    assert rendered == "2026-09-03 02:14:10 (source timezone unspecified)"
+
+
+def test_graph_merges_source_ip_to_workstation_and_deduplicates_domain_user():
+    events = [
+        {"id": "1", "timestamp": "2026-09-03T08:33:01Z", "event_type": "windows_event", "host": "DC-01", "user": "mlee",
+         "details": {"WorkstationName": "WS-HR-12", "TargetDomainName": "ACME", "host": "DC-01"}, "src_ip": "10.20.1.12"},
+        {"id": "2", "timestamp": "2026-09-03T08:33:02Z", "event_type": "windows_event", "host": "WS-HR-12", "user": r"ACME\mlee", "details": {}, "src_ip": "10.20.1.12"},
+        {"id": "3", "timestamp": "2026-09-03T08:33:03Z", "event_type": "network_connection", "host": "WS-HR-12", "src_ip": "10.20.1.12", "dst_ip": "198.51.100.66", "details": {}},
+    ]
+    graph = build_attack_graph(events)
+    labels = [node["label"] for node in graph["nodes"]]
+    assert labels.count("WS-HR-12") == 1
+    assert labels.count(r"ACME\mlee") == 1
+    assert labels.count("198.51.100.66") == 1
+    assert "host-198.51.100.66" not in {node["id"] for node in graph["nodes"]}

@@ -410,7 +410,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ events }) => {
 
                     <span className="font-semibold text-[#f95721]">
 
-                      {evt.timestamp.replace('T', ' ').replace('Z', '')}
+                      {evt.timestamp.replace('T', ' ').replace('Z', '')}{evt.timestamp_timezone_known === false ? ' (timezone unspecified)' : ''}
 
                     </span>
 

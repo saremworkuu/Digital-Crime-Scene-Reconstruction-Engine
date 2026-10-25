@@ -21,22 +21,6 @@ import { MitreBadge } from '../components/MitreBadge';
 import { SeverityTag } from '../components/SeverityTag';
 import { DetectionResult, NormalizedEvent } from '../types';
 
-// Standard MITRE ATT&CK Tactic Order per Stage 6
-const TACTIC_ORDER: Record<string, number> = {
-  'Initial Access': 1,
-  'Execution': 2,
-  'Persistence': 3,
-  'Privilege Escalation': 4,
-  'Defense Evasion': 5,
-  'Credential Access': 6,
-  'Discovery': 7,
-  'Lateral Movement': 8,
-  'Collection': 9,
-  'Command and Control': 10,
-  'Exfiltration': 11,
-  'Impact': 12,
-};
-
 export const AttackPath: React.FC = () => {
   const { activeCase, activeCaseDetections, activeCaseEvents, theme } = useApp();
   const isLight = theme === 'light';
@@ -47,15 +31,12 @@ export const AttackPath: React.FC = () => {
 
   // 1. Build the attack path ONLY from stored findings (Stage 6)
   const validFindings = useMemo(() => {
-    return activeCaseDetections.filter(d => !d.false_positive);
+    return activeCaseDetections.filter(d => !d.false_positive && (d.matched_event_ids?.length ?? 0) > 0);
   }, [activeCaseDetections]);
 
-  // 2. Order findings by standard MITRE ATT&CK tactic order, tie-break by timestamp
+  // Findings represent observed time; preserve event chronology across tactics.
   const orderedFindings = useMemo(() => {
     return [...validFindings].sort((a, b) => {
-      const orderA = TACTIC_ORDER[a.mitre_tactic] || 99;
-      const orderB = TACTIC_ORDER[b.mitre_tactic] || 99;
-      if (orderA !== orderB) return orderA - orderB;
       return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
     });
   }, [validFindings]);
@@ -80,23 +61,26 @@ export const AttackPath: React.FC = () => {
     const hostNodeMap = new Map<string, any>();
 
     // Create host nodes from findings
-    orderedFindings.forEach((f, idx) => {
-      const host = f.host || f.entities_involved?.hosts?.[0] || 'unknown_host';
-      if (!hostNodeMap.has(host)) {
-        const node = {
-          id: `host-${host}`,
-          label: host,
-          type: 'host' as const,
-          is_compromised: true,
-          is_attack_path: true,
-          events_count: 1,
-          compromise_time: f.timestamp,
-        };
-        hostNodeMap.set(host, node);
-        nodes.push(node);
-      } else {
-        hostNodeMap.get(host).events_count += 1;
-      }
+    orderedFindings.forEach(f => {
+      const hosts = [...new Set([...(f.entities_involved?.hosts || []), ...(f.host ? [f.host] : [])])]
+        .filter(host => host && host !== 'unknown_host');
+      hosts.forEach(host => {
+        if (!hostNodeMap.has(host)) {
+          const node = {
+            id: `host-${host}`,
+            label: host,
+            type: 'host' as const,
+            is_compromised: true,
+            is_attack_path: true,
+            events_count: 1,
+            compromise_time: f.timestamp,
+          };
+          hostNodeMap.set(host, node);
+          nodes.push(node);
+        } else {
+          hostNodeMap.get(host).events_count += 1;
+        }
+      });
     });
 
     // Create edges between successive stages that share entities or network connection
@@ -265,8 +249,8 @@ export const AttackPath: React.FC = () => {
                         {/* Tactic & Host/User Context */}
                         <div className="text-[11px] font-mono text-[#a8a29e] flex flex-wrap items-center gap-2">
                           <span className="text-[#f95721] font-medium">{finding.mitre_tactic}</span>
-                          {finding.host && (
-                            <span>Host: <strong className="text-[#fafaf9]">{finding.host}</strong></span>
+                          {((finding.entities_involved?.hosts || []).length > 0 || finding.host) && (
+                            <span>Host(s): <strong className="text-[#fafaf9]">{[...new Set([...(finding.entities_involved?.hosts || []), ...(finding.host ? [finding.host] : [])])].join(', ')}</strong></span>
                           )}
                           {finding.user && finding.user !== 'unknown' && (
                             <span>User: <strong className="text-[#fafaf9]">{finding.user}</strong></span>
@@ -278,11 +262,11 @@ export const AttackPath: React.FC = () => {
                     {/* Right Tag: Severity & Technique */}
                     <div className="shrink-0 text-right space-y-1">
                       <SeverityTag severity={finding.severity} />
-                      {finding.mitre_technique && (
+                      {(finding.mitre_techniques_all?.length ? finding.mitre_techniques_all : [finding.mitre_technique]).filter(Boolean).map(technique => (
                         <div className="pt-0.5">
-                          <MitreBadge techniqueId={finding.mitre_technique} />
+                          <MitreBadge key={technique} techniqueId={technique} />
                         </div>
-                      )}
+                      ))}
                     </div>
                   </div>
 

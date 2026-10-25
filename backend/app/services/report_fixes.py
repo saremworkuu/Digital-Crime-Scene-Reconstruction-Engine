@@ -407,7 +407,7 @@ ALIASES = {
     "active directory database extraction via ntdsutil": "NTDS.dit Extraction via ntdsutil",
     "lsass memory access and credential dumping": "LSASS Memory Access via comsvcs.dll",
     "ssh_bruteforce": "SSH Brute Force",
-    "data_exfiltration": "Data Exfiltration Over C2 Channel",
+    "data_exfiltration": "Potential Data Exfiltration Activity",
 }
 
 
@@ -433,14 +433,27 @@ def _sev(d: Dict[str, Any]) -> str:
 def dedupe_detections(
     detections: List[Dict[str, Any]],
     warnings: Optional[List[str]] = None,
+    event_hosts: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Merge detections that share the same canonical title.  Keeps the highest
-    severity.  Passes *warnings* through to tactic_for_tracked so that unknown
-    techniques are recorded in the report's Limitations section."""
+    """Merge detections by canonical title and matching host scope."""
+    event_hosts = event_hosts or {}
     merged: Dict[str, Dict[str, Any]] = {}
     for d in detections:
         title = canonical_title(d.get("rule_name") or d.get("rule_id"))
-        m = merged.get(title.lower())
+        info = d.get("rule_information") or {}
+        hosts = {
+            str(value).strip().casefold()
+            for value in (d.get("target_host"), d.get("host"), info.get("target_host"), info.get("host"), *(info.get("hosts") or []), *(info.get("target_hosts") or []))
+            if value and str(value).casefold() not in {"unknown", "unknown_host", "-"}
+        }
+        hosts.update(
+            event_hosts[str(event_id)].strip().casefold()
+            for event_id in (d.get("matching_event_ids") or [])
+            if str(event_id) in event_hosts and event_hosts[str(event_id)]
+        )
+        host_key = tuple(sorted(hosts)) or (f"unresolved:{d.get('id') or d.get('rule_id') or id(d)}",)
+        merge_key = (title.lower(), host_key)
+        m = merged.get(merge_key)
         if m is None:
             m = dict(d)
             m["rule_name"] = title
@@ -449,7 +462,8 @@ def dedupe_detections(
             seed = d.get("mitre_techniques_all") or []
             m["mitre_techniques_all"] = list(seed)
             m["merged_ids"] = []
-            merged[title.lower()] = m
+            m["_host_scope"] = list(host_key)
+            merged[merge_key] = m
         for event_id in d.get("matching_event_ids") or []:
             if event_id:
                 ids = m.setdefault("matching_event_ids", [])
@@ -481,6 +495,7 @@ def dedupe_detections(
             m["last_seen"] = ls
     out = list(merged.values())
     for m in out:
+        m.pop("_host_scope", None)
         primary = (
             m["mitre_techniques_all"][0]
             if m["mitre_techniques_all"]
@@ -654,6 +669,7 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
                         break
         if key in merged:
             m = merged[key]
+            m["timestamp_timezone_known"] = bool(m.get("timestamp_timezone_known", True) and e.get("timestamp_timezone_known", True))
             if src and src not in m["corroborated_by"]:
                 m["corroborated_by"].append(src)
             if (
@@ -717,7 +733,7 @@ def build_executive_summary(case_name: str, n_evidence: int, n_events: int,
     if first_seen and last_seen:
         p.append(f"Attack activity ran from {first_seen} to {last_seen} UTC (dwell time {dwell}).")
     if facts.get("initial_access"):
-        p.append(f"Likely initial access: {facts['initial_access']}.")
+        p.append(f"Email delivery evidence: {facts['initial_access']}.")
     p.append(f"{len(detections)} distinct detections ({crit} critical) span these tactics: "
              f"{', '.join(ordered) or 'none'}. "
              f"{len(hosts)} host(s) with matching findings ({', '.join(hosts) or 'none'}) and {len(users)} account(s) "

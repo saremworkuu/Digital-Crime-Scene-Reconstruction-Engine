@@ -16,8 +16,6 @@ import { INITIAL_SCENARIOS } from '../sample-data/scenarios';
 import { INITIAL_SIGMA_RULES } from '../sample-data/sigma-rules';
 import { computeSHA256 } from '../services/hasher';
 import { parseEvidenceContent } from '../services/parsers';
-import { evaluateRulesAgainstEvents } from '../services/detection';
-import { buildGraphFromEvents } from '../services/graphBuilder';
 import {
   casesApi,
   evidenceApi,
@@ -284,6 +282,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [events, setEvents] = useState<NormalizedEvent[]>(() => INITIAL_SCENARIOS.flatMap(s => s.events));
   const [rules, setRules] = useState<DetectionRule[]>(INITIAL_SIGMA_RULES);
   const [detections, setDetections] = useState<DetectionResult[]>(() => INITIAL_SCENARIOS.flatMap(s => s.detections));
+  const [caseGraph, setCaseGraph] = useState<AttackGraphData>({ nodes: [], edges: [] });
 
   // Audit Log store (Tamper-evident chain-of-custody) (FR-AUDIT-1..5)
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -339,15 +338,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const backendLogs: AuditLogEntry[] = auditRes.data.map((al: any) => ({
             id: String(al.id),
             user_id: String(al.user_id || 'system'),
-            user_name: al.username || 'System Administrator',
-            user_role: al.role || 'admin',
-            case_id: String(al.case_id || 'system'),
+            user_name: al.user_name || 'Unknown user',
+            user_role: al.user_role || 'unknown',
+            case_id: al.case_id ? String(al.case_id) : '',
             action: al.action as any,
-            target_type: (al.resource_type || 'system') as any,
-            target_id: String(al.resource_id || al.id),
+            target_type: (al.target_type || al.resource || 'system') as any,
+            target_id: String(al.target_id || al.id),
             timestamp: al.timestamp || new Date().toISOString(),
-            ip_address: al.ip_address || '127.0.0.1',
-            user_agent: al.user_agent || 'DCSRE-Web/1.0',
+            ip_address: al.ip_address || '',
+            user_agent: al.user_agent || '',
             details: al.details || {}
           }));
 
@@ -800,16 +799,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const severityVal = be.severity || be.details?.severity || (isSuspicious ? 'high' : 'medium');
             let hostVal = be.host || be.details?.host || be.details?.Computer;
             if (!hostVal && rawMsg) {
-              const hostMatch = rawMsg.match(/^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)/);
+              const hostMatch = rawMsg.match(/^(?:[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+([a-zA-Z0-9_\-\.]+)/);
               if (hostMatch) hostVal = hostMatch[1];
             }
-            if (!hostVal) hostVal = 'SRV-FILE-01';
+            if (!hostVal) hostVal = 'unknown_host';
 
             return {
               id: String(be.id),
               case_id: String(be.case_id || targetCaseId),
               evidence_id: String(be.evidence_id || ''),
               timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              timestamp_timezone_known: be.timestamp_timezone_known !== false,
               source_type: be.source_type || be.source || 'syslog',
               host: hostVal,
               user: be.user || be.details?.user || be.details?.username || 'unknown',
@@ -845,6 +845,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             rule_name: bd.rule_name || bd.title || 'Threat Finding',
             severity: bd.severity || 'high',
             mitre_technique: bd.mitre_technique || 'T1110',
+            mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
             mitre_tactic: bd.mitre_tactic || 'Execution',
             timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
             description: bd.description || 'Suspicious threat activity detected in case logs',
@@ -858,41 +859,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return [...others, ...backendDetections];
           });
         } else if (loadedEvents.length > 0) {
-          // Trigger backend detection or client evaluation
+          // Backend detections are the sole source for findings.
           try {
             await detectionsApi.run(targetCaseId);
             const refreshDets = await detectionsApi.listByCase(targetCaseId);
-            if (refreshDets?.data && Array.isArray(refreshDets.data) && refreshDets.data.length > 0) {
-              const backendDetections: DetectionResult[] = refreshDets.data.map((bd: any) => ({
+            const backendDetections: DetectionResult[] = (Array.isArray(refreshDets?.data) ? refreshDets.data : []).map((bd: any) => ({
                 id: String(bd.id),
                 case_id: String(bd.case_id || targetCaseId),
                 rule_id: String(bd.rule_id || 'rule-heuristic'),
                 rule_name: bd.rule_name || bd.title || 'Threat Finding',
                 severity: bd.severity || 'high',
                 mitre_technique: bd.mitre_technique || 'T1110',
+                mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
                 mitre_tactic: bd.mitre_tactic || 'Execution',
                 timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
                 description: bd.description || 'Suspicious threat activity detected in case logs',
                 matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
                 false_positive: Boolean(bd.false_positive || bd.is_false_positive),
                 entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
-              }));
-
-              setDetections(prev => {
-                const others = prev.filter(d => d.case_id !== targetCaseId);
-                return [...others, ...backendDetections];
-              });
-              return;
-            }
+            }));
+            setDetections(prev => [...prev.filter(d => d.case_id !== targetCaseId), ...backendDetections]);
           } catch {
-            // fallback
+            setDetections(prev => prev.filter(d => d.case_id !== targetCaseId));
           }
-
-          const clientDets = evaluateRulesAgainstEvents(rules, loadedEvents, targetCaseId);
-          setDetections(prev => {
-            const others = prev.filter(d => d.case_id !== targetCaseId);
-            return [...others, ...clientDets];
-          });
+        } else {
+          setDetections(prev => prev.filter(d => d.case_id !== targetCaseId));
         }
       } catch (err) {
         console.warn('Artifacts sync notice:', err);
@@ -901,7 +892,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     loadCaseArtifacts();
     return () => { isMounted = false; };
-  }, [effectiveCaseId, rules]);
+  }, [effectiveCaseId]);
 
   const activeCaseEvidence = useMemo(() => 
     evidenceList.filter(e => {
@@ -930,9 +921,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [detections, effectiveCaseId]
   );
 
-  const activeCaseGraph = useMemo(() => {
-    return buildGraphFromEvents(activeCaseEvents);
-  }, [activeCaseEvents]);
+  const activeCaseGraph = caseGraph;
+
+  useEffect(() => {
+    if (!effectiveCaseId || activeCaseEvents.length === 0) {
+      setCaseGraph({ nodes: [], edges: [] });
+      return;
+    }
+    let current = true;
+    graphApi.getCaseGraph(effectiveCaseId)
+      .then(response => {
+        if (current && response.data) setCaseGraph(response.data);
+      })
+      .catch(() => {
+        if (current) setCaseGraph({ nodes: [], edges: [] });
+      });
+    return () => { current = false; };
+  }, [effectiveCaseId, activeCaseEvents.length, activeCaseDetections.length]);
 
 
   // Recalculate Case summary metrics
@@ -1083,26 +1088,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (parseResult.events.length > 0) {
       setEvents(prev => [...parseResult.events, ...prev]);
       
-      // Run detection evaluation on newly added events (FR-DET-1)
-      const allCaseEvents = [...events.filter(e => e.case_id === targetCaseId), ...parseResult.events];
-      const newDetections = evaluateRulesAgainstEvents(rules, allCaseEvents, targetCaseId);
-      setDetections(prev => {
-        const existingCaseDets = prev.filter(d => d.case_id === targetCaseId);
-        const otherDetections = prev.filter(d => d.case_id !== targetCaseId);
-        // Preserve false_positive flags and reasons from prior detections
-        const mergedCaseDets = newDetections.map(nd => {
-          const matched = existingCaseDets.find(ed => ed.rule_id === nd.rule_id || ed.id === nd.id);
-          if (matched && matched.false_positive) {
-            return {
-              ...nd,
-              false_positive: true,
-              false_positive_reason: (matched as any).false_positive_reason || (nd as any).false_positive_reason
-            };
-          }
-          return nd;
-        });
-        return [...otherDetections, ...mergedCaseDets];
-      });
+      setDetections(prev => prev.filter(d => d.case_id !== targetCaseId));
     }
 
     logAuditAction('EVIDENCE_UPLOADED', 'evidence', evidenceId, {
@@ -1210,6 +1196,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             rule_name: bd.rule_name || bd.title || 'Threat Finding',
             severity: bd.severity || 'high',
             mitre_technique: bd.mitre_technique || 'T1110',
+            mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
             mitre_tactic: bd.mitre_tactic || bd.rule_information?.tactic || 'Execution',
             timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
             description: bd.description || 'Suspicious threat activity detected in case logs',
@@ -1343,27 +1330,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRules(prev => [newRule, ...prev]);
     logAuditAction('DETECTION_RULE_ADDED', 'system', newId, { name: ruleData.name });
 
-    // Re-evaluate on all events
-    const updatedRules = [newRule, ...rules];
-    cases.forEach(c => {
-      const cEvents = events.filter(e => e.case_id === c.id);
-      const newDets = evaluateRulesAgainstEvents(updatedRules, cEvents, c.id);
-      setDetections(prev => {
-        const others = prev.filter(d => d.case_id !== c.id);
-        return [...others, ...newDets];
-      });
-    });
+    // Rule evaluation and resulting findings remain backend-owned.
   };
 
   // Action: Reload Sigma Rules (FR-DET-1)
   const reloadSigmaRules = () => {
     cases.forEach(c => {
-      const cEvents = events.filter(e => e.case_id === c.id);
-      const newDets = evaluateRulesAgainstEvents(rules, cEvents, c.id);
-      setDetections(prev => {
-        const others = prev.filter(d => d.case_id !== c.id);
-        return [...others, ...newDets];
-      });
+      detectionsApi.run(c.id)
+        .then(() => detectionsApi.listByCase(c.id))
+        .then(result => {
+          const backendDetections: DetectionResult[] = (Array.isArray(result.data) ? result.data : []).map((bd: any) => ({
+            id: String(bd.id), case_id: String(bd.case_id || c.id), rule_id: String(bd.rule_id || 'rule-heuristic'),
+            rule_name: bd.rule_name || bd.title || 'Threat Finding', severity: bd.severity || 'high',
+            mitre_technique: bd.mitre_technique || 'T1110', mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
+            mitre_tactic: bd.mitre_tactic || 'Execution', timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+            description: bd.description || 'Suspicious threat activity detected in case logs', matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+            false_positive: Boolean(bd.false_positive || bd.is_false_positive), entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+          }));
+          setDetections(prev => [...prev.filter(d => d.case_id !== c.id), ...backendDetections]);
+        })
+        .catch(() => setDetections(prev => prev.filter(d => d.case_id !== c.id)));
     });
     logAuditAction('EVIDENCE_PARSED', 'system', 'rules_engine', { action: 'rules_reloaded' });
   };

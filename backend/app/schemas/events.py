@@ -12,6 +12,7 @@ class EventResponse(BaseModel):
     case_id: uuid.UUID
     evidence_id: uuid.UUID
     timestamp: datetime
+    timestamp_timezone_known: Optional[bool] = None
     event_type: str
     source: str
     details: dict[str, Any]
@@ -78,7 +79,11 @@ class EventResponse(BaseModel):
         src = d.get("source") or details.get("source") or "unknown"
         ev_type = d.get("event_type") or details.get("event_type") or "event"
 
-        # Host extraction per Stage 1
+        raw_extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+        raw_msg = str(details.get("raw_message") or details.get("raw") or details.get("original_log") or raw_extra.get("raw_message") or "")
+
+        # Host extraction per Stage 1. Structured text logs put the hostname
+        # after the timestamp, while syslog puts it after its month/day/time.
         host = (
             details.get("host")
             or details.get("Computer")
@@ -86,6 +91,8 @@ class EventResponse(BaseModel):
             or details.get("WorkstationName")
             or details.get("hostname")
         )
+        if str(host or "").casefold() in {"unknown", "unknown_host", "-"}:
+            host = None
         host_inferred = bool(details.get("host_inferred", False))
 
         if not host:
@@ -94,10 +101,14 @@ class EventResponse(BaseModel):
                 host = src_ip_cand
                 host_inferred = True
             else:
-                raw_msg = str(details.get("raw_message") or details.get("raw") or "")
+                iso_log_match = re.match(
+                    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+([a-zA-Z0-9_.-]+)(?:\s|$)",
+                    raw_msg,
+                )
                 syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
-                if syslog_match:
-                    host = syslog_match.group(1)
+                host_match = iso_log_match or syslog_match
+                if host_match:
+                    host = host_match.group(1)
                     host_inferred = False
                 else:
                     host = "unknown_host"
@@ -112,8 +123,31 @@ class EventResponse(BaseModel):
             or details.get("AccountName")
             or details.get("to")
         )
+        if user in (None, "unknown", "-"):
+            user_match = re.search(r"\buser(?:name)?=(?:\"([^\"]+)\"|([^\s]+))", raw_msg, re.IGNORECASE)
+            if user_match:
+                user = user_match.group(1) or user_match.group(2)
+            else:
+                recipient_match = re.search(r"\bto=<([^>]+)>", raw_msg, re.IGNORECASE)
+                if recipient_match:
+                    user = recipient_match.group(1)
+        extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+        domain = details.get("TargetDomainName") or details.get("domain") or extra.get("TargetDomainName") or extra.get("domain")
+        if user and domain and "\\" not in str(user) and "@" not in str(user) and str(user).casefold() not in {"system", "localsystem", "-"}:
+            user = f"{domain}\\{user}"
         if user == "-":
             user = None
+
+        # A parser may normalize an unzoned source timestamp to UTC for storage.
+        # Keep that assumption explicit for the investigator UI.
+        timestamp_timezone_known = True
+        raw_timestamp = re.search(
+            r"(?:^|\s)(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)",
+            raw_msg,
+        )
+        syslog_timestamp = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d{1,2}:\d{2}:\d{2}\s+", raw_msg)
+        if syslog_timestamp or (raw_timestamp and not re.search(r"(?:Z|[+-]\d{2}:?\d{2})$", raw_timestamp.group(1))):
+            timestamp_timezone_known = False
 
         # Action / summary line extraction per Stage 2
         action = (
@@ -125,6 +159,8 @@ class EventResponse(BaseModel):
             or ev_type
             or "System Event"
         )
+        if raw_msg and str(action).casefold() in {"text_log", "text_log on unknown_host", "event"}:
+            action = raw_msg
 
         # IP extraction
         src_ip = details.get("source_ip") or details.get("src_ip") or details.get("IpAddress") or details.get("SourceIp")
@@ -173,9 +209,10 @@ class EventResponse(BaseModel):
             for w in ["fail", "error", "attack", "malware", "shell", "sudo", "privilege", "brute", "inject", "drop", "unauthorized", "cvlk", "rclone", "psexec", "mimikatz", "vssadmin", "ntdsutil", "comsvcs"]
         )
         severity = details.get("severity") or ("high" if is_suspicious else "low")
-        raw = details.get("raw") or details.get("raw_message") or details.get("original_log") or str(details)
+        raw = details.get("raw") or details.get("raw_message") or details.get("original_log") or raw_msg or str(details)
 
         d["source_type"] = src
+        d["timestamp_timezone_known"] = timestamp_timezone_known
         d["host"] = host
         d["host_inferred"] = host_inferred
         d["source_file"] = details.get("source_file")

@@ -238,7 +238,7 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
 
                     <td className="py-2 px-3 font-mono text-[#d6d3d1] tabular-nums whitespace-nowrap">
 
-                      {evt.timestamp.replace('T', ' ').replace('Z', '')}
+                      {evt.timestamp.replace('T', ' ').replace('Z', '')}{evt.timestamp_timezone_known === false ? ' (timezone unspecified)' : ''}
 
                     </td>
 

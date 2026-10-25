@@ -10,6 +10,7 @@ export const AuditLog: React.FC = () => {
   const { auditLogs } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [actionFilter, setActionFilter] = useState('ALL');
+  const actionOptions = useMemo(() => [...new Set(auditLogs.map(log => log.action).filter(Boolean))].sort(), [auditLogs]);
 
   const filteredLogs = useMemo(() => {
     return auditLogs.filter(log => {
@@ -101,15 +102,7 @@ export const AuditLog: React.FC = () => {
             className="bg-[#0d0c0c] border border-[#2b2523] rounded-lg px-2.5 py-1 text-[#fafaf9] font-mono text-xs focus:outline-none focus:border-[#f95721] cursor-pointer"
           >
             <option value="ALL">All Actions</option>
-            <option value="EVIDENCE_UPLOADED">EVIDENCE_UPLOADED</option>
-            <option value="EVIDENCE_DOWNLOADED">EVIDENCE_DOWNLOADED</option>
-            <option value="EVIDENCE_PARSED">EVIDENCE_PARSED</option>
-            <option value="CASE_CREATED">CASE_CREATED</option>
-            <option value="CASE_STATUS_CHANGED">CASE_STATUS_CHANGED</option>
-            <option value="DETECTION_FP_TOGGLED">DETECTION_FP_TOGGLED</option>
-            <option value="REPORT_GENERATED">REPORT_GENERATED</option>
-            <option value="REPORT_EXPORTED">REPORT_EXPORTED</option>
-            <option value="USER_LOGIN">USER_LOGIN</option>
+            {actionOptions.map(action => <option key={action} value={action}>{action.replace(/[._]/g, ' ')}</option>)}
           </select>
         </div>
 

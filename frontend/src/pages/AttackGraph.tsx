@@ -24,7 +24,7 @@ export const AttackGraph: React.FC = () => {
 
   const compromisedUsers = activeCaseGraph.nodes.filter(n => n.type === 'user' && (n.is_compromised || n.is_attack_path));
 
-  const threatIps = activeCaseGraph.nodes.filter(n => n.type === 'ip' && (n.is_compromised || n.is_attack_path));
+  const threatIps = activeCaseGraph.nodes.filter(n => n.type === 'ip' && (n.role === 'external_ip' || n.role === 'adversary_infrastructure'));
 
 
 

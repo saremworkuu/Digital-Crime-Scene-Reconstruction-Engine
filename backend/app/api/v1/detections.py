@@ -1,7 +1,8 @@
 import uuid
 import json
+import re
 from typing import List, Optional
-from datetime import timezone
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from app.db.models.events import Event
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.detection import DetectionResponse, FalsePositiveRequest, DetectionRuleResponse
+from app.services.graph import extract_event_fields
 from app.services.detection import (
     detect_repeated_failed_logins,
     detect_failed_then_successful_login,
@@ -28,6 +30,7 @@ from app.services.detection import (
 )
 from app.services.rule_loader import load_all_rules
 from app.services.audit import log_audit_event
+from app.services.report_fixes import canonical_title, unique_users
 from app.core.permissions import get_authorized_case
 
 router = APIRouter()
@@ -50,24 +53,136 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
 
     rule_info = detection.rule_information or {}
     matched_events = db.execute(
-        select(Event.timestamp).where(
+        select(Event).where(
             Event.case_id == detection.case_id,
             Event.id.in_(event_ids),
         ).order_by(Event.timestamp.asc())
     ).scalars().all() if event_ids else []
-    event_time = matched_events[0] if matched_events else None
+    event_time = matched_events[0].timestamp if matched_events else None
     if event_time and event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
     ts_str = event_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if event_time else None
+    observed_hosts = set(rule_info.get("hosts") or [])
+    observed_hosts.update(value for value in (rule_info.get("host"), rule_info.get("target_host")) if value)
+    observed_hosts.update(
+        fields["host"] for fields in (extract_event_fields(event) for event in matched_events)
+        if fields.get("host") and fields["host"].casefold() not in {"unknown", "unknown_host", "-"}
+    )
+
+
+def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> List[dict]:
+    """Merge corroborating source findings only when their observed host scope matches."""
+    events_by_id = {str(event.id): event for event in events}
+
+    def context(finding: dict):
+        hosts = set()
+        timestamps = []
+        info = finding.get("rule_information") or {}
+        for value in (
+            finding.get("host"), finding.get("target_host"), info.get("host"),
+            info.get("target_host"), *(info.get("hosts") or []), *(info.get("target_hosts") or []),
+        ):
+            if value and str(value).casefold() not in {"unknown", "unknown_host", "-"}:
+                hosts.add(str(value).strip().casefold())
+        event_ids = {str(value) for value in (finding.get("matching_event_ids") or [])}
+        for event_id in event_ids:
+            event = events_by_id.get(event_id)
+            if event is None:
+                continue
+            fields = extract_event_fields(event)
+            host = fields.get("host") or fields.get("workstation")
+            if host and host.casefold() not in {"unknown", "unknown_host", "-"}:
+                hosts.add(host.strip().casefold())
+            if event.timestamp:
+                timestamp = event.timestamp
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                timestamps.append(timestamp.astimezone(timezone.utc))
+        words = {
+            word for word in re.findall(r"[a-z0-9]+", str(finding.get("rule_name") or "").casefold())
+            if word not in {"the", "via", "with", "or", "and", "of", "by", "from", "to", "a", "an"}
+        }
+        return hosts, timestamps, words, event_ids
+
+    merged: List[dict] = []
+    for finding in findings:
+        hosts, times, words, event_ids = context(finding)
+        technique = str(finding.get("mitre_technique") or "")
+        tactic = str(finding.get("mitre_tactic") or (finding.get("rule_information") or {}).get("tactic") or "")
+        title = canonical_title(finding.get("rule_name") or finding.get("rule_id")).casefold()
+
+        def is_same_behavior(existing: dict) -> bool:
+            old_hosts, old_times, old_words, old_ids = context(existing)
+            if not hosts or hosts != old_hosts:
+                return False
+            if title == canonical_title(existing.get("rule_name") or existing.get("rule_id")).casefold():
+                if event_ids & old_ids:
+                    return True
+                if times and old_times:
+                    return min(abs((left - right).total_seconds()) for left in times for right in old_times) <= 60
+            old_technique = str(existing.get("mitre_technique") or "")
+            old_tactic = str(existing.get("mitre_tactic") or (existing.get("rule_information") or {}).get("tactic") or "")
+            if not technique or technique != old_technique or tactic != old_tactic:
+                return False
+            if event_ids & old_ids:
+                return True
+            return bool(
+                times and old_times
+                and min(abs((left - right).total_seconds()) for left in times for right in old_times) <= 60
+                and len(words & old_words) >= 2
+            )
+
+        duplicate = next((item for item in merged if is_same_behavior(item)), None)
+        if duplicate is None:
+            finding["rule_information"] = dict(finding.get("rule_information") or {})
+            if hosts:
+                finding["rule_information"]["hosts"] = sorted(hosts)
+            merged.append(finding)
+            continue
+
+        duplicate_ids = set(map(str, duplicate.get("matching_event_ids") or [])) | event_ids
+        duplicate["matching_event_ids"] = sorted(duplicate_ids)
+        info = duplicate.setdefault("rule_information", {})
+        info["hosts"] = sorted(hosts)
+        incoming = finding.get("rule_information") or {}
+        techniques = info.setdefault("mitre_techniques_all", [duplicate.get("mitre_technique")] if duplicate.get("mitre_technique") else [])
+        for technique_id in incoming.get("mitre_techniques_all") or [finding.get("mitre_technique")]:
+            if technique_id and technique_id not in techniques:
+                techniques.append(technique_id)
+        duplicate["rule_name"] = canonical_title(duplicate.get("rule_name") or duplicate.get("rule_id"))
+        for key in ("source_file_references", "source_record_references", "attachment_names", "domains"):
+            values = info.get(key) or []
+            incoming_values = incoming.get(key) or []
+            if not isinstance(values, list): values = [values]
+            if not isinstance(incoming_values, list): incoming_values = [incoming_values]
+            if values or incoming_values:
+                info[key] = sorted({str(value) for value in values + incoming_values if value})
+        sources = info.setdefault("corroborating_rules", [])
+        for name in (finding.get("rule_name"), finding.get("rule_id")):
+            if name and name not in sources:
+                sources.append(str(name))
+        if _severity_rank(finding.get("severity")) > _severity_rank(duplicate.get("severity")):
+            duplicate["severity"] = finding.get("severity")
+    return merged
+    existing_entities = rule_info.get("entities") or {}
+    observed_users = unique_users([
+        *(existing_entities.get("users") or []),
+        *([rule_info.get("user")] if rule_info.get("user") else []),
+    ])
+    observed_ips = list(dict.fromkeys([
+        *(existing_entities.get("ips") or []),
+        *[value for value in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if value],
+    ]))
 
     return DetectionResponse(
         id=detection.id,
         case_id=detection.case_id,
         rule_id=detection.rule_id,
-        rule_name=detection.rule_name,
+        rule_name=canonical_title(detection.rule_name),
         severity=detection.severity,
         description=detection.description,
         mitre_technique=detection.mitre_technique or "T1110",
+        mitre_techniques_all=(rule_info.get("mitre_techniques_all") or [detection.mitre_technique] if detection.mitre_technique else []),
         mitre_tactic=rule_info.get("tactic") or ("Exfiltration" if detection.mitre_technique == "T1041" else "Execution"),
         rule_information=rule_info,
         is_false_positive=detection.is_false_positive,
@@ -77,11 +192,7 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         timestamp=ts_str,
         event_ids=event_ids,
         matched_event_ids=[str(eid) for eid in event_ids],
-        entities_involved=rule_info.get("entities", {
-            "hosts": [v for v in (rule_info.get("target_host"), rule_info.get("host")) if v],
-            "users": [rule_info["user"]] if rule_info.get("user") else [],
-            "ips": [v for v in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if v],
-        }),
+        entities_involved={**existing_entities, "hosts": sorted(observed_hosts), "users": observed_users, "ips": observed_ips},
     )
 
 
@@ -105,7 +216,11 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
     old_rows = db.execute(select(Detection).where(Detection.case_id == case_id)).scalars().all()
     old_review = {}
     for row in old_rows:
-        linked = set(db.execute(select(DetectionEvent.event_id).where(DetectionEvent.detection_id == row.id)).scalars().all()) & valid_ids
+        linked = set(db.execute(
+            select(DetectionEvent.event_id)
+            .join(Event, Event.id == DetectionEvent.event_id)
+            .where(DetectionEvent.detection_id == row.id, Event.case_id == case_id)
+        ).scalars().all()) & valid_ids
         signature = (row.rule_id, row.description, tuple(sorted(map(str, linked))))
         old_review[signature] = (row.is_false_positive, dict(row.rule_information or {}))
     if old_rows:
@@ -139,38 +254,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         except Exception:
             pass
 
-    # Collapse overlapping rules that describe the same ATT&CK technique on
-    # the same evidence event. Preserve the supporting rule names as sources.
-    coalesced: List[dict] = []
-    for finding in findings:
-        event_ids = {str(value) for value in (finding.get("matching_event_ids") or [])}
-        technique = str(finding.get("mitre_technique") or "")
-        tactic = str(finding.get("mitre_tactic") or (finding.get("rule_information") or {}).get("tactic") or "")
-        duplicate = next((existing for existing in coalesced
-                          if technique and technique == str(existing.get("mitre_technique") or "")
-                          and tactic == str(existing.get("mitre_tactic") or (existing.get("rule_information") or {}).get("tactic") or "")
-                          and event_ids & {str(value) for value in (existing.get("matching_event_ids") or [])}), None)
-        if duplicate is None:
-            coalesced.append(finding)
-            continue
-        duplicate_ids = {str(value) for value in (duplicate.get("matching_event_ids") or [])} | event_ids
-        duplicate["matching_event_ids"] = sorted(duplicate_ids)
-        duplicate_info = duplicate.setdefault("rule_information", {})
-        incoming_info = finding.get("rule_information") or {}
-        for key in ("source_file_references", "source_record_references", "attachment_names", "domains"):
-            values = duplicate_info.get(key) or []
-            incoming = incoming_info.get(key) or []
-            if not isinstance(values, list): values = [values]
-            if not isinstance(incoming, list): incoming = [incoming]
-            if values or incoming:
-                duplicate_info[key] = sorted({str(value) for value in values + incoming if value})
-        sources = duplicate_info.setdefault("corroborating_rules", [])
-        for rule_name in (finding.get("rule_name"), finding.get("rule_id")):
-            if rule_name and rule_name not in sources:
-                sources.append(str(rule_name))
-        if _severity_rank(finding.get("severity")) > _severity_rank(duplicate.get("severity")):
-            duplicate["severity"] = finding.get("severity")
-    findings = coalesced
+    findings = _coalesce_findings_by_host(findings, events)
 
     saved_detections = []
     for finding in findings:

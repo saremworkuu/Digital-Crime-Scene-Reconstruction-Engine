@@ -15,6 +15,7 @@ class DetectionResponse(BaseModel):
     severity: DetectionSeverity
     description: str
     mitre_technique: Optional[str] = None
+    mitre_techniques_all: List[str] = Field(default_factory=list)
     mitre_tactic: Optional[str] = "Execution"
     rule_information: Optional[dict[str, Any]] = None
     is_false_positive: bool = False

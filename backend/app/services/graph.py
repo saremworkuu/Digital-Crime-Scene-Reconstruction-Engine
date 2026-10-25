@@ -6,6 +6,7 @@
 # - Victim/compromised highlight only on target hosts confirmed by findings.
 # - One node per entity; no duplicate HOST and EXT for the same address.
 import re
+import ipaddress
 from typing import Any, Dict, List, Set, Tuple
 from app.services.entity_classification import is_internal_ip
 from app.services.report_fixes import norm_user, format_user
@@ -14,6 +15,14 @@ from app.services.report_fixes import norm_user, format_user
 def is_private_ip(ip_str: str) -> bool:
     """Returns True if the given IP address is private (RFC 1918 / loopback)."""
     return is_internal_ip(ip_str)
+
+
+def _is_ip_address(value: Any) -> bool:
+    try:
+        ipaddress.ip_address(str(value).strip())
+        return True
+    except ValueError:
+        return False
 
 
 def extract_event_fields(event: Any) -> Dict[str, Any]:
@@ -31,13 +40,18 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
         or details.get("WorkstationName")
         or details.get("hostname")
     )
+    if str(host or "").casefold() in {"unknown", "unknown_host", "-"}:
+        host = None
     workstation = details.get("WorkstationName")
 
-    raw_msg = str(details.get("raw_message") or details.get("raw") or "")
+    raw_extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+    raw_msg = str(details.get("raw_message") or details.get("raw") or raw_extra.get("raw_message") or "")
     if not host:
+        iso_log_match = re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+([A-Za-z0-9_.-]+)", raw_msg)
         syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
-        if syslog_match:
-            host = syslog_match.group(1)
+        host_match = iso_log_match or syslog_match
+        if host_match:
+            host = host_match.group(1)
 
     user = (
         (event.get("user") if is_dict else getattr(event, "user", None))
@@ -46,6 +60,18 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
         or details.get("TargetUserName")
         or details.get("SubjectUserName")
     )
+    if not user or user in ("unknown", "-"):
+        user_match = re.search(r"\buser(?:name)?=(?:\"([^\"]+)\"|([^\s]+))", raw_msg, re.IGNORECASE)
+        if user_match:
+            user = user_match.group(1) or user_match.group(2)
+        else:
+            recipient_match = re.search(r"\bto=<([^>]+)>", raw_msg, re.IGNORECASE)
+            if recipient_match:
+                user = recipient_match.group(1)
+    extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+    domain = details.get("TargetDomainName") or details.get("domain") or extra.get("TargetDomainName") or extra.get("domain")
+    if user and domain and "\\" not in str(user) and "@" not in str(user) and str(user).casefold() not in {"system", "localsystem", "-"}:
+        user = f"{domain}\\{user}"
     if user in ("SYSTEM", "unknown", "-", ""):
         user = None
 
@@ -124,18 +150,36 @@ def build_attack_graph(
     ip_to_host: Dict[str, str] = {}
 
     extracted_events = [extract_event_fields(e) for e in events]
+    observed_domains: Dict[str, Set[str]] = {}
+    for evt in extracted_events:
+        user = evt["user"] or ""
+        if "\\" in user:
+            domain, username = user.split("\\", 1)
+            observed_domains.setdefault(username.casefold(), set()).add(domain)
+        elif "@" in user:
+            username, domain = user.split("@", 1)
+            observed_domains.setdefault(username.casefold(), set()).add(domain.split(".", 1)[0])
+    for evt in extracted_events:
+        user = evt["user"] or ""
+        if "\\" not in user and "@" not in user:
+            domains = observed_domains.get(user.casefold(), set())
+            if len(domains) == 1:
+                evt["user"] = f"{next(iter(domains))}\\{user}"
 
     # B2 Pass 1: Build IP-to-host mapping from evidence records containing both.
     # No pre-seeded hardcoded map — only what's in the evidence.
+    ip_host_candidates: Dict[str, Dict[str, int]] = {}
     for evt in extracted_events:
-        h = evt["host"] or evt["workstation"]
-        if h and evt["src_ip"] and is_private_ip(evt["src_ip"]):
-            ip_to_host[evt["src_ip"]] = h
-        # Also check dst_ip → host when the host is clearly internal
-        if h and evt["dst_ip"] and is_private_ip(evt["dst_ip"]):
-            # Only map if the event's host matches what we'd expect for the dst
-            if h not in ip_to_host.values():
-                ip_to_host.setdefault(evt["dst_ip"], h)
+        h = evt["workstation"] or evt["host"]
+        ip = evt["src_ip"]
+        if h and not _is_ip_address(h) and ip and is_private_ip(ip):
+            candidates = ip_host_candidates.setdefault(ip, {})
+            candidates[h] = candidates.get(h, 0) + (4 if evt["workstation"] else 1)
+    for ip, candidates in ip_host_candidates.items():
+        best = max(candidates.values())
+        winners = [host for host, score in candidates.items() if score == best]
+        if len(winners) == 1:
+            ip_to_host[ip] = winners[0]
 
     # B3: Determine adversary infrastructure and compromised hosts from findings
     adversary_ips: Set[str] = set()
@@ -159,6 +203,10 @@ def build_attack_graph(
 
         # Resolve host (merge private IP into host if evidence-derived mapping exists)
         effective_host = evt["host"]
+        if effective_host and _is_ip_address(effective_host):
+            effective_host = ip_to_host.get(effective_host) if is_private_ip(effective_host) else None
+        if effective_host is None and evt["workstation"] and not _is_ip_address(evt["workstation"]):
+            effective_host = evt["workstation"]
         if not effective_host and evt["src_ip"] and evt["src_ip"] in ip_to_host:
             effective_host = ip_to_host[evt["src_ip"]]
 
@@ -252,7 +300,7 @@ def build_attack_graph(
                 # B3: adversary role from findings, not from is_attack alone
                 is_adversary = src_ip in adversary_ips
                 src_node_id = f"ip-{src_ip}"
-                node_type = "host" if is_priv else "external_ip"
+                node_type = "ip"
                 node_role = "adversary_infrastructure" if is_adversary else ("internal_host" if is_priv else "external_ip")
                 if src_node_id not in nodes_map:
                     nodes_map[src_node_id] = {
@@ -287,7 +335,7 @@ def build_attack_graph(
                 is_priv = is_private_ip(dst_ip)
                 is_adversary_dst = dst_ip in adversary_ips
                 dst_node_id = f"ip-{dst_ip}"
-                node_type = "host" if is_priv else "external_ip"
+                node_type = "ip"
                 node_role = "adversary_infrastructure" if is_adversary_dst else ("internal_host" if is_priv else "external_ip")
                 if dst_node_id not in nodes_map:
                     nodes_map[dst_node_id] = {
