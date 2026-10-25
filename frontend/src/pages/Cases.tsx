@@ -181,10 +181,10 @@ export const Cases: React.FC = () => {
             type="button"
             onClick={resetToInitialScenarios}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#2b2523] bg-[#0d0c0c] hover:bg-[#1a1715] text-[#a8a29e] hover:text-[#f95721] text-xs font-mono transition-colors cursor-pointer"
-            title="Reset cases to default reference mock scenario (1 case)"
+            title="Clear the active workspace and start a new investigation"
           >
             <RefreshCw className="w-3 h-3 text-[#f95721]" />
-            <span>Reset Reference Case</span>
+            <span>Clear Workspace</span>
           </button>
         </div>
 

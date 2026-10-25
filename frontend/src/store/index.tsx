@@ -12,7 +12,6 @@ import {
   ParserType,
   CaseStatus
 } from '../types';
-import { INITIAL_SCENARIOS } from '../sample-data/scenarios';
 import { INITIAL_SIGMA_RULES } from '../sample-data/sigma-rules';
 import { computeSHA256 } from '../services/hasher';
 import { parseEvidenceContent } from '../services/parsers';
@@ -93,7 +92,7 @@ interface AppContextType {
   deleteCase: (caseId: string) => void;
   uploadEvidence: (caseId: string, file: File, parserType?: ParserType) => Promise<EvidenceFile>;
   reparseEvidence: (evidenceId: string, parserType: ParserType) => void;
-  deleteEvidence: (evidenceId: string) => void;
+  deleteEvidence: (evidenceId: string) => Promise<boolean>;
   toggleFalsePositive: (detectionId: string, reason?: string) => void;
   addSigmaRule: (rule: Omit<DetectionRule, 'id'>) => void;
   reloadSigmaRules: () => void;
@@ -109,7 +108,7 @@ interface AppContextType {
     password?: string;
     pgpKey?: string;
   }) => { success: boolean; message: string; user?: User };
-  loginUser: (email: string, password?: string) => { success: boolean; message: string; user?: User };
+  loginUser: (email: string, password?: string, backendUser?: User) => { success: boolean; message: string; user?: User };
   logout: () => void;
   updateCurrentUserProfile: (updates: {
     name?: string;
@@ -176,12 +175,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (typeof window !== 'undefined') {
         const savedUser = localStorage.getItem('dcsre_auth_user');
         const savedToken = localStorage.getItem('dcsre_access_token') || localStorage.getItem('token');
-        if (savedUser) {
+        if (savedUser && savedToken && savedToken !== 'null' && savedToken !== 'undefined') {
           const parsed = JSON.parse(savedUser);
-          if (savedToken) {
-            apiClient.setToken(savedToken);
-          }
+          apiClient.setToken(savedToken);
           return parsed;
+        }
+        if (savedUser && !savedToken) {
+          localStorage.removeItem('dcsre_auth_user');
         }
       }
     } catch {
@@ -207,6 +207,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // ignore
     }
   };
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      setCurrentUserState(null);
+      setCurrentPage('login');
+      setAuthNotice('Your secure session expired. Please sign in again.');
+      try {
+        localStorage.removeItem('dcsre_auth_user');
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('dcsre:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('dcsre:session-expired', handleSessionExpired);
+  }, []);
 
   // Theme State: 'dark' | 'light' with persistent localStorage
   const [theme, setThemeState] = useState<'dark' | 'light'>(() => {
@@ -276,12 +292,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [activeCaseId, setActiveCaseId] = useState<string>('');
 
-  // Core Data Stores with Initial Mock Scenario (1 baseline reference scenario: Cobalt Shadow)
-  const [cases, setCases] = useState<Case[]>(() => INITIAL_SCENARIOS.map(s => s.caseData));
-  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>(() => INITIAL_SCENARIOS.flatMap(s => s.evidenceFiles));
-  const [events, setEvents] = useState<NormalizedEvent[]>(() => INITIAL_SCENARIOS.flatMap(s => s.events));
+  // Start with no selected case data. The signed-in user's backend cases are
+  // loaded immediately after authentication; sample data is only available via
+  // the explicit reset action.
+  const [cases, setCases] = useState<Case[]>([]);
+  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>([]);
+  const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [rules, setRules] = useState<DetectionRule[]>(INITIAL_SIGMA_RULES);
-  const [detections, setDetections] = useState<DetectionResult[]>(() => INITIAL_SCENARIOS.flatMap(s => s.detections));
+  const [detections, setDetections] = useState<DetectionResult[]>([]);
   const [caseGraph, setCaseGraph] = useState<AttackGraphData>({ nodes: [], edges: [] });
 
   // Audit Log store (Tamper-evident chain-of-custody) (FR-AUDIT-1..5)
@@ -298,7 +316,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           auditApi.list()
         ]);
 
-        if (casesRes.data && Array.isArray(casesRes.data) && casesRes.data.length > 0) {
+        if (Array.isArray(casesRes.data)) {
           const backendCases: Case[] = casesRes.data.map((bc: any) => ({
             id: String(bc.id),
             name: bc.name,
@@ -316,25 +334,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             tags: bc.tags || []
           }));
 
-          setCases(prev => {
-            const backendIds = new Set(backendCases.map(c => c.id));
-            const mockRemaining = prev.filter(c => !backendIds.has(c.id)).slice(0, 1);
-            return [...backendCases, ...mockRemaining];
-          });
+          // A successful backend response is authoritative, including an empty
+          // list. Keeping the demo case here can make uploads target a case ID
+          // that does not exist in the database.
+          setCases(backendCases);
 
           setActiveCaseId(prev => {
-            if (!prev || !backendCases.some(c => c.id === prev)) {
-              return backendCases[0].id;
-            }
-            return prev;
+            // Do not open an older case automatically after sign-in. The user
+            // can select a case or upload evidence to create a new one.
+            return prev && backendCases.some(c => c.id === prev) ? prev : '';
           });
         }
 
-        if (rulesRes.data && Array.isArray(rulesRes.data) && rulesRes.data.length > 0) {
+        if (Array.isArray(rulesRes.data)) {
           setRules(rulesRes.data);
         }
 
-        if (auditRes.data && Array.isArray(auditRes.data) && auditRes.data.length > 0) {
+        if (Array.isArray(auditRes.data)) {
           const backendLogs: AuditLogEntry[] = auditRes.data.map((al: any) => ({
             id: String(al.id),
             user_id: String(al.user_id || 'system'),
@@ -350,10 +366,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             details: al.details || {}
           }));
 
-          setAuditLogs(prev => {
-            const logIds = new Set(prev.map(l => l.id));
-            return [...prev, ...backendLogs.filter(l => !logIds.has(l.id))];
-          });
+          setAuditLogs(backendLogs);
         }
       } catch (e) {
         console.warn('Backend sync notice (offline or demo mode):', e);
@@ -452,21 +465,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('Failed to persist users to localStorage', e);
     }
 
-    // Persist to backend database if reachable
-    authApi.register({
-      name: newUser.name,
-      email: newUser.email,
-      password: userData.password || 'Forensic#Auth2026',
-      role: newUser.role,
-      department: newUser.department,
-      badge_id: newUser.badgeId
-    }).then(res => {
-      const tokenString = res?.data?.token || (res?.data as any)?.access_token;
-      if (tokenString) {
-        apiClient.setToken(tokenString);
-      }
-    }).catch(err => console.warn('Backend live registration notice:', err));
-
     // Tamper-evident Audit logging
     logAuditAction(
       'USER_REGISTERED',
@@ -499,7 +497,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  const loginUser = (email: string, password?: string) => {
+  const loginUser = (email: string, password?: string, backendUser?: User) => {
     const normalizedInput = email.trim().toLowerCase();
     const isAdminIdentifier =
       normalizedInput === 'admin' ||
@@ -519,7 +517,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       normalizedInput === 'chen' ||
       normalizedInput === 'sarah chen';
 
-    let matched = users.find(u => 
+    let matched = backendUser || users.find(u => 
       u.email.toLowerCase() === normalizedInput ||
       u.name.toLowerCase() === normalizedInput ||
       (isAdminIdentifier && u.role === 'admin') ||
@@ -527,11 +525,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     );
 
     // If identifier is an admin username/email, reliably authenticate with the admin persona
-    if (!matched && isAdminIdentifier) {
+    if (!matched && !backendUser && isAdminIdentifier) {
       matched = DEMO_USERS.find(u => u.role === 'admin') || DEMO_USERS[0];
     }
     // If identifier is an investigator username/email, reliably authenticate with the investigator persona
-    if (!matched && isInvestigatorIdentifier) {
+    if (!matched && !backendUser && isInvestigatorIdentifier) {
       matched = DEMO_USERS.find(u => u.role === 'investigator') || DEMO_USERS[1];
     }
 
@@ -543,7 +541,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // Verify password if provided
-    if (password && password !== '••••••••••••') {
+    if (!backendUser && password && password !== '••••••••••••') {
       if (matched.role === 'admin') {
         const isAdminPass =
           password === matched.password ||
@@ -581,25 +579,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setCurrentUser(matched);
 
-    // Acquire live JWT token from backend API asynchronously
-    const effectivePass = password && password !== '••••••••••••'
-      ? password
-      : (matched.role === 'admin' ? 'Admin@2026!' : 'Investigator@2026!');
-
-    authApi.login(matched.email, effectivePass).then(res => {
-      const token = res.data?.token || (res.data as any)?.access_token;
-      if (token) {
-        apiClient.setToken(token);
-        try {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('dcsre_access_token', token);
-            localStorage.setItem('token', token);
-          }
-        } catch {}
-      }
-    }).catch(err => {
-      console.warn('Backend login token acquisition notice:', err);
-    });
     logAuditAction(
       'USER_LOGIN',
       'user',
@@ -741,7 +720,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Active Case Data Subsets
-  const activeCase = useMemo(() => cases.find(c => c.id === activeCaseId) || cases[0], [cases, activeCaseId]);
+  // Keep the user's selected case stable. Falling back to the first case can
+  // silently switch an investigation after a refresh or a tab change.
+  const activeCase = useMemo(() => cases.find(c => c.id === activeCaseId), [cases, activeCaseId]);
   const effectiveCaseId = activeCase?.id || activeCaseId;
 
   // Automatically fetch evidence files, normalized events, and detections for effective case
@@ -754,14 +735,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const loadCaseArtifacts = async () => {
       try {
         const [evidRes, evtsRes, detsRes] = await Promise.all([
-          evidenceApi.listByCase(targetCaseId).catch(() => ({ data: [] })),
-          eventsApi.listByCase(targetCaseId).catch(() => ({ data: [] })),
-          detectionsApi.listByCase(targetCaseId).catch(() => ({ data: [] }))
+          evidenceApi.listByCase(targetCaseId),
+          eventsApi.listByCase(targetCaseId),
+          detectionsApi.listByCase(targetCaseId)
         ]);
 
         if (!isMounted) return;
 
-        if (evidRes?.data && Array.isArray(evidRes.data) && evidRes.data.length > 0) {
+        if (Array.isArray(evidRes?.data)) {
           const backendEvidence: EvidenceFile[] = evidRes.data.map((be: any) => ({
             id: String(be.id),
             case_id: String(be.case_id || targetCaseId),
@@ -785,7 +766,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
 
         let loadedEvents: NormalizedEvent[] = [];
-        if (evtsRes?.data && Array.isArray(evtsRes.data) && evtsRes.data.length > 0) {
+        if (Array.isArray(evtsRes?.data)) {
           loadedEvents = evtsRes.data.map((be: any) => {
             const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
             const actionText = be.action || be.details?.action || be.details?.message || rawMsg || be.event_type || 'Event';
@@ -831,13 +812,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             };
           });
 
-          setEvents(prev => {
-            const others = prev.filter(e => e.case_id !== targetCaseId);
-            return [...others, ...loadedEvents];
-          });
+          setEvents(prev => [
+            ...prev.filter(e => e.case_id !== targetCaseId),
+            ...loadedEvents
+          ]);
         }
 
-        if (detsRes?.data && Array.isArray(detsRes.data) && detsRes.data.length > 0) {
+        if (Array.isArray(detsRes?.data)) {
           const backendDetections: DetectionResult[] = detsRes.data.map((bd: any) => ({
             id: String(bd.id),
             case_id: String(bd.case_id || targetCaseId),
@@ -896,7 +877,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const activeCaseEvidence = useMemo(() => 
     evidenceList.filter(e => {
-      if (!effectiveCaseId) return true;
+      if (!effectiveCaseId) return false;
       const cid = String(e.case_id || e.caseId || '').toLowerCase();
       return cid === effectiveCaseId.toLowerCase();
     }), 
@@ -905,7 +886,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   
   const activeCaseEvents = useMemo(() => 
     events.filter(e => {
-      if (!effectiveCaseId) return true;
+      if (!effectiveCaseId) return false;
       const cid = String(e.case_id || e.caseId || '').toLowerCase();
       return cid === effectiveCaseId.toLowerCase();
     }), 
@@ -914,7 +895,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   
   const activeCaseDetections = useMemo(() => 
     detections.filter(d => {
-      if (!effectiveCaseId) return true;
+      if (!effectiveCaseId) return false;
       const cid = String(d.case_id || d.caseId || '').toLowerCase();
       return cid === effectiveCaseId.toLowerCase();
     }), 
@@ -979,16 +960,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setCases(prev => [newCase, ...prev]);
+    // New cases always start with clean case-scoped data, even if the generated
+    // local ID happens to collide with stale demo or session state.
+    setEvidenceList(prev => prev.filter(item => item.case_id !== newId));
+    setEvents(prev => prev.filter(item => item.case_id !== newId));
+    setDetections(prev => prev.filter(item => item.case_id !== newId));
     setActiveCaseId(newId);
     logAuditAction('CASE_CREATED', 'case', newId, { name, tags });
 
     // Persist to FastAPI Backend Database
     casesApi.create({ name, description, tags }).then(res => {
       if (res.data?.id) {
-        setCases(prev => prev.map(c => c.id === newId ? { ...c, id: String(res.data!.id) } : c));
-        if (activeCaseId === newId) {
-          setActiveCaseId(String(res.data.id));
-        }
+        const backendId = String(res.data.id);
+        setCases(prev => prev.map(c => c.id === newId ? { ...c, id: backendId } : c));
+        setActiveCaseId(current => current === newId ? backendId : current);
       }
     }).catch(err => console.warn('Backend case creation notice:', err));
 
@@ -1029,16 +1014,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const uploadEvidence = async (caseId: string, file: File, parserTypeOverride?: ParserType): Promise<EvidenceFile> => {
     let targetCaseId = caseId || effectiveCaseId;
     if (!targetCaseId) {
-      if (cases.length > 0) {
-        targetCaseId = cases[0].id;
-        setActiveCaseId(targetCaseId);
-      } else {
-        targetCaseId = createCase(`Investigation ${new Date().toISOString().slice(0, 10)}`, 'Primary digital investigation case');
+      const name = `Investigation ${new Date().toISOString().slice(0, 10)}`;
+      const description = 'Primary digital investigation case';
+      const created = await casesApi.create({ name, description });
+      if (!created.data?.id) {
+        throw new Error(created.error || 'Create an investigation case before uploading evidence.');
       }
+      targetCaseId = String(created.data.id);
+      const newCase: Case = {
+        id: targetCaseId,
+        name: created.data.name || name,
+        description: created.data.description || description,
+        status: 'Open',
+        created_at: created.data.created_at || new Date().toISOString(),
+        updated_at: created.data.updated_at || new Date().toISOString(),
+        owner_id: String(created.data.created_by || currentUser?.id || ''),
+        owner_name: currentUser?.name || 'Forensics Examiner',
+        assigned_users: [currentUser?.name || 'Forensics Examiner'],
+        evidence_count: 0,
+        event_count: 0,
+        detection_count: 0,
+        critical_detection_count: 0,
+        tags: []
+      };
+      setCases(prev => [newCase, ...prev]);
+      setActiveCaseId(targetCaseId);
+      logAuditAction('CASE_CREATED', 'case', targetCaseId, { name });
     }
 
-    const evidenceId = `ev-${Date.now()}`;
-    
     // Auto-detect parser if not explicitly overridden (FR-PARSE-9)
     let detectedParser: ParserType = parserTypeOverride || 'generic_json_csv';
     const lowerName = file.name.toLowerCase();
@@ -1058,72 +1061,47 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       detectedParser = 'pcap_summary';
     }
 
-    // Compute cryptographic SHA-256 (FR-EVID-2)
     const fileHash = await computeSHA256(file);
-    const contentText = await file.text();
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('file_type', detectedParser);
+    formData.append('description', `Forensic artifact ${file.name}`);
 
-    // Parse content locally
-    const parseResult = parseEvidenceContent(contentText, detectedParser, targetCaseId, evidenceId);
-
-    const newEvidence: EvidenceFile = {
-      id: evidenceId,
-      case_id: targetCaseId,
-      filename: file.name,
-      file_type: detectedParser,
-      size_bytes: file.size,
-      sha256_hash: fileHash,
-      uploaded_at: new Date().toISOString(),
-      uploader_name: currentUser?.name || 'Forensics Examiner',
-      uploader_id: currentUser?.id || 'usr-admin',
-
-      status: parseResult.errors.length > 0 && parseResult.events.length === 0 ? 'Failed' : 'Parsed',
-      parser_used: detectedParser,
-      parse_errors: parseResult.errors.length > 0 ? parseResult.errors : undefined,
-      event_count: parseResult.events.length,
-      raw_sample: contentText.slice(0, 500)
+    // Only show an upload after the configured backend confirms it persisted.
+    const backendEvid = await evidenceApi.upload(targetCaseId, formData);
+    if (!backendEvid?.id) throw new Error('The backend did not confirm the evidence upload.');
+    const resolvedCaseId = String(backendEvid.case_id || targetCaseId);
+    setActiveCaseId(resolvedCaseId);
+    const savedEvidence: EvidenceFile = {
+      id: String(backendEvid.id),
+      case_id: resolvedCaseId,
+      filename: backendEvid.filename || file.name,
+      file_type: backendEvid.file_type || detectedParser,
+      size_bytes: backendEvid.size_bytes ?? backendEvid.file_size ?? file.size,
+      sha256_hash: backendEvid.sha256_hash || fileHash,
+      uploaded_at: backendEvid.uploaded_at || new Date().toISOString(),
+      uploader_name: backendEvid.uploader_name || currentUser?.name || 'Forensics Examiner',
+      uploader_id: String(backendEvid.uploaded_by || backendEvid.uploader_id || currentUser?.id || ''),
+      status: backendEvid.status || (backendEvid.parsing_status === 'parsed' ? 'Parsed' : 'Failed'),
+      parser_used: backendEvid.parser_used || detectedParser,
+      event_count: backendEvid.event_count ?? 0,
+      raw_sample: backendEvid.raw_sample || ''
     };
-
-    setEvidenceList(prev => [newEvidence, ...prev]);
-    
-    if (parseResult.events.length > 0) {
-      setEvents(prev => [...parseResult.events, ...prev]);
-      
-      setDetections(prev => prev.filter(d => d.case_id !== targetCaseId));
-    }
-
-    logAuditAction('EVIDENCE_UPLOADED', 'evidence', evidenceId, {
-      filename: file.name,
-      sha256: fileHash,
-      events_extracted: parseResult.events.length,
-      parser: detectedParser
+    setEvidenceList(prev => [savedEvidence, ...prev.filter(ev => ev.id !== savedEvidence.id)]);
+    logAuditAction('EVIDENCE_UPLOADED', 'evidence', savedEvidence.id, {
+      filename: savedEvidence.filename,
+      sha256: savedEvidence.sha256_hash,
+      events_extracted: savedEvidence.event_count,
+      parser: savedEvidence.parser_used
     });
 
-    // Ingest via FastAPI Backend API if reachable
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('file_type', detectedParser);
-      formData.append('description', `Forensic artifact ${file.name}`);
-
-      const backendEvid = await evidenceApi.upload(targetCaseId, formData);
-      if (backendEvid?.id) {
-        const resolvedCaseId = backendEvid.case_id ? String(backendEvid.case_id) : targetCaseId;
-        setEvidenceList(prev => prev.map(ev => ev.id === evidenceId ? {
-          ...ev,
-          id: String(backendEvid.id),
-          case_id: resolvedCaseId,
-          status: backendEvid.status || (backendEvid.parsing_status === 'parsed' ? 'Parsed' : ev.status),
-          parser_used: backendEvid.parser_used || ev.parser_used,
-          event_count: backendEvid.event_count || ev.event_count,
-          raw_sample: backendEvid.raw_sample || ev.raw_sample
-        } : ev));
-
         // Sync database normalized events and detections
         const [evtsRes, detsRes] = await Promise.all([
           eventsApi.listByCase(resolvedCaseId),
           detectionsApi.listByCase(resolvedCaseId)
         ]);
-        if (evtsRes.data && Array.isArray(evtsRes.data) && evtsRes.data.length > 0) {
+        if (Array.isArray(evtsRes.data)) {
           const loadedEvents: NormalizedEvent[] = evtsRes.data.map((be: any) => {
             const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
             const actionText = be.action || be.details?.action || be.details?.message || rawMsg || be.event_type || 'Event';
@@ -1186,9 +1164,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             };
           });
 
-          setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== targetCaseId)]);
+          setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== resolvedCaseId)]);
         }
-        if (detsRes.data && Array.isArray(detsRes.data) && detsRes.data.length > 0) {
+        if (Array.isArray(detsRes.data)) {
           const backendDetections: DetectionResult[] = detsRes.data.map((bd: any) => ({
             id: String(bd.id),
             case_id: String(bd.case_id || targetCaseId),
@@ -1210,14 +1188,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             rule_information: bd.rule_information || {},
             entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
           }));
-          setDetections(prev => [...backendDetections, ...prev.filter(d => d.case_id !== targetCaseId)]);
+          setDetections(prev => [...backendDetections, ...prev.filter(d => d.case_id !== resolvedCaseId)]);
         }
-      }
-    } catch (apiErr) {
-      console.warn('Backend API upload notice (falling back to client parsing):', apiErr);
+    } catch (syncError) {
+      console.warn('Evidence was saved, but its case data could not be refreshed:', syncError);
     }
 
-    return newEvidence;
+    return savedEvidence;
   };
 
   // Action: Reparse Evidence (FR-PARSE-9)
@@ -1292,11 +1269,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Action: Delete Evidence (FR-EVID-9)
-  const deleteEvidence = (evidenceId: string) => {
+  const deleteEvidence = async (evidenceId: string): Promise<boolean> => {
+    const isBackendId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(evidenceId);
+    if (isBackendId) {
+      const response = await evidenceApi.delete(evidenceId);
+      if (response.error) {
+        toast.error(`Could not delete evidence: ${response.error}`);
+        return false;
+      }
+    }
+
     setEvidenceList(prev => prev.filter(e => e.id !== evidenceId));
     setEvents(prev => prev.filter(evt => evt.evidence_id !== evidenceId));
     logAuditAction('EVIDENCE_DELETED', 'evidence', evidenceId);
-    evidenceApi.delete(evidenceId).catch(err => console.warn('Backend delete evidence notice:', err));
+    toast.success('Evidence file deleted.');
+    return true;
   };
 
   // Action: Toggle False Positive (FR-DET-6)
@@ -1355,15 +1342,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const resetToInitialScenarios = () => {
-    const refScenarios = INITIAL_SCENARIOS.slice(0, 1);
-    setCases(refScenarios.map(s => s.caseData));
-    setEvidenceList(refScenarios.flatMap(s => s.evidenceFiles));
-    setEvents(refScenarios.flatMap(s => s.events));
-    setDetections(refScenarios.flatMap(s => s.detections));
-    setRules(INITIAL_SIGMA_RULES);
-    setActiveCaseId(refScenarios[0]?.caseData.id || '');
-    logAuditAction('CASE_UPDATED', 'system', 'all', { message: 'Reset workspace to baseline reference mock scenario (1 case)' });
-    toast.success('Investigation case data reset to reference mock scenario (1 case)!');
+    // Clear the selected working view without restoring bundled mock evidence.
+    // Saved backend cases are intentionally preserved and can be selected later.
+    setActiveCaseId('');
+    setEvidenceList([]);
+    setEvents([]);
+    setDetections([]);
+    setCaseGraph({ nodes: [], edges: [] });
+    logAuditAction('CASE_UPDATED', 'system', 'workspace', { message: 'Cleared active investigation workspace' });
+    toast.success('Workspace cleared. Uploading now starts a new investigation case.');
   };
 
 

@@ -10,6 +10,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { toast } from '../components/Toast';
+import { User } from '../types';
 
 export const Login: React.FC = () => {
   const { loginUser, setCurrentPage, theme } = useApp();
@@ -70,22 +71,12 @@ export const Login: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // 1. Immediately validate credentials in application store (0ms local latency)
-      const result = loginUser(trimmedInput, password);
-
-      if (!result.success) {
-        setGeneralError(result.message);
-        toast.error(result.message || 'Authentication failed. Please check credentials.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      // 2. Fetch live JWT bearer token asynchronously with 1200ms cap (never hangs login)
+      // Obtain the API session before changing currentUser. The store loads case
+      // data when currentUser changes, so it must already have this token.
+      let hasBackendSession = false;
+      let backendUser: User | undefined;
       try {
-        const timeoutPromise = new Promise<any>((resolve) => setTimeout(() => resolve(null), 1200));
-        const liveAuthPromise = authApi.login(trimmedInput, password).catch(() => null);
-        const res = await Promise.race([liveAuthPromise, timeoutPromise]);
-        
+        const res = await authApi.login(trimmedInput, password);
         const tokenString = res?.data?.token || res?.data?.access_token;
         if (tokenString) {
           apiClient.setToken(tokenString);
@@ -93,12 +84,51 @@ export const Login: React.FC = () => {
             localStorage.setItem('dcsre_access_token', tokenString);
             localStorage.setItem('token', tokenString);
           } catch {}
+          hasBackendSession = true;
+          let apiUser = res.data?.user;
+          if (!apiUser) {
+            const profile = await authApi.getCurrentUser();
+            if (profile.error || !profile.data) {
+              throw new Error(profile.error || 'The backend created a session but did not return your user profile.');
+            }
+            apiUser = profile.data;
+          }
+          if (apiUser?.id && apiUser.email) {
+            backendUser = {
+              id: String(apiUser.id),
+              name: apiUser.name || apiUser.username || apiUser.email,
+              email: apiUser.email,
+              role: apiUser.role === 'admin' ? 'admin' : 'investigator',
+              department: apiUser.department || undefined,
+              badgeId: apiUser.badgeId || apiUser.badge_id || undefined,
+              badge_id: apiUser.badge_id || apiUser.badgeId || undefined,
+              active: apiUser.is_active ?? true,
+              created_at: apiUser.created_at || undefined
+            };
+          }
+        } else if (res.error) {
+          throw new Error(res.error);
         }
       } catch (backendErr) {
-        console.warn('Backend live auth fallback to local session:', backendErr);
+        throw backendErr;
       }
 
-      // 3. Authenticated session active - transition immediately
+      if (!hasBackendSession) {
+        throw new Error('The backend did not return an authentication token. Check your account and try again.');
+      }
+      if (!backendUser) {
+        throw new Error('The backend authenticated you but did not return a usable user profile.');
+      }
+
+      const result = loginUser(trimmedInput, password, backendUser);
+      if (!result.success) {
+        setGeneralError(result.message);
+        toast.error(result.message || 'Authentication failed. Please check your credentials.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Authenticated session active - transition immediately
       setSuccessMsg(result.message);
       const welcome = result.user?.role === 'admin'
         ? `Welcome back, Administrator ${result.user.name.split(' ')[0]}!`

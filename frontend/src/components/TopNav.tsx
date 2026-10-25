@@ -325,7 +325,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                         className={`w-full text-left px-3 py-2 text-xs text-[#f95721] hover:text-[#fb923c] flex items-center gap-2 transition-colors cursor-pointer font-medium ${isLight ? 'hover:bg-slate-100' : 'hover:bg-[#23201e]'}`}
                       >
                         <RefreshCw className="w-3.5 h-3.5 text-[#f95721]" />
-                        <span>Reset Case</span>
+                        <span>Clear Workspace</span>
                       </button>
                     )}
 

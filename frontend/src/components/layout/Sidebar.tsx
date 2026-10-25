@@ -246,7 +246,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-[#f95721] hover:bg-[#24130d] hover:text-[#fb923c] transition-colors cursor-pointer font-medium"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Reset Case</span>
+                  <span>Clear Workspace</span>
                 </button>
               </div>
 

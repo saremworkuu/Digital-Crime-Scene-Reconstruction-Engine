@@ -202,7 +202,7 @@ export const Evidence: React.FC = () => {
 
 
 
-  const isAdmin = currentUser?.role === 'admin';
+  const canDeleteEvidence = Boolean(currentUser);
 
 
 
@@ -703,15 +703,15 @@ export const Evidence: React.FC = () => {
 
 
 
-                        {isAdmin && (
+                        {canDeleteEvidence && (
 
                           <button
 
                             onClick={() => {
 
-                              if (confirm(`Delete evidence file "${ev.filename}"?`)) {
+                              if (window.confirm(`Delete evidence file "${ev.filename}"? This also removes its parsed events.`)) {
 
-                                deleteEvidence(ev.id);
+                                void deleteEvidence(ev.id);
 
                               }
 
@@ -719,7 +719,8 @@ export const Evidence: React.FC = () => {
 
                             className="p-1.5 rounded text-[#a8a29e] hover:text-red-400 hover:bg-[#25201d] transition-colors"
 
-                            title="Delete evidence file (Admin only)"
+                            title={`Delete ${ev.filename}`}
+                            aria-label={`Delete evidence file ${ev.filename}`}
 
                           >
 

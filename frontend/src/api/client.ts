@@ -57,7 +57,9 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${token.trim()}`);
     }
 
-    const timeoutMs = options.timeout ?? 4000;
+    // Hosted backends may need time to wake, and large evidence requests need
+    // considerably longer than the old four-second limit.
+    const timeoutMs = options.timeout ?? 60000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -76,6 +78,9 @@ class ApiClient {
             if (typeof window !== 'undefined') {
               localStorage.removeItem('dcsre_access_token');
               localStorage.removeItem('token');
+              if (token) {
+                window.dispatchEvent(new Event('dcsre:session-expired'));
+              }
             }
           } catch {}
         }
@@ -148,6 +153,10 @@ class ApiClient {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
     });
+  }
+
+  postFormData<T>(endpoint: string, body: FormData, timeout = 120000) {
+    return this.request<T>(endpoint, { method: 'POST', body, timeout });
   }
 
   put<T>(endpoint: string, body?: any) {

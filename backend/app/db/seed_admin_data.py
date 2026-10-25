@@ -44,6 +44,17 @@ SEED_USERS = [
         ]
     },
     {
+        "id": "777c593addec4265b39e1fa7b82eca23",
+        "username": "sarah.chen",
+        "email": "investigator@dcsre.corp",
+        "role": UserRole.INVESTIGATOR,
+        "department": "Forensics & Cyber Attribution",
+        "status": "active",
+        "two_factor_enabled": False,
+        "password": "Investigator#2026",
+        "sessions": []
+    },
+    {
         "id": "444c593addec4265b39e1fa7b82eca20",
         "username": "e.rostova",
         "email": "e.rostova@dcsre.net",

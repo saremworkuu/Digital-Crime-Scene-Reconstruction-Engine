@@ -19,17 +19,25 @@ origins = [
     for orig in settings.CORS_ORIGINS.split(",")
     if orig.strip()
 ]
-if "http://localhost:3000" not in origins:
-    origins.append("http://localhost:3000")
-if "http://127.0.0.1:3000" not in origins:
-    origins.append("http://127.0.0.1:3000")
+for default_origin in [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]:
+    if default_origin not in origins:
+        origins.append(default_origin)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.state.limiter = limiter

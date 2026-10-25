@@ -87,25 +87,16 @@ def get_authorized_case(
             detail="Case not found.",
         )
 
-    user_id = getattr(current_user, "id", None)
     user_role = getattr(current_user, "role", None)
 
-    if user_role == UserRole.ADMIN:
+    # DCSRE uses a shared investigation workspace: every authenticated admin
+    # and investigator may examine and add evidence to any active case.
+    if user_role in (UserRole.ADMIN, UserRole.INVESTIGATOR):
         return case
 
-    is_creator = getattr(case, "created_by", None) == user_id
-
-    if not is_creator and user_role != UserRole.ADMIN:
-        if not allow_viewer:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You are not authorized to add evidence to this case.",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to access this case.",
-        )
-
-    return case
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You are not authorized to access this case.",
+    )
 
 

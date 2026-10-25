@@ -30,6 +30,11 @@ Open your browser at **http://localhost:3000** to view the application with all 
 ### Default User Credentials:
 - **System Administrator**: `saremworkuu@gmail.com` / `Admin@2026!`
 - **Lead Investigator**: `investigator@dcsre.corp` / `Investigator#2026`
+
+### Evidence storage
+
+The backend writes evidence files under `<UPLOAD_DIR>/evidence` (default: `uploads/evidence`). Keep this directory on persistent storage. Docker Compose mounts `backend/uploads` so local container restarts retain uploaded files. For hosted deployments, set `UPLOAD_DIR` to the host's persistent disk mount path and keep `DATABASE_URL` pointed at a persistent database; the application container's temporary filesystem is not durable.
+
 Key Features
 
 1. Case Management

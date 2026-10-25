@@ -11,10 +11,26 @@ export const authApi = {
     badge_id?: string;
     pgp_key?: string;
   }) => {
-    return apiClient.post<{ token: string; user: User }>('/auth/register', userData);
+    return apiClient.post<{
+      token?: string;
+      access_token?: string;
+      user?: Partial<User> & {
+        username?: string;
+        is_active?: boolean;
+        badge_id?: string;
+      };
+    }>('/auth/register', userData);
   },
   login: async (email: string, password: string) => {
-    return apiClient.post<{ token: string; user: User }>('/auth/login', { email, password });
+    return apiClient.post<{
+      token?: string;
+      access_token?: string;
+      user?: Partial<User> & {
+        username?: string;
+        is_active?: boolean;
+        badge_id?: string;
+      };
+    }>('/auth/login', { email, password });
   },
   logout: async () => {
     return apiClient.post('/auth/logout');

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { validateRealEmail } from '../utils/emailValidator';
 import { toast } from '../components/Toast';
+import { authApi, apiClient } from '../api';
 
 export const Register: React.FC = () => {
   const { registerUser, setCurrentPage, theme } = useApp();
@@ -47,7 +48,7 @@ export const Register: React.FC = () => {
   };
 
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setGeneralError(null);
     setSuccessMsg(null);
@@ -80,26 +81,43 @@ export const Register: React.FC = () => {
     setIsSubmitting(true);
 
     const badgeIdentifier = `DFIR-${Math.floor(1000 + Math.random() * 9000)}`;
-    const result = registerUser({
-      name: fullName,
-      email: email.trim().toLowerCase(),
-      role: 'investigator',
-      department: department.trim() || 'Digital Forensics Unit',
-      badgeId: badgeIdentifier,
-      password: password
-    });
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const response = await authApi.register({
+        name: fullName,
+        email: normalizedEmail,
+        password,
+        role: 'investigator',
+        department: department.trim() || 'Digital Forensics Unit',
+        badge_id: badgeIdentifier
+      });
+      const token = response.data?.token || response.data?.access_token;
+      if (response.error || !token) {
+        throw new Error(response.error || 'The backend did not create a secure session.');
+      }
 
-    setIsSubmitting(false);
+      // Establish the backend session before the store changes currentUser;
+      // case and evidence loading starts as soon as that state changes.
+      apiClient.setToken(token);
+      const result = registerUser({
+        name: fullName,
+        email: normalizedEmail,
+        role: 'investigator',
+        department: department.trim() || 'Digital Forensics Unit',
+        badgeId: badgeIdentifier,
+        password
+      });
 
-    if (result.success) {
+      if (!result.success) throw new Error(result.message || 'Registration failed.');
       setSuccessMsg(result.message);
       toast.success(result.message || 'Examiner account registered successfully!');
-      setTimeout(() => {
-        setCurrentPage('dashboard');
-      }, 1200);
-    } else {
-      setGeneralError(result.message);
-      toast.error(result.message || 'Registration failed. Please check your details.');
+      setTimeout(() => setCurrentPage('dashboard'), 1200);
+    } catch (err: any) {
+      apiClient.setToken(null);
+      setGeneralError(err.message || 'Registration failed. Please check your details.');
+      toast.error(err.message || 'Registration failed. Please check your details.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

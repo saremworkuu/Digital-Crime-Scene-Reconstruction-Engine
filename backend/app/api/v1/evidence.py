@@ -21,10 +21,12 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
+from app.core.config import settings
 from app.db.models.case import Case, CaseStatus
 from app.db.models.evidence import Evidence, ParsingStatus
 from app.db.models.events import Event
 from app.db.models.event_evidence import EventEvidence
+from app.db.models.detection_event import DetectionEvent
 from app.db.models.user import User
 from app.db.session import get_db
 from app.parsers.registry import get_parser
@@ -74,7 +76,9 @@ ALLOWED_EXTENSIONS = {
     ".tar",
 }
 
-UPLOAD_DIR = Path("uploads") / "evidence"
+# Keep evidence under the configured data directory. In production, point
+# UPLOAD_DIR at a persistent mounted volume so files survive service restarts.
+UPLOAD_DIR = Path(settings.UPLOAD_DIR).expanduser() / "evidence"
 
 
 def _normalize_parser_slug(pname: Optional[str]) -> Optional[str]:
@@ -470,7 +474,8 @@ def _list_evidence_core(request: Request, case_id: uuid.UUID | str, current_user
 
 
 # List evidence for a case via query parameter (?case_id=...)
-@router.get("/", response_model=List[EvidenceResponse])
+@router.get("", response_model=List[EvidenceResponse])
+@router.get("/", response_model=List[EvidenceResponse], include_in_schema=False)
 def list_evidence_by_query(
     request: Request,
     case_id: str = Query(...),
@@ -569,7 +574,10 @@ def delete_evidence(
             detail=f'Deletion Blocked: Case "{case.name}" is currently locked under Legal Hold.',
         )
 
-    # Clean up associations and events
+    # Clean up detection/evidence associations before deleting the events. Some
+    # SQLite deployments do not enforce the database's ON DELETE CASCADE rules.
+    event_ids = select(Event.id).where(Event.evidence_id == evidence.id)
+    db.execute(delete(DetectionEvent).where(DetectionEvent.event_id.in_(event_ids)))
     db.execute(delete(EventEvidence).where(EventEvidence.evidence_id == evidence.id))
     db.execute(delete(Event).where(Event.evidence_id == evidence.id))
 

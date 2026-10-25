@@ -79,9 +79,15 @@ def enrich_case_response(case: Case, db: Session) -> CaseResponse:
 
 
 @router.post(
+    "",
+    response_model=CaseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@router.post(
     "/",
     response_model=CaseResponse,
     status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
 )
 def create_case(
     request: Request,
@@ -138,7 +144,8 @@ def create_case(
     return enrich_case_response(new_case, db)
 
 
-@router.get("/", response_model=list[CaseResponse])
+@router.get("", response_model=list[CaseResponse])
+@router.get("/", response_model=list[CaseResponse], include_in_schema=False)
 def list_cases(
     case_status: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
@@ -146,20 +153,7 @@ def list_cases(
 ):
     query = db.query(Case).filter(Case.is_deleted.is_(False))
 
-    if current_user.role == UserRole.ADMIN:
-        pass
-    elif current_user.role == UserRole.INVESTIGATOR:
-        assigned_case_ids = (
-            db.query(CaseAssignment.case_id)
-            .filter(CaseAssignment.user_id == current_user.id)
-        )
-        query = query.filter(
-            or_(
-                Case.created_by == current_user.id,
-                Case.id.in_(assigned_case_ids),
-            )
-        )
-    else:
+    if current_user.role not in (UserRole.ADMIN, UserRole.INVESTIGATOR):
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to view cases.",
