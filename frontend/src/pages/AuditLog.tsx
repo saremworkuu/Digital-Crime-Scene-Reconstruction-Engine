@@ -63,7 +63,7 @@ export const AuditLog: React.FC = () => {
             <span>Cryptographic Chain-of-Custody Audit Trail</span>
           </h1>
           <p className="text-xs text-[#a8a29e] mt-1">
-            Immutable evidentiary ledger recording every user access, evidence hashing, rule evaluation, and report export (NIST SP 800-86).
+            Immutable audit ledger recording user access, evidence hashing, rule evaluation, and report exports.
           </p>
         </div>
 

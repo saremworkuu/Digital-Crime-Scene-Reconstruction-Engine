@@ -158,6 +158,11 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         else:
             detection.severity = sev_enum
             detection.mitre_technique = finding.get("mitre_technique", detection.mitre_technique)
+            # Preserve existing false-positive flags and notes on findings that are still detected
+            if detection.rule_information and isinstance(detection.rule_information, dict):
+                for fp_key in ("fp_reason", "fp_marked_by", "fp_timestamp"):
+                    if fp_key in detection.rule_information and fp_key not in rule_info:
+                        rule_info[fp_key] = detection.rule_information[fp_key]
             detection.rule_information = rule_info
 
         if matching_ids:

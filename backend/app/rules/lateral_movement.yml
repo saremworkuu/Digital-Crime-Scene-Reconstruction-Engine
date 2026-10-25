@@ -4,8 +4,11 @@ description: >-
   Detects successful SSH authentication between distinct hosts
   that may indicate lateral movement during an investigation.
 severity: high
-mitre_technique: T1021
+mitre_technique: T1021.004
 mitre_tactic: Lateral Movement
+mitre_techniques:
+  - T1021.004
+  - T1021
 
 detection:
   event_types:

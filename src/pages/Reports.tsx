@@ -1,18 +1,49 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useApp } from '../store';
-import { reportsApi } from '../api/reports';
-import { generateClientPdfBlob } from '../utils/pdfGenerator';
+import { reportsApi, BackendReport, ReportHistoryItem } from '../api/reports';
 import {
   FileText,
-  Printer,
   Download,
   RotateCcw,
   FolderLock,
   Plus,
-  ShieldCheck,
   FileCode,
-  Loader2
+  Loader2,
+  History,
+  FileDown,
+  AlertTriangle,
+  ShieldCheck,
 } from 'lucide-react';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Format accounts consistently with the backend's DOMAIN\user report values. */
+function fmtUser(u: string): string {
+  if (!u || u === 'unknown' || u === 'SYSTEM' || u === '-') return u;
+  // Already has domain prefix → keep
+  if (u.includes('\\')) return u;
+  // Has @domain → convert to DOMAIN\user
+  if (u.includes('@')) {
+    const [name, domain] = u.split('@');
+    return `${domain.split('.')[0].toUpperCase()}\\${name}`;
+  }
+  return `DOMAIN\\${u}`;
+}
+
+function severityColor(s: string) {
+  switch ((s || '').toLowerCase()) {
+    case 'critical': return 'text-[#fca5a5]';
+    case 'high':     return 'text-[#fdba74]';
+    case 'medium':   return 'text-[#fde68a]';
+    default:         return 'text-[#a8a29e]';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export const Reports: React.FC = () => {
   const {
@@ -20,210 +51,217 @@ export const Reports: React.FC = () => {
     activeCase,
     setActiveCaseId,
     setCurrentPage,
-    activeCaseEvidence,
-    activeCaseEvents,
-    activeCaseDetections,
-    activeCaseGraph,
     logAuditAction,
-    currentUser
+    currentUser,
   } = useApp();
 
-  const [reportVersion, setReportVersion] = useState(1);
-  const [lastGenerated, setLastGenerated] = useState(() => new Date().toISOString());
-
-  // Derived Summary Figures
-  const compromisedHosts = useMemo(() => {
-    return activeCaseGraph.nodes.filter(n => n.type === 'host' && (n.is_compromised || n.is_attack_path));
-  }, [activeCaseGraph]);
-
-  const compromisedUsers = useMemo(() => {
-    return activeCaseGraph.nodes.filter(n => n.type === 'user' && (n.is_compromised || n.is_attack_path));
-  }, [activeCaseGraph]);
-
-  const externalIps = useMemo(() => {
-    return activeCaseGraph.nodes.filter(n => n.type === 'ip');
-  }, [activeCaseGraph]);
-
-  const attackTimelineEvents = useMemo(() => {
-    return activeCaseEvents
-      .filter(e => e.is_attack_path || e.severity === 'critical' || e.severity === 'high')
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [activeCaseEvents]);
-
-  // Handle Regenerate Report (FR-REP-1)
-  const handleRegenerate = () => {
-    setReportVersion(v => v + 1);
-    setLastGenerated(new Date().toISOString());
-    logAuditAction('REPORT_GENERATED', 'case', activeCase?.id || '', { version: reportVersion + 1 });
-  };
-
-  // Export as self-contained HTML (FR-REP-4)
-  const handleExportHtml = () => {
-    const reportElem = document.getElementById('forensic-report-container');
-    if (!reportElem) return;
-
-    const htmlContent = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>DCSRE Forensic Report - ${activeCase?.name}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #111; padding: 40px; max-width: 900px; margin: 0 auto; line-height: 1.5; }
-    h1, h2, h3 { font-family: ui-monospace, Menlo, Monaco, monospace; color: #111; }
-    h2 { border-bottom: 2px solid #222; padding-bottom: 6px; margin-top: 32px; color: #f95721; font-size: 14px; text-transform: uppercase; }
-    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-family: ui-monospace, monospace; font-size: 12px; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    th { background: #f4f4f5; }
-    .header-box { border-bottom: 3px solid #111; padding-bottom: 20px; margin-bottom: 24px; }
-  </style>
-</head>
-<body>
-  ${reportElem.innerHTML}
-</body>
-</html>
-    `;
-
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `dcsre_${activeCase?.id}_report_v${reportVersion}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    logAuditAction('REPORT_EXPORTED', 'case', activeCase?.id || '', { format: 'html', version: reportVersion });
-  };
-
-  const handleExportJson = () => {
-    const reportData = {
-      case_id: activeCase?.id,
-      case_name: activeCase?.name,
-      classification: 'CONFIDENTIAL // TLP:AMBER - DFIR EVIDENTIARY',
-      report_version: `v${reportVersion}.0`,
-      generated_at: lastGenerated,
-      lead_examiner: activeCase?.owner_name,
-      evidence_inventory: activeCaseEvidence.map(ev => ({
-        filename: ev.filename,
-        sha256_hash: ev.sha256_hash,
-        size_bytes: ev.size_bytes,
-        event_count: ev.event_count,
-        uploaded_at: ev.uploaded_at
-      })),
-      total_normalized_events: activeCaseEvents.length,
-      attack_timeline_summary: attackTimelineEvents.map(evt => ({
-        timestamp: evt.timestamp,
-        severity: evt.severity,
-        action: evt.action,
-        host: evt.host,
-        user: evt.user,
-        src_ip: evt.src_ip,
-        mitre_technique: evt.mitre_technique
-      })),
-      mitre_detections: activeCaseDetections.map(det => ({
-        rule_name: det.rule_name,
-        mitre_technique: det.mitre_technique,
-        mitre_tactic: det.mitre_tactic,
-        severity: det.severity,
-        timestamp: det.timestamp
-      })),
-      compromised_scope: {
-        hosts: compromisedHosts.map(h => h.label),
-        users: compromisedUsers.map(u => u.label),
-        external_ips: externalIps.map(ip => ip.label)
-      }
-    };
-
-    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `dcsre_${activeCase?.id}_report_v${reportVersion}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    logAuditAction('REPORT_EXPORTED', 'case', activeCase?.id || '', { format: 'json', version: reportVersion });
-  };
-
+  // ---------------------------------------------------------------------------
+  // Backend report state
+  // ---------------------------------------------------------------------------
+  const [reportData, setReportData] = useState<BackendReport | null>(null);
+  const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
+  // ---------------------------------------------------------------------------
+  // Load saved report history
+  // ---------------------------------------------------------------------------
+  const loadReportHistory = useCallback(async () => {
+    if (!activeCase?.id) return;
+    setLoadingHistory(true);
+    try {
+      const res = await reportsApi.list(activeCase.id);
+      if (res?.data && Array.isArray(res.data)) {
+        setReportHistory(res.data);
+      }
+    } catch (err) {
+      console.warn('Could not load report history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [activeCase?.id]);
+
+  // ---------------------------------------------------------------------------
+  // Load latest saved report for on-screen rendering
+  // ---------------------------------------------------------------------------
+  const loadLatestReport = useCallback(async () => {
+    if (!activeCase?.id) return;
+    setLoadingReport(true);
+    try {
+      // Load the saved version; opening the page must not create a new version.
+      const res = await reportsApi.latest(activeCase.id);
+      if (res?.data) {
+        setReportData(res.data as BackendReport);
+      }
+    } catch (err) {
+      console.warn('Could not load report from backend:', err);
+    } finally {
+      setLoadingReport(false);
+    }
+  }, [activeCase?.id]);
+
+  useEffect(() => {
+    setReportData(null);
+    setReportHistory([]);
+    if (activeCase?.id) {
+      loadLatestReport();
+      loadReportHistory();
+    }
+  }, [activeCase?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------------------
+  // Generate a new version
+  // ---------------------------------------------------------------------------
+  const handleRegenerate = async () => {
+    if (!activeCase?.id) return;
+    setIsGenerating(true);
+    try {
+      const res = await reportsApi.generate(activeCase.id);
+      if (res?.data) {
+        setReportData(res.data as BackendReport);
+        logAuditAction('REPORT_GENERATED', 'case', activeCase.id, {
+          version: (res.data as BackendReport).version,
+        });
+      }
+      await loadReportHistory();
+    } catch (err) {
+      console.warn('Could not generate report via backend:', err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Download a specific saved version
+  // ---------------------------------------------------------------------------
+  const handleDownloadSavedVersion = async (
+    item: ReportHistoryItem,
+    format: 'pdf' | 'html' = 'pdf'
+  ) => {
+    if (!activeCase?.id) return;
+    setDownloadingReportId(item.id);
+    try {
+      const cleanName = activeCase.name.replace(/\s+/g, '_').toLowerCase();
+      const verClean = (item.version || '1.0').replace('.', '_');
+
+      if (format === 'pdf') {
+        const res = await reportsApi.downloadSavedPdf(activeCase.id, item.id);
+        if (res.blob && res.blob.size > 0) {
+          const url = URL.createObjectURL(res.blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `forensic_report_${cleanName}_v${verClean}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          logAuditAction('SAVED_REPORT_DOWNLOADED', 'case', activeCase.id, {
+            report_id: item.id, version: item.version, format: 'pdf',
+          });
+        }
+      } else {
+        const res = await reportsApi.downloadSavedHtml(activeCase.id, item.id);
+        if (res.data) {
+          const blob = new Blob([res.data], { type: 'text/html' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `forensic_report_${cleanName}_v${verClean}.html`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          logAuditAction('SAVED_REPORT_DOWNLOADED', 'case', activeCase.id, {
+            report_id: item.id, version: item.version, format: 'html',
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Error downloading saved report:', err);
+    } finally {
+      setDownloadingReportId(null);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Export: HTML — snapshot the current on-screen container
+  // ---------------------------------------------------------------------------
+  const handleExportHtml = async () => {
+    if (!activeCase) return;
+    try {
+      const res = await reportsApi.exportHtml(activeCase.id);
+      if (res.data) {
+        const blob = new Blob([res.data], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `dcsre_${activeCase.id}_report_v${reportData?.version || '1.0'}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+        logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, { format: 'html' });
+      }
+    } catch (err) {
+      console.error('Could not export the backend report as HTML:', err);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Export: JSON — uses backend report fields, not local derived data
+  // ---------------------------------------------------------------------------
+  const handleExportJson = () => {
+    if (!activeCase) return;
+    const rd = reportData;
+    if (!rd) return;
+    const reportJsonData = rd;
+
+    const blob = new Blob([JSON.stringify(reportJsonData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dcsre_${activeCase.id}_report_v${reportData?.version || '1.0'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, {
+      format: 'json', version: reportData?.version || '1.0',
+    });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Export: PDF — use the same backend report as the HTML export
+  // ---------------------------------------------------------------------------
   const handleDownloadPdf = async () => {
     if (!activeCase) return;
     setIsDownloadingPdf(true);
-
     try {
-      // 1. Attempt to fetch professional ReportLab vector PDF from backend
       const res = await reportsApi.exportPdf(activeCase.id);
       if (res.blob && res.blob.size > 0) {
         const url = URL.createObjectURL(res.blob);
         const a = document.createElement('a');
         a.href = url;
         const cleanName = activeCase.name.replace(/\s+/g, '_').toLowerCase();
-        a.download = `dcsre_${cleanName}_report_v${reportVersion}.pdf`;
+        a.download = `dcsre_${cleanName}_report_v${reportData?.version || '1.0'}.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, { format: 'pdf', version: reportVersion });
+        logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, {
+          format: 'pdf', version: reportData?.version || '1.0',
+        });
         return;
       }
-
-      // 2. Client-side fallback: synthesize PDF 1.4 binary directly
-      const clientBlob = generateClientPdfBlob({
-        caseName: activeCase.name,
-        reportId: `rep-${activeCase.id.slice(0, 8)}-${reportVersion}`,
-        version: String(reportVersion),
-        generatedAt: lastGenerated,
-        examinerName: activeCase.owner_name || currentUser?.name || 'Lead Forensics Investigator',
-        summary: `Forensic investigation report for incident '${activeCase.name}'. Analyzed ${activeCaseEvidence.length} digital evidence artifacts and identified ${activeCaseDetections.length} threat detections across MITRE ATT&CK. Impacted ${compromisedHosts.length} host(s) and ${compromisedUsers.length} user account(s).`,
-        evidence: activeCaseEvidence.map(e => ({
-          filename: e.filename,
-          hash: e.sha256_hash,
-          size: e.size_bytes || e.file_size || 0,
-          count: e.event_count || 0,
-        })),
-        compromisedHosts: compromisedHosts.map(h => h.label),
-        compromisedUsers: compromisedUsers.map(u => u.label),
-        externalIps: externalIps.map(ip => ip.label),
-        detections: activeCaseDetections.map(d => ({
-          rule: d.rule_name,
-          technique: d.mitre_technique || 'T1059',
-          tactic: d.mitre_tactic || 'Execution',
-          severity: d.severity || 'high',
-        })),
-        timeline: attackTimelineEvents.map(e => ({
-          time: e.timestamp,
-          host: e.host,
-          user: e.user,
-          action: e.action || 'Forensic Event',
-          severity: e.severity,
-        })),
-        recommendations: [
-          'Isolate all identified compromised hosts from the internal network immediately.',
-          'Revoke active sessions and force cryptographic password resets with MFA for affected user accounts.',
-          'Block identified adversary infrastructure IP addresses and C2 endpoints at perimeter firewalls.',
-          'Verify system restore points and inspect backup volume shadow copies for unauthorized tampering.',
-          'Submit SHA-256 evidence hashes and chain-of-custody audit logs to legal and compliance counsel.',
-        ]
-      });
-
-      const url = URL.createObjectURL(clientBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      const cleanName = activeCase.name.replace(/\s+/g, '_').toLowerCase();
-      a.download = `dcsre_${cleanName}_report_v${reportVersion}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, { format: 'pdf_client', version: reportVersion });
     } catch (err) {
-      console.error('PDF download error:', err);
-      window.print();
+      console.error('Could not export the backend report as PDF:', err);
     } finally {
       setIsDownloadingPdf(false);
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // No case selected
+  // ---------------------------------------------------------------------------
   if (!activeCase) {
     return (
       <div className="space-y-6">
@@ -233,9 +271,8 @@ export const Reports: React.FC = () => {
           </div>
           <h2 className="text-lg font-bold text-[#fafaf9]">Select Investigation for Report Generation</h2>
           <p className="text-xs text-[#a8a29e] leading-relaxed">
-            Please choose an active investigation to compile its forensic reconstruction report, evidence ledger, and MITRE ATT&CK attribution matrix.
+            Choose an active investigation to compile its forensic reconstruction report.
           </p>
-
           {cases.length > 0 ? (
             <div className="space-y-2 pt-2 text-left">
               {cases.map((c) => (
@@ -270,10 +307,43 @@ export const Reports: React.FC = () => {
     );
   }
 
+  if (!reportData) {
+    return (
+      <div className="max-w-xl mx-auto my-12 p-6 rounded-2xl border border-[#38312d] bg-[#161413]/90 text-center space-y-3">
+        {loadingReport ? <Loader2 className="w-5 h-5 animate-spin text-[#f95721] mx-auto" /> : null}
+        <p className="text-sm font-semibold text-[#fafaf9]">
+          {loadingReport ? 'Loading the saved report from the backend…' : 'Saved report data is unavailable.'}
+        </p>
+        {!loadingReport && (
+          <button onClick={loadLatestReport} className="px-3 py-1.5 rounded-lg bg-[#f95721] text-white text-xs font-semibold">
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const rd = reportData;
+  const isDraft = rd.status === 'DRAFT';
+  const reportVersion = rd.version;
+  const lastGenerated = rd.generated_at;
+  const reportHash = rd.report_hash;
+
+  const hosts = rd.compromised_assets?.hosts || [];
+  const users = rd.compromised_assets?.users || [];
+  const advIps = rd.compromised_assets?.adversary_infrastructure || [];
+  const timeline = rd.attack_timeline_summary || [];
+  const detections = rd.mitre_coverage || [];
+  const evidenceRows = rd.chain_of_custody || rd.evidence_manifest?.map((e: any) => ({
+    ...e,
+    hash_status: 'recorded (not re-verified)',
+    uploaded_by: e.uploader || e.uploaded_by || 'Unattributed',
+  })) || [];
+
   return (
     <div className="space-y-6">
-      
-      {/* Action Bar (Hidden when printing) */}
+
+      {/* ── Action Bar ─────────────────────────────────────────── */}
       <div className="no-print flex flex-wrap items-center justify-between gap-4 p-4 bg-[#161413]/90 border border-[#2b2523] rounded-2xl backdrop-blur-xl">
         <div className="flex flex-wrap items-center gap-4">
           <div>
@@ -282,7 +352,14 @@ export const Reports: React.FC = () => {
               <span>Forensic Incident Reconstruction Report</span>
             </h1>
             <p className="text-xs text-[#a8a29e] mt-0.5">
-              Report Edition: <span className="font-mono text-[#f95721] font-semibold">v{reportVersion}.0</span> · Generated: <span className="font-mono text-[#d6d3d1]">{lastGenerated.slice(0, 19).replace('T', ' ')} UTC</span>
+              Edition: <span className="font-mono text-[#f95721] font-semibold">v{reportVersion}</span>
+              {' · '}Generated:{' '}
+              <span className="font-mono text-[#d6d3d1]">{lastGenerated.slice(0, 19).replace('T', ' ')} UTC</span>
+              {isDraft && (
+                <span className="ml-2 px-1.5 py-0.5 rounded bg-[#fef3c7]/20 text-[#fbbf24] border border-[#fbbf24]/30 text-[10px] font-bold font-mono">
+                  DRAFT
+                </span>
+              )}
             </p>
           </div>
 
@@ -295,9 +372,7 @@ export const Reports: React.FC = () => {
                 className="bg-[#241e1b] border border-[#38312d] text-[#fafaf9] text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#f95721] font-mono cursor-pointer"
               >
                 {cases.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>
@@ -307,11 +382,16 @@ export const Reports: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={handleRegenerate}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer"
-            title="Re-aggregate current case findings and generate new report revision"
+            disabled={isGenerating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer disabled:opacity-60"
+            title="Compile current findings into a new saved report version"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-[#f95721]" />
-            <span>Regenerate (v{reportVersion + 1})</span>
+            {isGenerating ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#f95721]" />
+            ) : (
+              <RotateCcw className="w-3.5 h-3.5 text-[#f95721]" />
+            )}
+            <span>{isGenerating ? 'Compiling...' : 'Generate New Version'}</span>
           </button>
 
           <button
@@ -334,30 +414,134 @@ export const Reports: React.FC = () => {
             onClick={handleDownloadPdf}
             disabled={isDownloadingPdf}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#f95721] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold transition-all shadow-[0_0_12px_rgba(249,87,33,0.3)] cursor-pointer"
-            title="Download full forensic reconstruction report in PDF format"
           >
             {isDownloadingPdf ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <Download className="w-3.5 h-3.5" />
             )}
-            <span>{isDownloadingPdf ? 'Downloading...' : 'Download'}</span>
+            <span>{isDownloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
           </button>
         </div>
       </div>
 
-      {/* Forensic Report Document Body (Optimized for Screen & Print) */}
+      {/* ── Report History ──────────────────────────────────────── */}
+      <div className="no-print p-4 bg-[#161413]/90 border border-[#2b2523] rounded-2xl backdrop-blur-xl space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-[#f95721]" />
+            <h2 className="text-sm font-bold text-[#fafaf9]">Report History</h2>
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#241e1b] text-[#a8a29e] border border-[#38312d]">
+              {reportHistory.length} saved {reportHistory.length === 1 ? 'version' : 'versions'}
+            </span>
+          </div>
+          <button
+            onClick={loadReportHistory}
+            disabled={loadingHistory}
+            className="text-[11px] font-mono text-[#a8a29e] hover:text-[#fafaf9] transition-colors flex items-center gap-1 cursor-pointer"
+          >
+            <RotateCcw className={`w-3 h-3 ${loadingHistory ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {loadingHistory && reportHistory.length === 0 ? (
+          <div className="text-center py-4 text-xs font-mono text-[#78716c]">Loading…</div>
+        ) : reportHistory.length === 0 ? (
+          <div className="text-center py-4 text-xs font-mono text-[#78716c] border border-dashed border-[#2b2523] rounded-xl">
+            No reports saved yet. Click "Generate New Version" to create and store version 1.0.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#26201e] border border-[#2b2523] rounded-xl overflow-hidden">
+            {reportHistory.map((item) => {
+              const isCurrent = item.version === reportVersion;
+              const isDownloading = downloadingReportId === item.id;
+              return (
+                <div
+                  key={item.id}
+                  className={`flex flex-wrap items-center justify-between gap-3 p-3 text-xs transition-colors ${
+                    isCurrent ? 'bg-[#241a15]/60' : 'bg-[#1a1715]/40 hover:bg-[#201c19]'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-[#f95721] font-bold px-2 py-0.5 rounded bg-[#2b1810] border border-[#ea580c]/30 text-[11px]">
+                      v{item.version}
+                    </span>
+                    <div>
+                      <div className="font-semibold text-[#fafaf9] flex items-center gap-2">
+                        <span>{item.title}</span>
+                        {isCurrent && (
+                          <span className="text-[10px] font-mono px-1.5 rounded bg-[#10b981]/20 text-[#34d399] border border-[#10b981]/30">
+                            Current
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-[#78716c] font-mono mt-0.5">
+                        {(item.generated_at || '').slice(0, 19).replace('T', ' ')} UTC
+                        {item.generator_name ? ` · ${item.generator_name}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono text-[11px]">
+                    <button
+                      onClick={() => handleDownloadSavedVersion(item, 'pdf')}
+                      disabled={isDownloading}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {isDownloading ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-[#f95721]" />
+                      ) : (
+                        <FileDown className="w-3 h-3 text-[#f95721]" />
+                      )}
+                      <span>PDF</span>
+                    </button>
+                    <button
+                      onClick={() => handleDownloadSavedVersion(item, 'html')}
+                      disabled={isDownloading}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#a8a29e] hover:text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <span>HTML</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Forensic Report Document Body ─────────────────────────────────── */}
       <div
         id="forensic-report-container"
         className="bg-[#161413]/95 border border-[#2b2523] rounded-2xl p-8 sm:p-12 text-[#fafaf9] space-y-8 max-w-4xl mx-auto shadow-2xl backdrop-blur-xl print:bg-white print:text-black print:p-0 print:border-none print:shadow-none"
       >
-        
-        {/* Document Header & Classification */}
+
+        {/* DRAFT banner */}
+        {isDraft && (
+          <div className="flex items-start gap-3 p-4 rounded-xl bg-[#fef3c7]/10 border-2 border-[#d97706]/50 text-[#fbbf24] print:bg-yellow-50 print:border-yellow-400 print:text-yellow-800">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <p className="text-xs font-semibold font-mono leading-relaxed">
+              DRAFT — AUTO-GENERATED BY DCSRE RULE ENGINE.
+              REQUIRES EXAMINER REVIEW AND APPROVAL BEFORE USE AS LEGAL EVIDENCE.
+              {rd?.draft_notice ? ` ${rd.draft_notice}` : ''}
+            </p>
+          </div>
+        )}
+
+        {/* Loading overlay */}
+        {loadingReport && (
+          <div className="flex items-center justify-center gap-3 py-8 text-[#a8a29e]">
+            <Loader2 className="w-5 h-5 animate-spin text-[#f95721]" />
+            <span className="text-sm font-mono">Loading report from backend…</span>
+          </div>
+        )}
+
+        {/* Document Header */}
         <div className="border-b-2 border-[#282321] print:border-black pb-6 space-y-3">
           <div className="flex flex-wrap items-center justify-between text-xs font-mono text-[#a8a29e] print:text-gray-600">
             <span>DCSRE FORENSIC EXAMINATION REPORT</span>
             <span className="uppercase text-[#f95721] print:text-black font-semibold">
-              TLP:AMBER+STRICT · CONFIDENTIAL FORENSIC INVESTIGATION
+                            {rd?.classification || 'CONFIDENTIAL // TLP:AMBER - DFIR EVIDENTIARY'}
             </span>
           </div>
 
@@ -372,7 +556,9 @@ export const Reports: React.FC = () => {
             </div>
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Lead Examiner:</span>
-              <strong className="text-[#fafaf9] print:text-black">{activeCase.owner_name}</strong>
+              <strong className="text-[#fafaf9] print:text-black">
+                {rd?.generator_name || activeCase.owner_name}
+              </strong>
             </div>
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Report Date:</span>
@@ -380,7 +566,9 @@ export const Reports: React.FC = () => {
             </div>
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Status:</span>
-              <strong className="text-[#fafaf9] print:text-black">{activeCase.status}</strong>
+              <strong className={`${isDraft ? 'text-[#fbbf24]' : 'text-[#86efac]'} print:text-black`}>
+                {rd?.status || 'DRAFT'}
+              </strong>
             </div>
           </div>
         </div>
@@ -390,49 +578,71 @@ export const Reports: React.FC = () => {
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             1. Executive Summary
           </h2>
-          <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
-            A comprehensive digital forensic investigation was conducted regarding security incident telemetry associated with <strong>{activeCase.name}</strong>. Analysis was performed using the Digital Crime Scene Reconstruction Engine (DCSRE), utilizing multi-format event normalization, Sigma detection rules, and MITRE ATT&CK framework mapping.
-          </p>
-          <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
-            The examination reconstructed a total of <strong>{activeCaseEvents.length}</strong> normalized events across <strong>{activeCaseEvidence.length}</strong> authenticated evidence sources, identifying <strong>{activeCaseDetections.length}</strong> verified attack indicators. Key compromised assets include {compromisedHosts.length > 0 ? compromisedHosts.map(h => h.label).join(', ') : 'targeted network entities'}.
-          </p>
+          {rd?.executive_summary ? (
+            <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
+              {rd.executive_summary}
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
+                A digital forensic investigation was conducted for security incident:{' '}
+                <strong>{activeCase.name}</strong>. Analysis was performed using the Digital Crime
+                Scene Reconstruction Engine (DCSRE), using multi-format event normalization, Sigma
+                detection rules, and MITRE ATT&amp;CK framework mapping.
+              </p>
+              <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
+                The examination reconstructed <strong>{timeline.length}</strong> events across{' '}
+                <strong>{evidenceRows.length}</strong> evidence sources, with{' '}
+                <strong>{detections.length}</strong> detections recorded. Key hosts involved:{' '}
+                {hosts.length > 0 ? hosts.join(', ') : 'none identified'}.
+              </p>
+            </>
+          )}
         </section>
 
-        {/* 2. Evidence Inventory & Hash Verification (FR-REP-3) */}
+        {/* 2. Digital Evidence Inventory */}
         <section className="space-y-3 print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1 flex items-center justify-between">
-            <span>2. Digital Evidence Inventory & Integrity Hashes</span>
-            <span className="text-[10px] text-[#86efac] print:text-black font-normal flex items-center gap-1">
+            <span>2. Digital Evidence Inventory &amp; Integrity Hashes</span>
+            <span className="text-[10px] text-[#a8a29e] print:text-gray-600 font-normal flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 inline" />
-              SHA-256 Validated
+              SHA-256 recorded at upload
             </span>
           </h2>
-          
+
           <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono">
             <thead>
               <tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800 border-b border-[#282321] print:border-gray-400">
-                <th className="p-2">Item</th>
+                <th className="p-2">#</th>
                 <th className="p-2">Filename</th>
                 <th className="p-2">SHA-256 Hash</th>
+                <th className="p-2">Hash Status</th>
                 <th className="p-2 text-right">Size</th>
-                <th className="p-2 text-right">Extracted Events</th>
+                <th className="p-2 text-right">Events</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#282321] print:divide-gray-300">
-              {activeCaseEvidence.length === 0 ? (
+              {evidenceRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-[#78716c] font-sans">
-                    No evidence files ingested for this investigation yet.
+                  <td colSpan={6} className="p-4 text-center text-[#78716c] font-sans">
+                    No evidence files ingested.
                   </td>
                 </tr>
               ) : (
-                activeCaseEvidence.map((ev, idx) => (
-                  <tr key={ev.id} className="text-[#d6d3d1] print:text-gray-900">
+                evidenceRows.map((ev: any, idx: number) => (
+                  <tr key={idx} className="text-[#d6d3d1] print:text-gray-900">
                     <td className="p-2 text-[#78716c]">{idx + 1}</td>
                     <td className="p-2 font-semibold text-[#fafaf9] print:text-black">{ev.filename}</td>
-                    <td className="p-2 text-[11px] select-all font-mono text-[#f95721] print:text-black">{ev.sha256_hash}</td>
+                    <td className="p-2 text-[11px] select-all font-mono text-[#f95721] print:text-black">
+                      {ev.sha256_hash || '—'}
+                    </td>
+                    <td className="p-2 text-[#a8a29e] text-[11px]">
+                      {ev.hash_status || 'recorded (not re-verified)'}
+                    </td>
                     <td className="p-2 text-right">{((ev.size_bytes || 0) / 1024).toFixed(1)} KB</td>
-                    <td className="p-2 text-right text-[#f95721] print:text-black font-semibold">{ev.event_count || 0}</td>
+                    <td className="p-2 text-right text-[#f95721] print:text-black font-semibold">
+                      {ev.event_count || 0}
+                    </td>
                   </tr>
                 ))
               )}
@@ -440,28 +650,28 @@ export const Reports: React.FC = () => {
           </table>
         </section>
 
-        {/* 3. Chronological Attack Progression Timeline */}
+        {/* 3. Chronological Attack Sequence */}
         <section className="space-y-3 print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             3. Chronological Attack Sequence
           </h2>
 
           <div className="space-y-3 font-mono text-xs">
-            {attackTimelineEvents.length === 0 ? (
+            {timeline.length === 0 ? (
               <div className="p-4 bg-[#100f0e] border border-[#282321] rounded-xl text-center text-[#78716c] font-sans">
-                No high or critical severity events registered on the attack sequence timeline.
+                No attack timeline events recorded.
               </div>
             ) : (
-              attackTimelineEvents.map((evt, idx) => (
+              timeline.map((evt: any, idx: number) => (
                 <div
-                  key={evt.id}
+                  key={idx}
                   className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1"
                 >
                   <div className="flex justify-between items-center text-[11px] text-[#a8a29e] print:text-gray-600">
                     <span className="font-semibold text-[#f95721] print:text-black">
-                      Step {idx + 1}: {evt.timestamp.replace('T', ' ').replace('Z', '')} UTC
+                      Step {idx + 1}: {(evt.timestamp || '').replace('T', ' ').replace('Z', '')} UTC
                     </span>
-                    <span className="uppercase text-[#fca5a5] print:text-black font-bold">
+                    <span className={`uppercase font-bold ${severityColor(evt.severity)}`}>
                       {evt.severity}
                     </span>
                   </div>
@@ -469,10 +679,15 @@ export const Reports: React.FC = () => {
                     {evt.action}
                   </div>
                   <div className="text-[11px] text-[#a8a29e] print:text-gray-700 flex flex-wrap gap-4 pt-1">
-                    <span>Host: {evt.host}</span>
-                    {evt.user && <span>User: {evt.user}</span>}
+                    {evt.host && <span>Host: {evt.host}</span>}
+                    {evt.user && evt.user !== 'unknown' && evt.user !== 'SYSTEM' && (
+                      <span>User: {fmtUser(evt.user)}</span>
+                    )}
                     {evt.src_ip && <span>Src IP: {evt.src_ip}</span>}
                     {evt.mitre_technique && <span>Technique: {evt.mitre_technique}</span>}
+                    {evt.corroborated_by && evt.corroborated_by.length > 1 && (
+                      <span className="text-[#78716c]">Sources: {evt.corroborated_by.join(', ')}</span>
+                    )}
                   </div>
                 </div>
               ))
@@ -480,37 +695,44 @@ export const Reports: React.FC = () => {
           </div>
         </section>
 
-        {/* 4. Threat Findings & MITRE ATT&CK Matrix */}
+        {/* 4. Threat Detections & MITRE ATT&CK */}
         <section className="space-y-3 print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
-            4. Adversary Tactics & MITRE ATT&CK Techniques Identified
+            4. Adversary Tactics &amp; MITRE ATT&amp;CK Detections
           </h2>
 
           <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono">
             <thead>
               <tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800 border-b border-[#282321] print:border-gray-400">
                 <th className="p-2">Severity</th>
-                <th className="p-2">Technique ID</th>
+                <th className="p-2">Technique</th>
                 <th className="p-2">Tactic</th>
-                <th className="p-2">Detection Signature</th>
-                <th className="p-2">Timestamp (UTC)</th>
+                <th className="p-2">Detection</th>
+                <th className="p-2">First Seen (UTC)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#282321] print:divide-gray-300">
-              {activeCaseDetections.length === 0 ? (
+              {detections.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-4 text-center text-[#78716c] font-sans">
-                    No threat detections flagged for this case.
+                    No detections recorded for this case.
                   </td>
                 </tr>
               ) : (
-                activeCaseDetections.map((det) => (
-                  <tr key={det.id} className="text-[#d6d3d1] print:text-gray-900">
-                    <td className="p-2 uppercase font-bold text-[#fca5a5] print:text-black">{det.severity}</td>
-                    <td className="p-2 text-[#f95721] print:text-black font-semibold">{det.mitre_technique}</td>
-                    <td className="p-2">{det.mitre_tactic}</td>
+                detections.map((det: any, i: number) => (
+                  <tr key={det.id || i} className="text-[#d6d3d1] print:text-gray-900">
+                    <td className={`p-2 uppercase font-bold ${severityColor(det.severity)}`}>
+                      {det.severity}
+                    </td>
+                    <td className="p-2 text-[#f95721] print:text-black font-semibold">
+                      {(det.mitre_techniques_all || [det.mitre_technique]).filter(Boolean).join(', ') || '—'}
+                    </td>
+                    <td className="p-2">{det.mitre_tactic || '—'}</td>
                     <td className="p-2">{det.rule_name}</td>
-                    <td className="p-2 text-[#a8a29e] print:text-gray-600">{det.timestamp.slice(11, 19)}</td>
+                    {/* first_seen is the event time, not the upload/ingestion time */}
+                    <td className="p-2 text-[#a8a29e] print:text-gray-600">
+                      {det.first_seen ? det.first_seen.slice(0, 19).replace('T', ' ') : 'Not available'}
+                    </td>
                   </tr>
                 ))
               )}
@@ -518,87 +740,143 @@ export const Reports: React.FC = () => {
           </table>
         </section>
 
-        {/* 5. Affected Systems & Assets */}
+        {/* 5. Compromised Scope */}
         <section className="space-y-3 print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
-            5. Compromised Scope & Threat Indicators
+            5. Compromised Scope &amp; Adversary Infrastructure
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+            {/* Hosts — IPs that resolve to a hostname are merged */}
             <div className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1">
-              <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">Compromised Hosts:</span>
+              <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">
+                Compromised Hosts:
+              </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fafaf9] print:text-black">
-                {compromisedHosts.length > 0 ? (
-                  compromisedHosts.map(h => <li key={h.id}>{h.label}</li>)
+                {hosts.length > 0 ? (
+                  hosts.map(h => <li key={h}>{h}</li>)
                 ) : (
-                  <li className="text-[#78716c] list-none">None isolated</li>
+                  <li className="text-[#78716c] list-none">None identified</li>
                 )}
               </ul>
             </div>
 
+            {/* Accounts — deduplicated, DOMAIN\user format */}
             <div className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1">
-              <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">Compromised Accounts:</span>
+              <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">
+                Compromised Accounts:
+              </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fafaf9] print:text-black">
-                {compromisedUsers.length > 0 ? (
-                  compromisedUsers.map(u => <li key={u.id}>{u.label}</li>)
+                {users.length > 0 ? (
+                  users.map(u => <li key={u}>{u}</li>)
                 ) : (
-                  <li className="text-[#78716c] list-none">None isolated</li>
+                  <li className="text-[#78716c] list-none">None identified</li>
                 )}
               </ul>
             </div>
 
+            {/* Adversary C2 IPs */}
             <div className="p-3 bg-[#100f0e] print:bg-gray-50 border border-[#282321] print:border-gray-300 rounded-xl space-y-1">
-              <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">Adversary C2 IPs:</span>
+              <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold">
+                Adversary C2 IPs:
+              </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fca5a5] print:text-black">
-                {externalIps.length > 0 ? (
-                  externalIps.map(ip => <li key={ip.id}>{ip.label}</li>)
+                {advIps.length > 0 ? (
+                  advIps.filter((ip: string) => ip !== 'None identified').map((ip: string) => (
+                    <li key={ip}>{ip}</li>
+                  ))
                 ) : (
                   <li className="text-[#78716c] list-none">None detected</li>
                 )}
               </ul>
             </div>
           </div>
+
+          {rd?.compromised_assets?.dwell_time && rd.compromised_assets.dwell_time !== 'Not determinable' && (
+            <p className="text-[11px] font-mono text-[#a8a29e] pt-1">
+              Estimated dwell time: <strong className="text-[#fafaf9]">{rd.compromised_assets.dwell_time}</strong>
+            </p>
+          )}
         </section>
 
-        {/* 6. Containment & Strategic Remediation Directives */}
+        {/* 6. Remediation Directives */}
         <section className="space-y-3 print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
-            6. Containment & Strategic Remediation Directives
+            6. Containment &amp; Remediation Directives
           </h2>
-          <ul className="list-decimal pl-5 space-y-2 text-xs text-[#d6d3d1] print:text-gray-800 font-sans leading-relaxed">
-            <li><strong>Immediate Host Isolation:</strong> Sever network connectivity to all identified compromised endpoints ({compromisedHosts.length > 0 ? compromisedHosts.map(h => h.label).join(', ') : 'targeted endpoints'}) pending forensic re-imaging and memory dump preservation.</li>
-            <li><strong>Credential Invalidation & Key Rollover:</strong> Terminate existing sessions and enforce cryptographic password resets with mandatory FIDO2/MFA for {compromisedUsers.length > 0 ? compromisedUsers.map(u => u.label).join(', ') : 'all user accounts referenced in findings'}.</li>
-            <li><strong>Perimeter C2 Blocking:</strong> Ingest identified adversary infrastructure IP addresses into edge firewall ACLs and DNS sinkholes to prevent lateral exfiltration.</li>
-            <li><strong>Integrity Attestation & Legal Preservation:</strong> File cryptographic SHA-256 evidence chain of custody manifests with legal and regulatory compliance authorities under NIST SP 800-86 standards.</li>
-          </ul>
+          {rd.remediation && rd.remediation.length > 0 ? (
+            <ol className="list-decimal pl-5 space-y-2 text-xs text-[#d6d3d1] print:text-gray-800 font-sans leading-relaxed">
+              {rd.remediation.map((r: any, i: number) => {
+                const action = typeof r === 'string' ? r : r.action;
+                const refs = typeof r === 'string' ? '' : r.finding_refs;
+                return (
+                  <li key={i}>
+                    {action}
+                    {refs && (
+                      <span className="ml-1 text-[#78716c] font-mono text-[10px]">
+                        (findings: {refs})
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          ) : <p className="text-xs text-[#78716c]">No remediation directives recorded.</p>}
         </section>
 
-        {/* 7. Chain of Custody & Examiner Attestation */}
+        {/* 7. Chain of Custody & Attestation */}
         <section className="space-y-4 pt-4 border-t-2 border-[#282321] print:border-black print-break-inside-avoid">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono">
-            7. Chain of Custody & Forensic Attestation
+            7. Chain of Custody &amp; Forensic Attestation
           </h2>
-          
+
           <p className="text-xs text-[#a8a29e] print:text-gray-700 leading-relaxed text-justify">
-            All ingested evidence files have been cryptographically hashed upon upload and stored unmodified in read-only condition. Audit ledger records confirm unbroken chain of custody in accordance with NIST SP 800-86 guidelines.
+            SHA-256 values are recorded for uploaded evidence. They have not been re-verified
+            against the original files after ingestion. Examiners should
+            independently verify hashes before relying on this record as legal evidence.
+            {rd?.chain_of_custody_note ? ` ${rd.chain_of_custody_note}` : ''}
           </p>
+
+          {rd?.methodology && (
+            <p className="text-xs text-[#78716c] print:text-gray-600 leading-relaxed">
+              <strong className="text-[#a8a29e]">Methodology:</strong> {rd.methodology}
+            </p>
+          )}
+
+          {rd?.limitations && (
+            <p className="text-xs text-[#78716c] print:text-gray-600 leading-relaxed">
+              <strong className="text-[#a8a29e]">Limitations:</strong> {rd.limitations}
+            </p>
+          )}
 
           <div className="flex justify-between items-end pt-8 font-mono text-xs">
             <div className="space-y-1">
               <div className="w-48 border-b border-[#38312d] print:border-black" />
-              <div className="text-[#fafaf9] print:text-black font-semibold">{activeCase.owner_name}</div>
-              <div className="text-[#78716c] print:text-gray-600 text-[11px]">Senior Digital Forensics Examiner</div>
+              <div className="text-[#fafaf9] print:text-black font-semibold">
+                {rd?.generator_name || activeCase.owner_name}
+              </div>
+              <div className="text-[#78716c] print:text-gray-600 text-[11px]">
+                {rd?.generator_role || 'Senior Digital Forensics Examiner'}
+              </div>
             </div>
 
-            <div className="text-right text-[11px] text-[#78716c] print:text-gray-600 font-mono">
-              <div>Verification Hash: {activeCaseEvidence[0]?.sha256_hash ? `${activeCaseEvidence[0].sha256_hash.slice(0, 16)}...` : 'N/A'}</div>
-              <div>Generated via DCSRE Forensics Engine</div>
+            <div className="text-right text-[11px] text-[#78716c] print:text-gray-600 font-mono space-y-0.5">
+              {/* Real report content hash from the backend — not a file hash */}
+              <div>
+                Report SHA-256:{' '}
+                <span className="text-[#a8a29e] select-all">
+                  {reportHash || 'not computed'}
+                </span>
+              </div>
+              <div className="text-[10px]">Generated via DCSRE Forensics Engine v{rd?.rule_set_version || '—'}</div>
+              {isDraft && (
+                <div className="text-[#fbbf24] font-bold text-[10px]">STATUS: DRAFT</div>
+              )}
             </div>
           </div>
         </section>
 
       </div>
-
     </div>
   );
 };

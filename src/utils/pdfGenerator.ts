@@ -179,14 +179,14 @@ export function generateClientPdfBlob(data: ReportPdfData): Blob {
   lines.push("");
   lines.push("-------------------------------------------------------------------------");
   lines.push("3. COMPROMISED ASSETS & AFFECTED ACCOUNTS");
-  pushWrapped(`Compromised Hosts:      ${cleanHosts.join(', ') || 'None verified'}`, '  ');
-  pushWrapped(`Compromised Accounts:   ${cleanUsers.join(', ') || 'None verified'}`, '  ');
-  pushWrapped(`Adversary Infrastructure: ${data.externalIps.join(', ') || 'None verified'}`, '  ');
+  pushWrapped(`Compromised Hosts:      ${cleanHosts.join(', ') || 'None identified'}`, '  ');
+  pushWrapped(`Compromised Accounts:   ${cleanUsers.join(', ') || 'None identified'}`, '  ');
+  pushWrapped(`Adversary Infrastructure: ${data.externalIps.join(', ') || 'None identified'}`, '  ');
   lines.push("");
   lines.push("-------------------------------------------------------------------------");
-  lines.push("4. MITRE ATT&CK THREAT DETECTIONS & VERIFIED FINDINGS");
+  lines.push("4. MITRE ATT&CK THREAT DETECTIONS & RECORDED FINDINGS");
   if (dedupedDetections.length === 0) {
-    lines.push("No verified threat detections triggered.");
+    lines.push("No threat detections recorded.");
   } else {
     dedupedDetections.forEach((d, i) => {
       lines.push(`  [${i + 1}] ${d.rule} [${(d.severity || 'MEDIUM').toUpperCase()}]`);

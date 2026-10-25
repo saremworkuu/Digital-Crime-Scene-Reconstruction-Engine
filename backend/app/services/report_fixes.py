@@ -443,12 +443,15 @@ def dedupe_detections(
             m = dict(d)
             m["rule_name"] = title
             m["severity"] = _sev(d)
-            m["mitre_techniques_all"] = []
+            # Seed from the pre-built mitre_techniques_all list if present
+            seed = d.get("mitre_techniques_all") or []
+            m["mitre_techniques_all"] = list(seed)
             m["merged_ids"] = []
             merged[title.lower()] = m
-        tech = d.get("mitre_technique")
-        if tech and tech not in m["mitre_techniques_all"]:
-            m["mitre_techniques_all"].append(tech)
+        # Add individual technique if not already present
+        for tech in (d.get("mitre_techniques_all") or [d.get("mitre_technique")]):
+            if tech and tech not in m["mitre_techniques_all"]:
+                m["mitre_techniques_all"].append(tech)
         if d.get("id") and d["id"] not in m["merged_ids"]:
             m["merged_ids"].append(d["id"])
         if SEV_RANK.get(_sev(d), 0) > SEV_RANK.get(m["severity"], 0):
@@ -492,8 +495,15 @@ def unique_users(users: Iterable[Any]) -> List[str]:
         if not key:
             continue
         raw = re.sub(r"^user:\s*", "", str(u).strip(), flags=re.I)
-        if key not in best or ("\\" in raw and "\\" not in best[key]):
-            best[key] = raw  # prefer DOMAIN\user form
+        if "\\" in raw:
+            account = raw
+        elif "@" in raw:
+            username, domain = raw.split("@", 1)
+            account = f"{domain.split('.')[0].upper()}\\{username}"
+        else:
+            account = f"DOMAIN\\{raw}"
+        if key not in best or ("\\" in account and best[key].startswith("DOMAIN\\")):
+            best[key] = account
     return sorted(best.values(), key=str.lower)
 
 
@@ -511,9 +521,12 @@ def build_ip_host_map(events: List[Dict[str, Any]]) -> Dict[str, str]:
     can create wrong pairs (those get dropped when the IP maps to 2+ hosts)."""
     seen: Dict[str, set] = {}
     for ev in events:
-        host, ip = ev.get("host"), ev.get("src_ip")
-        if host and not str(host).startswith("unknown") and ip and _is_private(ip):
-            seen.setdefault(ip, set()).add(host)
+        host = ev.get("host")
+        if not host or str(host).startswith("unknown"):
+            continue
+        for ip in (ev.get("src_ip"), ev.get("dst_ip")):
+            if ip and _is_private(ip):
+                seen.setdefault(str(ip), set()).add(str(host))
     return {ip: next(iter(h)) for ip, h in seen.items() if len(h) == 1}
 
 
@@ -527,18 +540,47 @@ def resolve_hosts(hosts: Iterable[str], ip_map: Dict[str, str]) -> List[str]:
 def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]] = None,
                    max_rows: Optional[int] = None) -> List[Dict[str, Any]]:
     ip_map = ip_map or {}
+    known_user_candidates: Dict[tuple, set] = {}
+    for ev in events:
+        timestamp = str(ev.get("timestamp", ""))[:19]
+        host = ip_map.get(ev.get("host"), ev.get("host", ""))
+        user = ev.get("user")
+        if timestamp and host and user and not str(user).lower().startswith("unknown"):
+            if str(user).upper() not in ("SYSTEM", "-"):
+                known_user_candidates.setdefault((timestamp, str(host)), set()).add(str(user))
+    # Fill unknown users only when exactly one account is present on that host
+    # and second; do not guess when events disagree.
+    known_users = {
+        key: next(iter(users))
+        for key, users in known_user_candidates.items()
+        if len(users) == 1
+    }
+
     merged: Dict[tuple, Dict[str, Any]] = {}
     for ev in events:
         e = dict(ev)
         host = e.get("host")
-        if (not host or str(host).startswith("unknown")) and e.get("src_ip") in ip_map:
+        if host in ip_map:
+            e["host"] = ip_map[host]
+        elif (not host or str(host).startswith("unknown")) and e.get("src_ip") in ip_map:
             e["host"] = ip_map[e["src_ip"]]
+        timestamp = str(e.get("timestamp", ""))[:19]
+        if (
+            (not e.get("user") or str(e.get("user")).lower().startswith("unknown"))
+            and (timestamp, str(e.get("host", ""))) in known_users
+        ):
+            e["user"] = known_users[(timestamp, str(e.get("host", "")))]
         src = str(e.get("source_file") or e.get("source") or "")
-        key = (str(e.get("timestamp", ""))[:19], str(e.get("host", "")), str(e.get("action", "")))
+        key = (timestamp, str(e.get("host", "")), str(e.get("action", "")))
         if key in merged:
             m = merged[key]
             if src and src not in m["corroborated_by"]:
                 m["corroborated_by"].append(src)
+            if (
+                (not m.get("user") or str(m.get("user")).lower().startswith("unknown"))
+                and e.get("user")
+            ):
+                m["user"] = e["user"]
             if SEV_RANK.get(_sev(e), 0) > SEV_RANK.get(_sev(m), 0):
                 m["severity"] = e.get("severity")
         else:
@@ -580,7 +622,7 @@ def build_executive_summary(case_name: str, n_evidence: int, n_events: int,
     ordered = [t for t in TACTIC_ORDER if t in tactics] + sorted(t for t in tactics if t not in TACTIC_ORDER and t)
     crit = sum(1 for d in detections if _sev(d) == "critical")
     p = [f"[DRAFT] Forensic investigation report for incident '{case_name}'. "
-         f"{n_evidence} evidence artifact(s) were ingested and SHA-256 hashed; "
+         f"{n_evidence} evidence artifact(s) were ingested; SHA-256 values were recorded at upload and have not been re-verified. "
          f"{n_events} normalized events were analyzed."]
     if first_seen and last_seen:
         p.append(f"Attack activity ran from {first_seen} to {last_seen} UTC (dwell time {dwell}).")

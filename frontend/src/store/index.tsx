@@ -1087,8 +1087,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const allCaseEvents = [...events.filter(e => e.case_id === targetCaseId), ...parseResult.events];
       const newDetections = evaluateRulesAgainstEvents(rules, allCaseEvents, targetCaseId);
       setDetections(prev => {
+        const existingCaseDets = prev.filter(d => d.case_id === targetCaseId);
         const otherDetections = prev.filter(d => d.case_id !== targetCaseId);
-        return [...otherDetections, ...newDetections];
+        // Preserve false_positive flags and reasons from prior detections
+        const mergedCaseDets = newDetections.map(nd => {
+          const matched = existingCaseDets.find(ed => ed.rule_id === nd.rule_id || ed.id === nd.id);
+          if (matched && matched.false_positive) {
+            return {
+              ...nd,
+              false_positive: true,
+              false_positive_reason: (matched as any).false_positive_reason || (nd as any).false_positive_reason
+            };
+          }
+          return nd;
+        });
+        return [...otherDetections, ...mergedCaseDets];
       });
     }
 

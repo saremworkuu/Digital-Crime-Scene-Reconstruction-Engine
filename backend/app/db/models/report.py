@@ -29,9 +29,26 @@ class Report(Base):
         nullable=False
     )
 
+    version: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        default="1.0"
+    )
+
+    generator_name: Mapped[str] = mapped_column(
+        String,
+        nullable=True,
+        default="Lead Forensics Investigator"
+    )
+
     content: Mapped[str] = mapped_column(
         Text,
         nullable=False
+    )
+
+    report_data: Mapped[str] = mapped_column(
+        Text,
+        nullable=True
     )
 
     generated_at: Mapped[datetime] = mapped_column(

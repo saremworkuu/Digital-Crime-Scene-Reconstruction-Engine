@@ -26,6 +26,9 @@ def migrate_schema():
                 ("users", "two_factor_enabled", "BOOLEAN DEFAULT 0"),
                 ("users", "status", "VARCHAR(20) DEFAULT 'active'"),
                 ("users", "sessions", "JSON DEFAULT '[]'"),
+                ("reports", "version", "VARCHAR(20) DEFAULT '1.0'"),
+                ("reports", "generator_name", "VARCHAR DEFAULT 'Lead Forensics Investigator'"),
+                ("reports", "report_data", "TEXT DEFAULT NULL"),
             ]
             for table, col, col_def in tables_cols:
                 try:
@@ -48,6 +51,9 @@ def migrate_schema():
                 ("users", "two_factor_enabled", "BOOLEAN DEFAULT FALSE"),
                 ("users", "status", "VARCHAR(20) DEFAULT 'active'"),
                 ("users", "sessions", "JSONB DEFAULT '[]'::jsonb"),
+                ("reports", "version", "VARCHAR(20) DEFAULT '1.0'"),
+                ("reports", "generator_name", "VARCHAR DEFAULT 'Lead Forensics Investigator'"),
+                ("reports", "report_data", "TEXT DEFAULT NULL"),
             ]
             for table, col, col_def in tables_cols:
                 try:

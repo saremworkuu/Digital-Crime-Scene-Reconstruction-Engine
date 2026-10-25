@@ -18,3 +18,13 @@ class ForensicReportResponse(BaseModel):
     attack_timeline_summary: List[Dict[str, Any]] = Field(default_factory=list)
     compromised_assets: Dict[str, Any] = Field(default_factory=dict)
     recommendations: List[str] = Field(default_factory=list)
+
+
+class ReportSummaryItem(BaseModel):
+    id: str
+    case_id: str
+    title: str
+    version: str
+    generator_name: Optional[str] = None
+    generated_at: str
+

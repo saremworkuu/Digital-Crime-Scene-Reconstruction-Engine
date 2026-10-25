@@ -457,8 +457,10 @@ BUILTIN_SIGMA_RULES: List[Dict[str, Any]] = [
         "name": "Remote Service Creation via PsExec or Service Control",
         "severity": "high",
         "mitre_tactic": "Lateral Movement",
-        "mitre_technique": "T1569.002",
-        "description": "Detects remote service creation or PsExec service installation (Event ID 7045 / 4697).",
+        "mitre_technique": "T1021.002",
+        # Also covers T1569.002 (Execution via remote service)
+        "mitre_techniques": ["T1021.002", "T1569.002"],
+        "description": "Detects remote service creation or PsExec service installation (Event ID 7045 / 4697) — indicative of lateral movement via SMB/PsExec.",
         "detection": {
             "selection": {
                 "ServiceName|contains": ["PSEXESVC"],
@@ -554,6 +556,66 @@ BUILTIN_SIGMA_RULES: List[Dict[str, Any]] = [
         "detection": {
             "selection": {
                 "EventID": [6416, 2003, 2102, "6416", "2003"]
+            }
+        }
+    },
+    # ------------------------------------------------------------------ #
+    # fix-10: Phishing macro attachment (T1566.001)                        #
+    # ------------------------------------------------------------------ #
+    {
+        "id": "rule-phishing-macro-attachment",
+        "name": "Phishing Email with Macro-Enabled Attachment",
+        "severity": "high",
+        "mitre_tactic": "Initial Access",
+        "mitre_technique": "T1566.001",
+        "description": "Detects macro-enabled Office attachments (.docm, .xlsm, .xlsb, .pptm) arriving via email or saved to disk — common phishing initial access vector.",
+        "detection": {
+            "selection": {
+                "raw|contains": [".docm", ".xlsm", ".xlsb", ".pptm", ".docm\"", "macro", "VBA", "AutoOpen", "Document_Open"]
+            }
+        }
+    },
+    # ------------------------------------------------------------------ #
+    # fix-10: Backup service / shadow copy stopped (T1489 Impact)          #
+    # ------------------------------------------------------------------ #
+    {
+        "id": "rule-backup-service-stopped",
+        "name": "Backup or Recovery Service Stopped",
+        "severity": "high",
+        "mitre_tactic": "Impact",
+        "mitre_technique": "T1489",
+        "description": "Detects commands or events that stop or disable backup, recovery, or shadow copy services (wbengine, VSS, MSSQLSERVER$BACKUP, BackupExec).",
+        "detection": {
+            "selection": {
+                "CommandLine|contains": [
+                    "sc stop wbengine", "sc stop vss", "sc config wbengine",
+                    "net stop \"backup", "net stop vss", "net stop wbengine",
+                    "Stop-Service -Name vss", "Stop-Service -Name wbengine",
+                    "wmic service where name='vss' call stopservice",
+                    "MSSQLSERVER$BACKUP", "BackupExec"
+                ]
+            }
+        }
+    },
+    # ------------------------------------------------------------------ #
+    # fix-10: Ransom note / family name drop (T1486 Impact)               #
+    # ------------------------------------------------------------------ #
+    {
+        "id": "rule-ransom-note-dropped",
+        "name": "Ransomware Note Dropped to Disk",
+        "severity": "critical",
+        "mitre_tactic": "Impact",
+        "mitre_technique": "T1486",
+        "description": "Detects creation of ransomware ransom note files (README_RESTORE_FILES, HOW_TO_DECRYPT, DECRYPT_INSTRUCTIONS, !!!RESTORE_FILES!!!, _HELP_RESTORE) or known ransomware family markers.",
+        "detection": {
+            "selection": {
+                "raw|contains": [
+                    "README_RESTORE", "HOW_TO_DECRYPT", "DECRYPT_INSTRUCTION",
+                    "RESTORE_FILES", "_HELP_RESTORE", "!!! READ ME !!!",
+                    "ransomnote", "ransom note", "your files have been encrypted",
+                    "LockBit", "REvil", "BlackCat", "AlphV", "Conti",
+                    "Ryuk", "Hive", "BlackMatter"
+                ]
             }
         }
     },
@@ -727,6 +789,8 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
             actor = src_ips[0] if src_ips else (users[0] if users else None)
             target_host = hosts[0] if hosts else None
 
+            # fix-3: seed mitre_techniques_all from the rule's explicit list
+            rule_techs = rule.get("mitre_techniques") or [rule["mitre_technique"]]
             findings.append({
                 "id": finding_id,
                 "rule_id": rule["id"],
@@ -734,6 +798,7 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
                 "severity": rule["severity"],   # B4: never put action here
                 "mitre_tactic": rule["mitre_tactic"],
                 "mitre_technique": rule["mitre_technique"],
+                "mitre_techniques_all": list(rule_techs),
                 "description": f"{rule['description']} Detected in {len(matched_events)} event(s).",
                 # B1 fields
                 "actor": actor,
