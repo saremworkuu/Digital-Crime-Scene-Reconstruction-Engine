@@ -108,7 +108,7 @@ DCSRE processes evidence through an 8-stage deterministic pipeline:
 #### 5.1 Public Portal & 3D Global Cyber Threat Sphere
 *Landing page welcoming investigators with real-time incident metrics and an interactive 3D global attack topology.*
 
-![Public Portal & 3D Threat Sphere](docs/screenshots/landing_page.png)
+![Public Portal & 3D Threat Sphere](landing_page.png)
 
 ---
 
