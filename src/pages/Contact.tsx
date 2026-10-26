@@ -173,7 +173,7 @@ export const Contact: React.FC = () => {
       {/* LEFT 50% OF SCREEN: FULL-BLEED EDGE-TO-EDGE ARTWORK IMAGE           */}
       {/* Spans full viewport height on desktop, stacks on top on mobile      */}
       {/* =================================================================== */}
-      <div className="w-full lg:w-1/2 min-h-[300px] sm:min-h-[380px] lg:min-h-[calc(100vh-61px)] relative overflow-hidden bg-[#070606] flex items-center justify-center shrink-0">
+      <div className="w-full lg:w-1/2 h-[200px] sm:h-[280px] md:h-[340px] lg:h-auto lg:min-h-[calc(100vh-61px)] relative overflow-hidden bg-[#070606] flex items-center justify-center shrink-0">
         <img
           src="/assets/contact_art.png"
           alt="Hooded figure running along forest pathway"
@@ -189,7 +189,7 @@ export const Contact: React.FC = () => {
       {/* RIGHT 50% OF SCREEN: CLEAN CENTERED CONTACT FORM                    */}
       {/* No outer card boxes, no enclosing borders, exactly matches Sign In  */}
       {/* =================================================================== */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center px-6 sm:px-12 lg:px-14 xl:px-20 py-8 lg:py-12">
+      <div className="w-full lg:w-1/2 flex items-center justify-center px-4 sm:px-8 lg:px-14 xl:px-20 py-6 sm:py-8 lg:py-12">
         <div className="w-full max-w-md">
 
           {/* Header */}

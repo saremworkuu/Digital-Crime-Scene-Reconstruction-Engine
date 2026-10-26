@@ -136,7 +136,7 @@ export const Login: React.FC = () => {
       {/* =================================================================== */}
       {/* LEFT HALF OF PAGE: PURE IMAGE (No boxes, no frames, full half bleed) */}
       {/* =================================================================== */}
-      <div className="w-full lg:w-1/2 min-h-[340px] sm:min-h-[420px] lg:min-h-[calc(100vh-4rem)] relative overflow-hidden bg-[#070606] flex items-center justify-center">
+      <div className="w-full lg:w-1/2 h-[180px] sm:h-[260px] md:h-[320px] lg:h-auto lg:min-h-[calc(100vh-4rem)] relative overflow-hidden bg-[#070606] flex items-center justify-center shrink-0">
         <img
           src="/assets/auth_art.png"
           alt="Puppet on strings artwork"
@@ -149,7 +149,7 @@ export const Login: React.FC = () => {
       {/* =================================================================== */}
       {/* RIGHT HALF OF PAGE: LOGIN FORM (Clean, centered, no outer box)      */}
       {/* =================================================================== */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center px-6 sm:px-12 lg:px-14 xl:px-20 py-8 lg:py-12">
+      <div className="w-full lg:w-1/2 flex items-center justify-center px-4 sm:px-8 lg:px-14 xl:px-20 py-6 sm:py-8 lg:py-12">
         <div className="w-full max-w-md">
 
           {/* Header */}

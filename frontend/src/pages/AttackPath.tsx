@@ -282,7 +282,7 @@ export const AttackPath: React.FC = () => {
           </div>
 
           {/* Right Column: Finding Evidence Inspector (5 cols) */}
-          <div className="lg:col-span-5 sticky top-[75px] space-y-4">
+          <div className="lg:col-span-5 lg:sticky lg:top-[75px] space-y-4">
             {selectedFinding ? (
               <div className="p-5 rounded-2xl bg-[#161413] border border-[#2e2825] shadow-xl space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-[#282321]">

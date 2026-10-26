@@ -469,7 +469,7 @@ export const Evidence: React.FC = () => {
 
         <div className="overflow-x-auto">
 
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-xs min-w-[650px]">
 
             <thead>
 

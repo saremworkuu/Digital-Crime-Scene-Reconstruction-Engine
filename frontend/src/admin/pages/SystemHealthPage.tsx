@@ -258,7 +258,7 @@ export const SystemHealthPage: React.FC = () => {
           <div className={`overflow-x-auto rounded-lg border ${
             isLight ? 'border-slate-200' : 'border-[#24201e]'
           }`}>
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[600px]">
               <thead className={`uppercase font-mono text-[10px] tracking-wider border-b ${
                 isLight
                   ? 'bg-slate-50 text-slate-600 border-slate-200'

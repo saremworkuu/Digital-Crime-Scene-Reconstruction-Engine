@@ -126,7 +126,7 @@ export const Cases: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#161413]/90 border border-[#2b2523] rounded-xl backdrop-blur-xl">
         
         {/* Search */}
-        <div className="relative flex-1 min-w-[240px]">
+        <div className="relative flex-1 min-w-[180px] sm:min-w-[240px]">
           <Search className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -349,9 +349,9 @@ export const Cases: React.FC = () => {
 
       {/* Create Case Modal (FR-CASE-1) */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-lg bg-[#161413] border border-[#2b2523] rounded-2xl shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#282321]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-lg max-h-[90vh] flex flex-col bg-[#161413] border border-[#2b2523] rounded-2xl shadow-2xl p-4 sm:p-6 space-y-4 overflow-hidden">
+            <div className="flex items-center justify-between pb-3 border-b border-[#282321] shrink-0">
               <h3 className="text-sm font-semibold text-[#fafaf9] flex items-center gap-2">
                 <FolderLock className="w-4 h-4 text-[#f95721]" />
                 <span>Create New Investigation Case</span>
@@ -364,7 +364,7 @@ export const Cases: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateSubmit} className="space-y-4 text-xs">
+            <form onSubmit={handleCreateSubmit} className="space-y-4 text-xs overflow-y-auto flex-1 pr-1">
               <div className="space-y-1">
                 <label className="text-[#d6d3d1] font-medium">Case Title / Incident Identifier *</label>
                 <input
@@ -421,9 +421,9 @@ export const Cases: React.FC = () => {
 
       {/* Edit Case Modal (FR-CASE-5) */}
       {editingCase && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-lg bg-[#161413] border border-[#2b2523] rounded-2xl shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#282321]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-lg max-h-[90vh] flex flex-col bg-[#161413] border border-[#2b2523] rounded-2xl shadow-2xl p-4 sm:p-6 space-y-4 overflow-hidden">
+            <div className="flex items-center justify-between pb-3 border-b border-[#282321] shrink-0">
               <h3 className="text-sm font-semibold text-[#fafaf9]">
                 Edit Case Information
               </h3>
@@ -432,7 +432,7 @@ export const Cases: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleEditSubmit} className="space-y-4 text-xs">
+            <form onSubmit={handleEditSubmit} className="space-y-4 text-xs overflow-y-auto flex-1 pr-1">
               <div className="space-y-1">
                 <label className="text-[#d6d3d1] font-medium">Case Name</label>
                 <input

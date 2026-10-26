@@ -66,7 +66,7 @@ export const About: React.FC = () => {
               >
                 አሻራ
               </h1>
-              <span className="text-xs sm:text-sm font-mono uppercase tracking-wider text-[#f95721] font-bold px-2.5 py-1 rounded-md bg-[#f95721]/10 border border-[#f95721]/30 shadow-sm">
+              <span className="text-[11px] sm:text-xs md:text-sm font-mono uppercase tracking-wider text-[#f95721] font-bold px-2.5 py-1 rounded-md bg-[#f95721]/10 border border-[#f95721]/30 shadow-sm break-words max-w-full">
                 Digital Crime Scene Reconstruction Engine
               </span>
             </div>
@@ -80,8 +80,8 @@ export const About: React.FC = () => {
             </p>
           </div>
 
-          <div className="shrink-0 flex items-center justify-center p-2 rounded-2xl bg-black/20 border border-white/5 backdrop-blur-sm">
-            <Forensic3DCore size={88} interactive={true} />
+          <div className="shrink-0 flex items-center justify-center p-2 rounded-2xl bg-black/20 border border-white/5 backdrop-blur-sm self-center md:self-auto">
+            <Forensic3DCore size={72} interactive={true} />
           </div>
         </div>
       </div>
@@ -102,14 +102,14 @@ export const About: React.FC = () => {
         <div className="relative w-full overflow-hidden py-3">
           {/* Edge fading gradients for smooth entering and exiting */}
           <div
-            className={`pointer-events-none absolute left-0 top-0 bottom-0 w-12 sm:w-16 z-10 ${
+            className={`pointer-events-none absolute left-0 top-0 bottom-0 w-8 sm:w-16 z-10 ${
               isLight
                 ? 'bg-gradient-to-r from-slate-50 to-transparent'
                 : 'bg-gradient-to-r from-[#0e0d0d] to-transparent'
             }`}
           />
           <div
-            className={`pointer-events-none absolute right-0 top-0 bottom-0 w-12 sm:w-16 z-10 ${
+            className={`pointer-events-none absolute right-0 top-0 bottom-0 w-8 sm:w-16 z-10 ${
               isLight
                 ? 'bg-gradient-to-l from-slate-50 to-transparent'
                 : 'bg-gradient-to-l from-[#0e0d0d] to-transparent'
@@ -117,11 +117,11 @@ export const About: React.FC = () => {
           />
 
           {/* Continuous Infinite Sliding Container: Proportional balanced dimensions */}
-          <div className="animate-slide-circle-rtl flex flex-nowrap gap-5 sm:gap-6 w-max shrink-0 select-none">
+          <div className="animate-slide-circle-rtl flex flex-nowrap gap-4 sm:gap-6 w-max shrink-0 select-none">
             {loopPillars.map((pillar, idx) => (
               <div
                 key={idx}
-                className={`relative w-[290px] sm:w-[330px] md:w-[370px] lg:w-[400px] h-[195px] sm:h-[215px] md:h-[225px] lg:h-[235px] shrink-0 rounded-2xl border overflow-hidden select-none group transition-all duration-300 cursor-pointer shadow-xl flex flex-col justify-between ${
+                className={`relative w-[260px] sm:w-[320px] md:w-[370px] lg:w-[400px] h-[190px] sm:h-[215px] md:h-[225px] lg:h-[235px] shrink-0 rounded-2xl border overflow-hidden select-none group transition-all duration-300 cursor-pointer shadow-xl flex flex-col justify-between ${
                   isLight
                     ? 'border-slate-300 bg-[#0d0c0c] hover:border-[#ea580c] hover:shadow-2xl'
                     : 'border-[#2e2825] bg-[#141211] hover:border-[#f95721] hover:shadow-[0_0_28px_rgba(249,87,33,0.35)]'

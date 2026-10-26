@@ -616,7 +616,7 @@ export const Reports: React.FC = () => {
       {/* ── Forensic Report Document Body ─────────────────────────────────── */}
       <div
         id="forensic-report-container"
-        className="bg-[#161413]/95 border border-[#2b2523] rounded-2xl p-8 sm:p-12 text-[#fafaf9] space-y-8 max-w-4xl mx-auto shadow-2xl backdrop-blur-xl print:bg-white print:text-black print:p-0 print:border-none print:shadow-none"
+        className="bg-[#161413]/95 border border-[#2b2523] rounded-2xl p-4 sm:p-8 md:p-12 text-[#fafaf9] space-y-8 max-w-4xl mx-auto shadow-2xl backdrop-blur-xl print:bg-white print:text-black print:p-0 print:border-none print:shadow-none"
       >
 
         {/* DRAFT banner */}
@@ -640,14 +640,14 @@ export const Reports: React.FC = () => {
 
         {/* Document Header */}
         <div className="border-b-2 border-[#282321] print:border-black pb-6 space-y-3">
-          <div className="flex flex-wrap items-center justify-between text-xs font-mono text-[#a8a29e] print:text-gray-600">
+          <div className="flex flex-wrap items-center justify-between text-xs font-mono text-[#a8a29e] print:text-gray-600 gap-2">
             <span>DCSRE FORENSIC EXAMINATION REPORT</span>
             <span className="uppercase text-[#f95721] print:text-black font-semibold">
                             {rd?.classification || 'CONFIDENTIAL // TLP:AMBER - DFIR EVIDENTIARY'}
             </span>
           </div>
 
-          <h1 className="text-2xl font-bold tracking-tight text-[#fafaf9] print:text-black">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#fafaf9] print:text-black">
             {activeCase.name}
           </h1>
 
@@ -704,7 +704,7 @@ export const Reports: React.FC = () => {
 
         {/* 2. Digital Evidence Inventory */}
         <section className="space-y-3 print-break-inside-avoid">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1 flex items-center justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1 flex flex-wrap items-center justify-between gap-2">
             <span>2. Digital Evidence Inventory &amp; Integrity Hashes</span>
             <span className="text-[10px] text-[#a8a29e] print:text-gray-600 font-normal flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 inline" />
@@ -712,44 +712,46 @@ export const Reports: React.FC = () => {
             </span>
           </h2>
 
-          <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono">
-            <thead>
-              <tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800 border-b border-[#282321] print:border-gray-400">
-                <th className="p-2">#</th>
-                <th className="p-2">Filename</th>
-                <th className="p-2">SHA-256 Hash</th>
-                <th className="p-2">Hash Status</th>
-                <th className="p-2 text-right">Size</th>
-                <th className="p-2 text-right">Events</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#282321] print:divide-gray-300">
-              {evidenceRows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-4 text-center text-[#78716c] font-sans">
-                    No evidence files ingested.
-                  </td>
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono min-w-[540px]">
+              <thead>
+                <tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800 border-b border-[#282321] print:border-gray-400">
+                  <th className="p-2">#</th>
+                  <th className="p-2">Filename</th>
+                  <th className="p-2">SHA-256 Hash</th>
+                  <th className="p-2">Hash Status</th>
+                  <th className="p-2 text-right">Size</th>
+                  <th className="p-2 text-right">Events</th>
                 </tr>
-              ) : (
-                evidenceRows.map((ev: any, idx: number) => (
-                  <tr key={idx} className="text-[#d6d3d1] print:text-gray-900">
-                    <td className="p-2 text-[#78716c]">{idx + 1}</td>
-                    <td className="p-2 font-semibold text-[#fafaf9] print:text-black">{ev.filename}</td>
-                    <td className="p-2 text-[11px] select-all font-mono text-[#f95721] print:text-black">
-                      {ev.sha256_hash || '—'}
-                    </td>
-                    <td className="p-2 text-[#a8a29e] text-[11px]">
-                      {ev.hash_status || 'recorded (not re-verified)'}
-                    </td>
-                    <td className="p-2 text-right">{Number(ev.size_bytes || 0).toLocaleString()} bytes ({(Number(ev.size_bytes || 0) / 1024).toFixed(2)} KiB)</td>
-                    <td className="p-2 text-right text-[#f95721] print:text-black font-semibold">
-                      {ev.document_artifact ? 'Document artifact' : (ev.event_count ?? 0)}
+              </thead>
+              <tbody className="divide-y divide-[#282321] print:divide-gray-300">
+                {evidenceRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-4 text-center text-[#78716c] font-sans">
+                      No evidence files ingested.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  evidenceRows.map((ev: any, idx: number) => (
+                    <tr key={idx} className="text-[#d6d3d1] print:text-gray-900">
+                      <td className="p-2 text-[#78716c]">{idx + 1}</td>
+                      <td className="p-2 font-semibold text-[#fafaf9] print:text-black">{ev.filename}</td>
+                      <td className="p-2 text-[11px] select-all font-mono text-[#f95721] print:text-black break-all">
+                        {ev.sha256_hash || '—'}
+                      </td>
+                      <td className="p-2 text-[#a8a29e] text-[11px]">
+                        {ev.hash_status || 'recorded (not re-verified)'}
+                      </td>
+                      <td className="p-2 text-right">{Number(ev.size_bytes || 0).toLocaleString()} bytes ({(Number(ev.size_bytes || 0) / 1024).toFixed(2)} KiB)</td>
+                      <td className="p-2 text-right text-[#f95721] print:text-black font-semibold">
+                        {ev.document_artifact ? 'Document artifact' : (ev.event_count ?? 0)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         {/* 3. Chronological Attack Sequence */}
@@ -806,43 +808,45 @@ export const Reports: React.FC = () => {
             4. Adversary Tactics &amp; MITRE ATT&amp;CK Detections
           </h2>
 
-          <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono">
-            <thead>
-              <tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800 border-b border-[#282321] print:border-gray-400">
-                <th className="p-2">Severity</th>
-                <th className="p-2">Technique</th>
-                <th className="p-2">Tactic</th>
-                <th className="p-2">Detection</th>
-                <th className="p-2">First Seen (UTC)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#282321] print:divide-gray-300">
-              {detections.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-4 text-center text-[#78716c] font-sans">
-                    No detections recorded for this case.
-                  </td>
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono min-w-[540px]">
+              <thead>
+                <tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800 border-b border-[#282321] print:border-gray-400">
+                  <th className="p-2">Severity</th>
+                  <th className="p-2">Technique</th>
+                  <th className="p-2">Tactic</th>
+                  <th className="p-2">Detection</th>
+                  <th className="p-2">First Seen (UTC)</th>
                 </tr>
-              ) : (
-                detections.map((det: any, i: number) => (
-                  <tr key={det.id || i} className="text-[#d6d3d1] print:text-gray-900">
-                    <td className={`p-2 uppercase font-bold ${severityColor(det.severity)}`}>
-                      {det.severity}
-                    </td>
-                    <td className="p-2 text-[#f95721] print:text-black font-semibold">
-                      {(det.mitre_techniques_all || [det.mitre_technique]).filter(Boolean).join(', ') || '—'}
-                    </td>
-                    <td className="p-2">{det.mitre_tactic || '—'}</td>
-                    <td className="p-2">{det.rule_name}</td>
-                    {/* first_seen is the event time, not the upload/ingestion time */}
-                    <td className="p-2 text-[#a8a29e] print:text-gray-600">
-                      {det.first_seen ? det.first_seen.slice(0, 19).replace('T', ' ') : 'Not available'}
+              </thead>
+              <tbody className="divide-y divide-[#282321] print:divide-gray-300">
+                {detections.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-4 text-center text-[#78716c] font-sans">
+                      No detections recorded for this case.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  detections.map((det: any, i: number) => (
+                    <tr key={det.id || i} className="text-[#d6d3d1] print:text-gray-900">
+                      <td className={`p-2 uppercase font-bold ${severityColor(det.severity)}`}>
+                        {det.severity}
+                      </td>
+                      <td className="p-2 text-[#f95721] print:text-black font-semibold">
+                        {(det.mitre_techniques_all || [det.mitre_technique]).filter(Boolean).join(', ') || '—'}
+                      </td>
+                      <td className="p-2">{det.mitre_tactic || '—'}</td>
+                      <td className="p-2">{det.rule_name}</td>
+                      {/* first_seen is the event time, not the upload/ingestion time */}
+                      <td className="p-2 text-[#a8a29e] print:text-gray-600">
+                        {det.first_seen ? det.first_seen.slice(0, 19).replace('T', ' ') : 'Not available'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         {/* 5. Observed Scope */}
@@ -915,12 +919,14 @@ export const Reports: React.FC = () => {
             6. Indicators
           </h2>
           {(rd.indicators || []).length ? (
-            <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono">
-              <thead><tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800"><th className="p-2">Type</th><th className="p-2">Indicator</th><th className="p-2">Role</th><th className="p-2">Source finding</th></tr></thead>
-              <tbody className="divide-y divide-[#282321] print:divide-gray-300">
-                {rd.indicators!.map((indicator, index) => <tr key={`${indicator.type}-${indicator.value}-${index}`}><td className="p-2">{indicator.type}</td><td className="p-2 font-mono">{indicator.value}</td><td className="p-2">{indicator.role || 'Observed'}</td><td className="p-2">{indicator.source_finding || 'Observed event'}</td></tr>)}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono min-w-[500px]">
+                <thead><tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800"><th className="p-2">Type</th><th className="p-2">Indicator</th><th className="p-2">Role</th><th className="p-2">Source finding</th></tr></thead>
+                <tbody className="divide-y divide-[#282321] print:divide-gray-300">
+                  {rd.indicators!.map((indicator, index) => <tr key={`${indicator.type}-${indicator.value}-${index}`}><td className="p-2">{indicator.type}</td><td className="p-2 font-mono break-all">{indicator.value}</td><td className="p-2">{indicator.role || 'Observed'}</td><td className="p-2">{indicator.source_finding || 'Observed event'}</td></tr>)}
+                </tbody>
+              </table>
+            </div>
           ) : <p className="text-xs text-[#78716c]">No indicators identified.</p>}
         </section>
 

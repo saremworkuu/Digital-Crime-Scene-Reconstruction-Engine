@@ -77,35 +77,33 @@ export const TopNav: React.FC<TopNavProps> = ({
       <div className="flex items-center justify-between gap-4 max-w-7xl mx-auto">
 
         {/* Zone 1: Brand wordmark & mobile toggle */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          {currentUser && (
-            <button
-              type="button"
-              onClick={onToggleMobileMenu}
-              className={`lg:hidden p-1.5 rounded-lg border transition-colors cursor-pointer ${isLight
-                  ? 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-800'
-                  : 'border-[#2e2926] bg-[#191716] hover:bg-[#221f1d] text-[#e7e5e4]'
-                }`}
-              title="Toggle Navigation Menu"
-              aria-label="Toggle Navigation Menu"
-            >
-              {mobileMenuOpen ? <X className="w-4 h-4 text-[#f95721]" /> : <Menu className="w-4 h-4" />}
-            </button>
-          )}
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={onToggleMobileMenu}
+            className={`${currentUser ? 'lg:hidden' : 'md:hidden'} p-1.5 rounded-lg border transition-colors cursor-pointer ${isLight
+                ? 'border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-800'
+                : 'border-[#2e2926] bg-[#191716] hover:bg-[#221f1d] text-[#e7e5e4]'
+              }`}
+            title="Toggle Navigation Menu"
+            aria-label="Toggle Navigation Menu"
+          >
+            {mobileMenuOpen ? <X className="w-4 h-4 text-[#f95721]" /> : <Menu className="w-4 h-4" />}
+          </button>
 
           <button
             onClick={() => setCurrentPage('home')}
-            className="flex items-center gap-2.5 text-left group focus:outline-none cursor-pointer"
+            className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none cursor-pointer"
           >
-            <div className="flex items-center justify-center text-[#f95721] transition-transform duration-200 group-hover:scale-110">
-              <Forensic3DCore size={32} interactive={true} />
+            <div className="flex items-center justify-center text-[#f95721] transition-transform duration-200 group-hover:scale-110 shrink-0">
+              <Forensic3DCore size={28} interactive={true} />
             </div>
             <div>
-              <span className={`text-base font-bold tracking-tight transition-colors ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#f95721]'
+              <span className={`text-sm sm:text-base font-bold tracking-tight transition-colors ${isLight ? 'text-slate-900 group-hover:text-[#ea580c]' : 'text-[#fafaf9] group-hover:text-[#f95721]'
                 }`}>
                 አሻራ
               </span>
-              <span className={`text-[10px] block font-mono leading-none ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'
+              <span className={`text-[9px] sm:text-[10px] block font-mono leading-none ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'
                 }`}>
                 CYBER FORENSICS
               </span>
@@ -113,11 +111,11 @@ export const TopNav: React.FC<TopNavProps> = ({
           </button>
         </div>
 
-        {/* Zone 2: Navigation Links & Actions (No enclosing boxes, no icons, clean text links) */}
-        <div className="flex items-center gap-4 sm:gap-6 shrink-0">
+        {/* Zone 2: Navigation Links & Actions (Collapses gracefully on mobile) */}
+        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
           {currentUser ? (
             /* Signed-in Actions: Clean text links without boxes or symbols */
-            <div className="flex items-center gap-4 sm:gap-6 mr-1">
+            <div className="hidden md:flex items-center gap-3 sm:gap-5 mr-1">
               <button
                 type="button"
                 onClick={() => setCurrentPage('home')}
@@ -189,7 +187,7 @@ export const TopNav: React.FC<TopNavProps> = ({
             </div>
           ) : (
             /* Public Pre-login Actions: Clean text links */
-            <div className="flex items-center gap-4 sm:gap-6 mr-1">
+            <div className="hidden md:flex items-center gap-3 sm:gap-5 mr-1">
               <button
                 type="button"
                 onClick={() => setCurrentPage('home')}
@@ -260,10 +258,10 @@ export const TopNav: React.FC<TopNavProps> = ({
                   }`}
                 title="Account Menu"
               >
-                <div className="w-6 h-6 rounded-full bg-[#24130d] border border-[#ea580c]/50 flex items-center justify-center text-[11px] font-bold text-[#f95721]">
+                <div className="w-6 h-6 rounded-full bg-[#24130d] border border-[#ea580c]/50 flex items-center justify-center text-[11px] font-bold text-[#f95721] shrink-0">
                   {currentUser?.name.charAt(0) || 'U'}
                 </div>
-                <span className="font-medium text-xs sm:text-sm">{currentUser?.name.split(' ')[0]}</span>
+                <span className="font-medium text-xs sm:text-sm hidden sm:inline">{currentUser?.name.split(' ')[0]}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-[#78716c]" />
               </button>
 

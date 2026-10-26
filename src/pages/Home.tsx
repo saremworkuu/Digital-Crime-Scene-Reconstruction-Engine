@@ -25,7 +25,7 @@ const MotionImageSequence: React.FC<MotionImageSequenceProps> = ({ images, alt, 
   }, [images.length]);
 
   return (
-    <div className={`relative w-full max-w-[340px] sm:max-w-[360px] h-[460px] sm:h-[500px] lg:h-[520px] rounded-2xl overflow-hidden shrink-0 shadow-lg ${className}`}>
+    <div className={`relative w-full max-w-[270px] sm:max-w-[290px] lg:max-w-[310px] aspect-[9/16] rounded-2xl overflow-hidden shrink-0 mx-auto ${className}`}>
       {images.map((src, index) => {
         const isActive = index === currentIndex;
         return (

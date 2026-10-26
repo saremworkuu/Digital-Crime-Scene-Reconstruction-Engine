@@ -73,7 +73,7 @@ export function DataTable<T>({
       }`}
     >
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs sm:text-sm">
+        <table className="w-full text-left text-xs sm:text-sm min-w-[620px]">
           <thead>
             <tr
               className={`border-b text-[11px] font-mono uppercase tracking-wider select-none ${

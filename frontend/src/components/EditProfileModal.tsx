@@ -144,9 +144,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md animate-fadeIn">
       <div
-        className={`w-full max-w-xl rounded-2xl border shadow-[0_25px_80px_rgba(0,0,0,0.85)] overflow-hidden transition-all duration-200 ${
+        className={`w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl border shadow-[0_25px_80px_rgba(0,0,0,0.85)] overflow-hidden transition-all duration-200 ${
           isLight
             ? 'bg-white border-slate-200 text-slate-800'
             : 'bg-[#141211] border-[#2e2926] text-[#e7e5e4]'
@@ -284,7 +284,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
         )}
 
         {/* Form Body */}
-        <form onSubmit={handleSaveProfile} className="p-6 space-y-4">
+        <form onSubmit={handleSaveProfile} className="p-4 sm:p-6 space-y-4 flex-1 overflow-y-auto">
           {activeTab === 'details' ? (
             <div className="space-y-4 text-xs">
               {/* Full Name */}

@@ -57,12 +57,12 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     filters.showMetrics;
 
   return (
-    <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-4 mb-4 space-y-3.5 backdrop-blur-xl shadow-xl">
+    <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-3 sm:p-4 mb-4 space-y-3.5 backdrop-blur-xl shadow-xl">
       {/* Search & Main Toggles Row */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
         
         {/* Search input */}
-        <div className="relative flex-1 min-w-[240px]">
+        <div className="relative flex-1 min-w-[180px] sm:min-w-[240px]">
           <Search className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"

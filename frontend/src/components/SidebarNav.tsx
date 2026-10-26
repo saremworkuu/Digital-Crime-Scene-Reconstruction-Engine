@@ -47,7 +47,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ className = '' }) => {
 
   return (
     <aside
-      className={`w-60 shrink-0 select-none flex flex-col py-4 px-3 space-y-1.5 transition-colors duration-200 ${
+      className={`shrink-0 select-none flex flex-col py-4 px-3 space-y-1.5 transition-colors duration-200 ${
+        className?.includes('w-') ? '' : 'w-52 sm:w-60 max-w-[70vw]'
+      } ${
         isLight
           ? 'bg-white/80 border-r border-[#e4e4e7]'
           : 'bg-[#121110]/90 border-r border-[#24201e]'
@@ -64,7 +66,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ className = '' }) => {
         {visibleItems.map((item) => {
           const isActive = currentPage === item.id;
 
-          const handleClick = () => {
+          const handleClick = (e: React.MouseEvent) => {
+            e.stopPropagation();
             setCurrentPage(item.id);
           };
 
@@ -106,7 +109,10 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ className = '' }) => {
       <div className={`pt-3 mt-auto border-t ${isLight ? 'border-slate-200' : 'border-[#24201e]'}`}>
         <button
           type="button"
-          onClick={() => setCurrentPage('home')}
+          onClick={(e) => {
+            e.stopPropagation();
+            setCurrentPage('home');
+          }}
           className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all group cursor-pointer ${
             currentPage === 'home'
               ? isLight

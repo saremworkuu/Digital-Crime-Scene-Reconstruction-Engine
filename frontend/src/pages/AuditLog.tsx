@@ -115,7 +115,7 @@ export const AuditLog: React.FC = () => {
       {/* Audit Log Table */}
       <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl overflow-hidden flex flex-col shadow-xl">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-xs min-w-[650px]">
             <thead>
               <tr className="border-b border-[#282321] bg-[#100f0e] text-[#a8a29e] font-mono text-[11px]">
                 <th className="py-2.5 px-4 w-12 text-center">#</th>
