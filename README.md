@@ -118,8 +118,7 @@ DCSRE processes evidence through an 8-stage deterministic pipeline:
 
 *Unified investigation command center with active case telemetry, compliance scoring, and gateway density metrics.*
 
-> 📌 **Screenshot placeholder** — add your dashboard screenshot here by replacing this line with:
-> `![Forensic Investigator Dashboard](dashboard.png)`
+
 
 ---
 
