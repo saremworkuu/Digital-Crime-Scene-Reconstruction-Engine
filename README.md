@@ -27,12 +27,12 @@
 ## 👥 2. Team Information
 
 | # | Full Name | CTC ID |
-|---|:---|:---|:---|
-| 1 | **Bitaniya Damtew** | `CTC-2894-26` |  
-| 2 | **Sarendem Worku** | `CTC-2672-26` |  
-| 3 | **Lidya Nigusse** | `CTC-1145-26` | 
+|:---:|:---|:---:|
+| 1 | **Bitaniya Damtew** | `CTC-2894-26` |
+| 2 | **Sarendem Worku** | `CTC-2672-26` |
+| 3 | **Lidya Nigusse** | `CTC-1145-26` |
 | 4 | **Henon Chare** | `CTC-077-26` |
-| 5 | **Zulkifl Seid** | `CTC-1083-26` | 
+| 5 | **Zulkifl Seid** | `CTC-1083-26` |
 | 6 | **Zelalem Tsegaye** | `CTC-2003-26` |
 
 ---
