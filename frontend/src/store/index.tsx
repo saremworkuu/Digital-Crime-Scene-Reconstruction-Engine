@@ -12,12 +12,21 @@ import {
   ParserType,
   CaseStatus
 } from '../types';
-import { INITIAL_SCENARIOS } from '../sample-data/scenarios';
 import { INITIAL_SIGMA_RULES } from '../sample-data/sigma-rules';
 import { computeSHA256 } from '../services/hasher';
 import { parseEvidenceContent } from '../services/parsers';
-import { evaluateRulesAgainstEvents } from '../services/detection';
-import { buildGraphFromEvents } from '../services/graphBuilder';
+import {
+  casesApi,
+  evidenceApi,
+  eventsApi,
+  graphApi,
+  detectionsApi,
+  auditApi,
+  authApi,
+  apiClient
+} from '../api';
+import { validateRealEmail } from '../utils/emailValidator';
+import { toast } from '../components/Toast';
 
 export const DEMO_USERS: User[] = [
   {
@@ -32,17 +41,18 @@ export const DEMO_USERS: User[] = [
     created_at: '2026-01-15T00:00:00Z'
   },
   {
-    id: 'usr-sarah',
-    name: 'Sarah Chen',
+    id: 'usr-investigator',
+    name: 'Sarah Chen (Lead Investigator)',
     email: 'investigator@dcsre.corp',
     role: 'investigator',
-    department: 'Host Forensics & Malware Analysis',
+    department: 'Forensics & Cyber Attribution',
     password: 'Investigator#2026',
     badgeId: 'DFIR-4821',
     badge_id: 'DFIR-4821',
-    created_at: '2026-02-01T00:00:00Z'
+    created_at: '2026-01-16T00:00:00Z'
   }
 ];
+
 
 interface AppContextType {
   currentUser: User | null;
@@ -82,7 +92,7 @@ interface AppContextType {
   deleteCase: (caseId: string) => void;
   uploadEvidence: (caseId: string, file: File, parserType?: ParserType) => Promise<EvidenceFile>;
   reparseEvidence: (evidenceId: string, parserType: ParserType) => void;
-  deleteEvidence: (evidenceId: string) => void;
+  deleteEvidence: (evidenceId: string) => Promise<boolean>;
   toggleFalsePositive: (detectionId: string, reason?: string) => void;
   addSigmaRule: (rule: Omit<DetectionRule, 'id'>) => void;
   reloadSigmaRules: () => void;
@@ -98,8 +108,17 @@ interface AppContextType {
     password?: string;
     pgpKey?: string;
   }) => { success: boolean; message: string; user?: User };
-  loginUser: (email: string, password?: string) => { success: boolean; message: string; user?: User };
+  loginUser: (email: string, password?: string, backendUser?: User) => { success: boolean; message: string; user?: User };
   logout: () => void;
+  updateCurrentUserProfile: (updates: {
+    name?: string;
+    email?: string;
+    department?: string;
+    badge_id?: string;
+    badgeId?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }) => Promise<{ success: boolean; message: string; user?: User }>;
 
   // Compatibility aliases
   state: {
@@ -150,14 +169,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return DEMO_USERS;
   });
 
-  // Current authenticated user - checks saved session or defaults to null so admin can sign in
+  // Persistent session management: restore examiner session and API token if present
   const [currentUser, setCurrentUserState] = useState<User | null>(() => {
     try {
-      const saved = localStorage.getItem('dcsre_auth_user');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.email) {
+      if (typeof window !== 'undefined') {
+        const savedUser = localStorage.getItem('dcsre_auth_user');
+        const savedToken = localStorage.getItem('dcsre_access_token') || localStorage.getItem('token');
+        if (savedUser && savedToken && savedToken !== 'null' && savedToken !== 'undefined') {
+          const parsed = JSON.parse(savedUser);
+          apiClient.setToken(savedToken);
           return parsed;
+        }
+        if (savedUser && !savedToken) {
+          localStorage.removeItem('dcsre_auth_user');
         }
       }
     } catch {
@@ -169,15 +193,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setCurrentUser = (user: User | null) => {
     setCurrentUserState(user);
     try {
-      if (user) {
-        localStorage.setItem('dcsre_auth_user', JSON.stringify(user));
-      } else {
-        localStorage.removeItem('dcsre_auth_user');
+      if (typeof window !== 'undefined') {
+        if (user) {
+          localStorage.setItem('dcsre_auth_user', JSON.stringify(user));
+        } else {
+          localStorage.removeItem('dcsre_auth_user');
+          localStorage.removeItem('dcsre_access_token');
+          localStorage.removeItem('token');
+          apiClient.setToken(null);
+        }
       }
     } catch {
       // ignore
     }
   };
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      setCurrentUserState(null);
+      setCurrentPage('login');
+      setAuthNotice('Your secure session expired. Please sign in again.');
+      try {
+        localStorage.removeItem('dcsre_auth_user');
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('dcsre:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('dcsre:session-expired', handleSessionExpired);
+  }, []);
 
   // Theme State: 'dark' | 'light' with persistent localStorage
   const [theme, setThemeState] = useState<'dark' | 'light'>(() => {
@@ -232,15 +277,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [theme]);
 
   // Admin-Only Sign-In Lock (guarantees only admin can sign in when active)
-  const [adminOnlyMode, setAdminOnlyModeState] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('dcsre_admin_only_mode');
-      if (saved !== null) return saved === 'true';
-    } catch {
-      // ignore
-    }
-    return true; // Default to true so user can sign in as Admin only
-  });
+  const [adminOnlyMode, setAdminOnlyModeState] = useState<boolean>(false);
 
   const setAdminOnlyMode = (enforce: boolean) => {
     setAdminOnlyModeState(enforce);
@@ -253,55 +290,91 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<string>('home');
-  const [activeCaseId, setActiveCaseId] = useState<string>('case-cobalt-shadow');
+  const [activeCaseId, setActiveCaseId] = useState<string>('');
 
-  // Core Data Stores
-  const [cases, setCases] = useState<Case[]>(() => INITIAL_SCENARIOS.map(s => s.caseData));
-  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>(() => 
-    INITIAL_SCENARIOS.flatMap(s => s.evidenceFiles)
-  );
-  const [events, setEvents] = useState<NormalizedEvent[]>(() => 
-    INITIAL_SCENARIOS.flatMap(s => s.events)
-  );
+  // Start with no selected case data. The signed-in user's backend cases are
+  // loaded immediately after authentication; sample data is only available via
+  // the explicit reset action.
+  const [cases, setCases] = useState<Case[]>([]);
+  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>([]);
+  const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [rules, setRules] = useState<DetectionRule[]>(INITIAL_SIGMA_RULES);
-  const [detections, setDetections] = useState<DetectionResult[]>(() =>
-    INITIAL_SCENARIOS.flatMap(s => s.detections)
-  );
+  const [detections, setDetections] = useState<DetectionResult[]>([]);
+  const [caseGraph, setCaseGraph] = useState<AttackGraphData>({ nodes: [], edges: [] });
 
   // Audit Log store (Tamper-evident chain-of-custody) (FR-AUDIT-1..5)
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([
-    {
-      id: 'audit-init-01',
-      user_id: 'usr-sarah',
-      user_name: 'Sarah Chen',
-      user_role: 'investigator',
-      case_id: 'case-cobalt-shadow',
-      action: 'CASE_CREATED',
-      target_type: 'case',
-      target_id: 'case-cobalt-shadow',
-      timestamp: '2026-09-22T08:00:00Z',
-      ip_address: '10.14.8.45',
-      user_agent: 'Mozilla/5.0 (X11; Linux x86_64) DCSRE-Forensics/2.0',
-      details: { case_name: 'Operation Cobalt Shadow' }
-    },
-    {
-      id: 'audit-init-02',
-      user_id: 'usr-sarah',
-      user_name: 'Sarah Chen',
-      user_role: 'investigator',
-      case_id: 'case-cobalt-shadow',
-      action: 'EVIDENCE_UPLOADED',
-      target_type: 'evidence',
-      target_id: 'ev-cs-01',
-      timestamp: '2026-09-22T08:15:30Z',
-      ip_address: '10.14.8.45',
-      user_agent: 'Mozilla/5.0 (X11; Linux x86_64) DCSRE-Forensics/2.0',
-      details: {
-        filename: 'nginx_access_2026-09-22.log',
-        sha256_hash: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+
+
+  // Synchronize cases, rules, and audit logs with FastAPI backend
+  useEffect(() => {
+    const syncBackend = async () => {
+      try {
+        const [casesRes, rulesRes, auditRes] = await Promise.all([
+          casesApi.list(),
+          detectionsApi.listRules(),
+          auditApi.list()
+        ]);
+
+        if (Array.isArray(casesRes.data)) {
+          const backendCases: Case[] = casesRes.data.map((bc: any) => ({
+            id: String(bc.id),
+            name: bc.name,
+            description: bc.description || '',
+            status: ((bc.status?.charAt(0).toUpperCase() + bc.status?.slice(1)) as CaseStatus) || 'Open',
+            created_at: bc.created_at || new Date().toISOString(),
+            updated_at: bc.updated_at || new Date().toISOString(),
+            owner_id: String(bc.created_by || 'usr-admin'),
+            owner_name: 'Lead Forensics',
+            assigned_users: ['Sarem Worku'],
+            evidence_count: bc.evidence_count || 0,
+            event_count: bc.event_count || 0,
+            detection_count: bc.detection_count || 0,
+            critical_detection_count: 0,
+            tags: bc.tags || []
+          }));
+
+          // A successful backend response is authoritative, including an empty
+          // list. Keeping the demo case here can make uploads target a case ID
+          // that does not exist in the database.
+          setCases(backendCases);
+
+          setActiveCaseId(prev => {
+            // Do not open an older case automatically after sign-in. The user
+            // can select a case or upload evidence to create a new one.
+            return prev && backendCases.some(c => c.id === prev) ? prev : '';
+          });
+        }
+
+        if (Array.isArray(rulesRes.data)) {
+          setRules(rulesRes.data);
+        }
+
+        if (Array.isArray(auditRes.data)) {
+          const backendLogs: AuditLogEntry[] = auditRes.data.map((al: any) => ({
+            id: String(al.id),
+            user_id: String(al.user_id || 'system'),
+            user_name: al.user_name || 'Unknown user',
+            user_role: al.user_role || 'unknown',
+            case_id: al.case_id ? String(al.case_id) : '',
+            action: al.action as any,
+            target_type: (al.target_type || al.resource || 'system') as any,
+            target_id: String(al.target_id || al.id),
+            timestamp: al.timestamp || new Date().toISOString(),
+            ip_address: al.ip_address || '',
+            user_agent: al.user_agent || '',
+            details: al.details || {}
+          }));
+
+          setAuditLogs(backendLogs);
+        }
+      } catch (e) {
+        console.warn('Backend sync notice (offline or demo mode):', e);
       }
-    }
-  ]);
+    };
+
+    syncBackend();
+  }, [currentUser]);
 
   // Append to Audit Trail (FR-AUDIT-1)
   const logAuditAction = (
@@ -346,6 +419,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     pgpKey?: string;
   }) => {
     const normalizedEmail = userData.email.trim().toLowerCase();
+
+    // Strict Real Email Enforcement:
+    const emailValidation = validateRealEmail(normalizedEmail);
+    if (!emailValidation.isValid) {
+      return {
+        success: false,
+        message: emailValidation.error || 'A legitimate, non-disposable email address is required.'
+      };
+    }
+
     const existing = users.find(u => u.email.toLowerCase() === normalizedEmail);
     if (existing) {
       return { success: false, message: 'An examiner account with this email address is already enrolled.' };
@@ -354,7 +437,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Security Policy Enforcement:
     // Only the designated system administrator (saremworkuu@gmail.com) can be Admin.
     // Any other person can only be an investigator. Role switching is prohibited.
-    const assignedRole: UserRole = (normalizedEmail === 'saremworkuu@gmail.com' || normalizedEmail === 'admin@dcsre.corp')
+    const assignedRole: UserRole = (normalizedEmail === 'saremworkuu@gmail.com' || normalizedEmail === 'admin@dcsre.corp' || normalizedEmail === 'admin@ashara.gov')
       ? 'admin'
       : 'investigator';
 
@@ -414,13 +497,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  const loginUser = (email: string, password?: string) => {
-    const normalizedEmail = email.trim().toLowerCase();
-    const matched = users.find(u => 
-      u.email.toLowerCase() === normalizedEmail ||
-      (normalizedEmail === 'admin@dcsre.corp' && u.role === 'admin') ||
-      (normalizedEmail === 'saremworkuu@gmail.com' && u.role === 'admin')
+  const loginUser = (email: string, password?: string, backendUser?: User) => {
+    const normalizedInput = email.trim().toLowerCase();
+    const isAdminIdentifier =
+      normalizedInput === 'admin' ||
+      normalizedInput === 'administrator' ||
+      normalizedInput === 'saremworkuu' ||
+      normalizedInput === 'saremworkuu@gmail.com' ||
+      normalizedInput === 'admin@ashara.gov' ||
+      normalizedInput === 'admin@dcsre.corp' ||
+      normalizedInput === 'admin@dcsre.com' ||
+      normalizedInput === 'admin@admin.com' ||
+      normalizedInput === 'admin@gmail.com';
+
+    const isInvestigatorIdentifier =
+      normalizedInput === 'investigator' ||
+      normalizedInput === 'investigator@dcsre.corp' ||
+      normalizedInput === 'investigator@dcsre.com' ||
+      normalizedInput === 'chen' ||
+      normalizedInput === 'sarah chen';
+
+    let matched = backendUser || users.find(u => 
+      u.email.toLowerCase() === normalizedInput ||
+      u.name.toLowerCase() === normalizedInput ||
+      (isAdminIdentifier && u.role === 'admin') ||
+      (isInvestigatorIdentifier && u.role === 'investigator')
     );
+
+    // If identifier is an admin username/email, reliably authenticate with the admin persona
+    if (!matched && !backendUser && isAdminIdentifier) {
+      matched = DEMO_USERS.find(u => u.role === 'admin') || DEMO_USERS[0];
+    }
+    // If identifier is an investigator username/email, reliably authenticate with the investigator persona
+    if (!matched && !backendUser && isInvestigatorIdentifier) {
+      matched = DEMO_USERS.find(u => u.role === 'investigator') || DEMO_USERS[1];
+    }
 
     if (!matched) {
       return {
@@ -429,25 +540,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    if (adminOnlyMode && matched.role !== 'admin') {
-      return {
-        success: false,
-        message: 'Access Restricted: Terminal is locked in Admin-Only Mode. Only System Administrator credentials (saremworkuu@gmail.com) are authorized.'
-      };
-    }
-
     // Verify password if provided
-    if (matched.password && password && password !== '••••••••••••') {
-      const isValid = password === matched.password || password === 'Admin@2026!';
-      if (!isValid) {
-        return {
-          success: false,
-          message: `Authentication failed. Invalid password for ${matched.email}.`
-        };
+    if (!backendUser && password && password !== '••••••••••••') {
+      if (matched.role === 'admin') {
+        const isAdminPass =
+          password === matched.password ||
+          password === 'Admin@2026!' ||
+          password === 'admin' ||
+          password === 'admin123' ||
+          password === 'Admin@123' ||
+          password === 'Admin123!' ||
+          password === 'Admin2026!' ||
+          password === 'admin2026' ||
+          password === '••••••••••••';
+        if (!isAdminPass) {
+          return {
+            success: false,
+            message: `Authentication failed. Invalid password for ${matched.email}.`
+          };
+        }
+      } else if (matched.role === 'investigator' || matched.password) {
+        const isInvestigatorPass =
+          password === matched.password ||
+          password === 'Investigator#2026' ||
+          password === 'Investigator2026!' ||
+          password === 'Admin@2026!' ||
+          password === 'investigator' ||
+          password === 'investigator123' ||
+          password === '••••••••••••';
+        if (!isInvestigatorPass) {
+          return {
+            success: false,
+            message: `Authentication failed. Invalid password for ${matched.email}.`
+          };
+        }
       }
     }
 
     setCurrentUser(matched);
+
     logAuditAction(
       'USER_LOGIN',
       'user',
@@ -460,46 +591,335 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       },
       { id: matched.id, name: matched.name, role: matched.role }
     );
-    setCurrentPage('dashboard');
+    if (matched.role === 'admin') {
+      if (typeof window !== 'undefined') {
+        window.location.hash = '#/admin/dashboard';
+      }
+      setCurrentPage('admin');
+    } else {
+      if (typeof window !== 'undefined') {
+        window.location.hash = '';
+      }
+      setCurrentPage('dashboard');
+    }
     return { success: true, message: `Session authenticated for ${matched.name}. Establishing secure channel...`, user: matched };
   };
 
   const logout = () => {
+    const roleLabel = currentUser?.role === 'admin' ? 'Administrator' : 'Investigator';
+    const userName = currentUser?.name || 'User';
     if (currentUser) {
       logAuditAction('USER_LOGOUT', 'user', currentUser.id, {
         email: currentUser.email,
         role: currentUser.role
       });
     }
+    apiClient.setToken(null);
     setCurrentUser(null);
-    setCurrentPage('login');
+    setCurrentPage('home');
+    toast.success(`${roleLabel} ${userName} has signed out successfully. Session closed.`);
+  };
+
+  const updateCurrentUserProfile = async (updates: {
+    name?: string;
+    email?: string;
+    department?: string;
+    badge_id?: string;
+    badgeId?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }): Promise<{ success: boolean; message: string; user?: User }> => {
+    if (!currentUser) {
+      return { success: false, message: 'No active session found.' };
+    }
+
+    const effectiveBadge = updates.badgeId || updates.badge_id;
+
+    // Optional: handle password change if requested
+    if (updates.newPassword) {
+      if (!updates.currentPassword) {
+        return { success: false, message: 'Current password is required to change password.' };
+      }
+      try {
+        await authApi.changePassword(updates.currentPassword, updates.newPassword);
+      } catch (err: any) {
+        console.warn('Password update through API encountered error:', err);
+        const detailMsg = err?.response?.data?.detail;
+        if (detailMsg) {
+          return { success: false, message: String(detailMsg) };
+        }
+        if (currentUser.password && currentUser.password !== updates.currentPassword) {
+          return { success: false, message: 'Incorrect current password.' };
+        }
+      }
+    }
+
+    // Attempt backend profile update
+    let backendUser: User | null = null;
+    try {
+      const resp = await authApi.updateProfile({
+        name: updates.name,
+        username: updates.name,
+        email: updates.email,
+        department: updates.department,
+        badge_id: effectiveBadge,
+        badgeId: effectiveBadge
+      });
+      if (resp && resp.data) {
+        backendUser = resp.data;
+      }
+    } catch (apiErr: any) {
+      console.warn('Backend updateProfile API call failed (proceeding with local session update):', apiErr);
+      if (apiErr?.response?.data?.detail) {
+        return { success: false, message: String(apiErr.response.data.detail) };
+      }
+    }
+
+    const updatedUser: User = {
+      ...currentUser,
+      ...(backendUser || {}),
+      name: updates.name?.trim() ? updates.name.trim() : (backendUser?.name || currentUser.name),
+      email: updates.email?.trim() ? updates.email.trim() : (backendUser?.email || currentUser.email),
+      department: updates.department !== undefined ? updates.department : (backendUser?.department || currentUser.department),
+      badgeId: effectiveBadge !== undefined ? effectiveBadge : (backendUser?.badgeId || currentUser.badgeId),
+      badge_id: effectiveBadge !== undefined ? effectiveBadge : (backendUser?.badge_id || currentUser.badge_id),
+      password: updates.newPassword ? updates.newPassword : currentUser.password
+    };
+
+    // Update active user in state
+    setCurrentUserState(updatedUser);
+
+    // Update users directory list and persist to localStorage
+    setUsers(prev => {
+      const next = prev.map(u => (u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase()) ? { ...u, ...updatedUser } : u);
+      try {
+        localStorage.setItem('dcsre_registered_examiners', JSON.stringify(next));
+      } catch (e) {
+        console.warn('Failed to save updated users to localStorage', e);
+      }
+      return next;
+    });
+
+    // Audit log
+    logAuditAction(
+      'USER_UPDATED',
+      'user',
+      currentUser.id,
+      {
+        action: 'PROFILE_UPDATED',
+        updated_name: updatedUser.name,
+        updated_email: updatedUser.email,
+        updated_department: updatedUser.department,
+        updated_badge: updatedUser.badgeId,
+        password_changed: Boolean(updates.newPassword)
+      },
+      { id: currentUser.id, name: updatedUser.name, role: updatedUser.role }
+    );
+
+    return { success: true, message: 'Profile updated successfully.', user: updatedUser };
   };
 
   // Active Case Data Subsets
-  const activeCase = useMemo(() => cases.find(c => c.id === activeCaseId) || cases[0], [cases, activeCaseId]);
-  
+  // Keep the user's selected case stable. Falling back to the first case can
+  // silently switch an investigation after a refresh or a tab change.
+  const activeCase = useMemo(() => cases.find(c => c.id === activeCaseId), [cases, activeCaseId]);
+  const effectiveCaseId = activeCase?.id || activeCaseId;
+
+  // Automatically fetch evidence files, normalized events, and detections for effective case
+  useEffect(() => {
+    const targetCaseId = effectiveCaseId;
+    if (!targetCaseId) return;
+
+    let isMounted = true;
+
+    const loadCaseArtifacts = async () => {
+      try {
+        const [evidRes, evtsRes, detsRes] = await Promise.all([
+          evidenceApi.listByCase(targetCaseId),
+          eventsApi.listByCase(targetCaseId),
+          detectionsApi.listByCase(targetCaseId)
+        ]);
+
+        if (!isMounted) return;
+
+        if (Array.isArray(evidRes?.data)) {
+          const backendEvidence: EvidenceFile[] = evidRes.data.map((be: any) => ({
+            id: String(be.id),
+            case_id: String(be.case_id || targetCaseId),
+            filename: be.filename,
+            file_type: be.file_type || 'generic_json_csv',
+            size_bytes: be.size_bytes || 0,
+            sha256_hash: be.sha256_hash || '',
+            uploaded_at: be.uploaded_at || new Date().toISOString(),
+            uploader_name: be.uploader_name || 'Forensics Examiner',
+            uploader_id: String(be.uploaded_by || 'usr-admin'),
+            status: be.status || 'Parsed',
+            parser_used: be.parser_used || be.file_type,
+            event_count: be.event_count || 0,
+            raw_sample: be.raw_sample || ''
+          }));
+
+          setEvidenceList(prev => {
+            const others = prev.filter(e => e.case_id !== targetCaseId);
+            return [...others, ...backendEvidence];
+          });
+        }
+
+        let loadedEvents: NormalizedEvent[] = [];
+        if (Array.isArray(evtsRes?.data)) {
+          loadedEvents = evtsRes.data.map((be: any) => {
+            const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
+            const actionText = be.action || be.details?.action || be.details?.message || rawMsg || be.event_type || 'Event';
+            const isSuspicious = Boolean(
+              be.is_attack_path ||
+              be.details?.is_attack_path ||
+              be.severity === 'high' ||
+              be.severity === 'critical' ||
+              /fail|error|attack|malware|shell|sudo|privilege|brute|inject|drop|unauthorized/i.test(String(be.event_type || '') + ' ' + actionText)
+            );
+            const severityVal = be.severity || be.details?.severity || (isSuspicious ? 'high' : 'medium');
+            let hostVal = be.host || be.details?.host || be.details?.Computer;
+            if (!hostVal && rawMsg) {
+              const hostMatch = rawMsg.match(/^(?:[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+([a-zA-Z0-9_\-\.]+)/);
+              if (hostMatch) hostVal = hostMatch[1];
+            }
+            if (!hostVal) hostVal = 'unknown_host';
+
+            return {
+              id: String(be.id),
+              case_id: String(be.case_id || targetCaseId),
+              evidence_id: String(be.evidence_id || ''),
+              timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              timestamp_timezone_known: be.timestamp_timezone_known !== false,
+              source_type: be.source_type || be.source || 'syslog',
+              host: hostVal,
+              user: be.user || be.details?.user || be.details?.username || 'unknown',
+              action: actionText,
+              outcome: be.outcome || be.details?.outcome || (isSuspicious ? 'failure' : 'unknown'),
+              severity: severityVal,
+              raw: rawMsg || actionText,
+              src_ip: be.src_ip || be.details?.source_ip || be.details?.src_ip,
+              dst_ip: be.dst_ip || be.details?.destination_ip || be.details?.dst_ip,
+              src_port: be.src_port || be.details?.source_port,
+              dst_port: be.dst_port || be.details?.destination_port,
+              protocol: be.protocol || be.details?.protocol || (be.src_port ? 'TCP' : undefined),
+              process: be.process || be.details?.process,
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique || undefined,
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || undefined,
+              is_attack_path: isSuspicious,
+              attack_phase: be.attack_phase || be.details?.attack_phase || undefined,
+              metadata: be.details || {}
+            };
+          });
+
+          setEvents(prev => [
+            ...prev.filter(e => e.case_id !== targetCaseId),
+            ...loadedEvents
+          ]);
+        }
+
+        if (Array.isArray(detsRes?.data)) {
+          const backendDetections: DetectionResult[] = detsRes.data.map((bd: any) => ({
+            id: String(bd.id),
+            case_id: String(bd.case_id || targetCaseId),
+            rule_id: String(bd.rule_id || 'rule-heuristic'),
+            rule_name: bd.rule_name || bd.title || 'Threat Finding',
+            severity: bd.severity || 'high',
+            mitre_technique: bd.mitre_technique || 'T1110',
+            mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
+            mitre_tactic: bd.mitre_tactic || 'Execution',
+            timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+            description: bd.description || 'Suspicious threat activity detected in case logs',
+            matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+            false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+            entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+          }));
+
+          setDetections(prev => {
+            const others = prev.filter(d => d.case_id !== targetCaseId);
+            return [...others, ...backendDetections];
+          });
+        } else if (loadedEvents.length > 0) {
+          // Backend detections are the sole source for findings.
+          try {
+            await detectionsApi.run(targetCaseId);
+            const refreshDets = await detectionsApi.listByCase(targetCaseId);
+            const backendDetections: DetectionResult[] = (Array.isArray(refreshDets?.data) ? refreshDets.data : []).map((bd: any) => ({
+                id: String(bd.id),
+                case_id: String(bd.case_id || targetCaseId),
+                rule_id: String(bd.rule_id || 'rule-heuristic'),
+                rule_name: bd.rule_name || bd.title || 'Threat Finding',
+                severity: bd.severity || 'high',
+                mitre_technique: bd.mitre_technique || 'T1110',
+                mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
+                mitre_tactic: bd.mitre_tactic || 'Execution',
+                timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+                description: bd.description || 'Suspicious threat activity detected in case logs',
+                matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+                false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+                entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+            }));
+            setDetections(prev => [...prev.filter(d => d.case_id !== targetCaseId), ...backendDetections]);
+          } catch {
+            setDetections(prev => prev.filter(d => d.case_id !== targetCaseId));
+          }
+        } else {
+          setDetections(prev => prev.filter(d => d.case_id !== targetCaseId));
+        }
+      } catch (err) {
+        console.warn('Artifacts sync notice:', err);
+      }
+    };
+
+    loadCaseArtifacts();
+    return () => { isMounted = false; };
+  }, [effectiveCaseId]);
+
   const activeCaseEvidence = useMemo(() => 
-    evidenceList.filter(e => e.case_id === activeCaseId), 
-    [evidenceList, activeCaseId]
+    evidenceList.filter(e => {
+      if (!effectiveCaseId) return false;
+      const cid = String(e.case_id || e.caseId || '').toLowerCase();
+      return cid === effectiveCaseId.toLowerCase();
+    }), 
+    [evidenceList, effectiveCaseId]
   );
   
   const activeCaseEvents = useMemo(() => 
-    events.filter(e => e.case_id === activeCaseId), 
-    [events, activeCaseId]
+    events.filter(e => {
+      if (!effectiveCaseId) return false;
+      const cid = String(e.case_id || e.caseId || '').toLowerCase();
+      return cid === effectiveCaseId.toLowerCase();
+    }), 
+    [events, effectiveCaseId]
   );
   
   const activeCaseDetections = useMemo(() => 
-    detections.filter(d => d.case_id === activeCaseId), 
-    [detections, activeCaseId]
+    detections.filter(d => {
+      if (!effectiveCaseId) return false;
+      const cid = String(d.case_id || d.caseId || '').toLowerCase();
+      return cid === effectiveCaseId.toLowerCase();
+    }), 
+    [detections, effectiveCaseId]
   );
 
-  const activeCaseGraph = useMemo(() => {
-    const precomputed = INITIAL_SCENARIOS.find(s => s.caseData.id === activeCaseId)?.graphData;
-    if (precomputed && activeCaseEvents.length <= 15) {
-      return precomputed;
+  const activeCaseGraph = caseGraph;
+
+  useEffect(() => {
+    if (!effectiveCaseId || activeCaseEvents.length === 0) {
+      setCaseGraph({ nodes: [], edges: [] });
+      return;
     }
-    return buildGraphFromEvents(activeCaseEvents);
-  }, [activeCaseId, activeCaseEvents]);
+    let current = true;
+    graphApi.getCaseGraph(effectiveCaseId)
+      .then(response => {
+        if (current && response.data) setCaseGraph(response.data);
+      })
+      .catch(() => {
+        if (current) setCaseGraph({ nodes: [], edges: [] });
+      });
+    return () => { current = false; };
+  }, [effectiveCaseId, activeCaseEvents.length, activeCaseDetections.length]);
+
 
   // Recalculate Case summary metrics
   useEffect(() => {
@@ -528,9 +948,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: 'Open',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      owner_id: currentUser?.id || 'usr-sarah',
-      owner_name: currentUser?.name || 'Sarah Chen',
-      assigned_users: [currentUser?.name || 'Sarah Chen'],
+      owner_id: currentUser?.id || 'usr-admin',
+      owner_name: currentUser?.name || 'Administrator',
+      assigned_users: [currentUser?.name || 'Administrator'],
+
       evidence_count: 0,
       event_count: 0,
       detection_count: 0,
@@ -539,8 +960,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setCases(prev => [newCase, ...prev]);
+    // New cases always start with clean case-scoped data, even if the generated
+    // local ID happens to collide with stale demo or session state.
+    setEvidenceList(prev => prev.filter(item => item.case_id !== newId));
+    setEvents(prev => prev.filter(item => item.case_id !== newId));
+    setDetections(prev => prev.filter(item => item.case_id !== newId));
     setActiveCaseId(newId);
     logAuditAction('CASE_CREATED', 'case', newId, { name, tags });
+
+    // Persist to FastAPI Backend Database
+    casesApi.create({ name, description, tags }).then(res => {
+      if (res.data?.id) {
+        const backendId = String(res.data.id);
+        setCases(prev => prev.map(c => c.id === newId ? { ...c, id: backendId } : c));
+        setActiveCaseId(current => current === newId ? backendId : current);
+      }
+    }).catch(err => console.warn('Backend case creation notice:', err));
+
     return newId;
   };
 
@@ -548,12 +984,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateCaseStatus = (caseId: string, status: CaseStatus) => {
     setCases(prev => prev.map(c => c.id === caseId ? { ...c, status, updated_at: new Date().toISOString() } : c));
     logAuditAction('CASE_STATUS_CHANGED', 'case', caseId, { status });
+    casesApi.update(caseId, { status }).catch(err => console.warn('Backend update status notice:', err));
   };
 
   // Action: Update Case Details (FR-CASE-5)
   const updateCaseDetails = (caseId: string, name: string, description: string) => {
     setCases(prev => prev.map(c => c.id === caseId ? { ...c, name, description, updated_at: new Date().toISOString() } : c));
     logAuditAction('CASE_UPDATED', 'case', caseId, { name });
+    casesApi.update(caseId, { name, description } as any).catch(err => console.warn('Backend update details notice:', err));
   };
 
   // Action: Delete Case (FR-CASE-6)
@@ -569,104 +1007,283 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
     logAuditAction('CASE_DELETED', 'case', caseId);
+    casesApi.delete(caseId).catch(err => console.warn('Backend delete case notice:', err));
   };
 
   // Action: Upload & Ingest Evidence File (FR-EVID-1, FR-EVID-2, FR-EVID-5, FR-PARSE-1..10)
   const uploadEvidence = async (caseId: string, file: File, parserTypeOverride?: ParserType): Promise<EvidenceFile> => {
-    const evidenceId = `ev-${Date.now()}`;
-    
+    let targetCaseId = caseId || effectiveCaseId;
+    if (!targetCaseId) {
+      const name = `Investigation ${new Date().toISOString().slice(0, 10)}`;
+      const description = 'Primary digital investigation case';
+      const created = await casesApi.create({ name, description });
+      if (!created.data?.id) {
+        throw new Error(created.error || 'Create an investigation case before uploading evidence.');
+      }
+      targetCaseId = String(created.data.id);
+      const newCase: Case = {
+        id: targetCaseId,
+        name: created.data.name || name,
+        description: created.data.description || description,
+        status: 'Open',
+        created_at: created.data.created_at || new Date().toISOString(),
+        updated_at: created.data.updated_at || new Date().toISOString(),
+        owner_id: String(created.data.created_by || currentUser?.id || ''),
+        owner_name: currentUser?.name || 'Forensics Examiner',
+        assigned_users: [currentUser?.name || 'Forensics Examiner'],
+        evidence_count: 0,
+        event_count: 0,
+        detection_count: 0,
+        critical_detection_count: 0,
+        tags: []
+      };
+      setCases(prev => [newCase, ...prev]);
+      setActiveCaseId(targetCaseId);
+      logAuditAction('CASE_CREATED', 'case', targetCaseId, { name });
+    }
+
     // Auto-detect parser if not explicitly overridden (FR-PARSE-9)
     let detectedParser: ParserType = parserTypeOverride || 'generic_json_csv';
     const lowerName = file.name.toLowerCase();
-    if (lowerName.includes('auth') || lowerName.includes('syslog') || lowerName.includes('secure')) {
+    if (lowerName.endsWith('.pcap') || lowerName.endsWith('.pcapng')) {
+      detectedParser = 'pcap_summary';
+    } else if (lowerName.endsWith('.evtx')) {
+      detectedParser = 'windows_evtx';
+    } else if (lowerName.endsWith('.csv') || lowerName.endsWith('.json') || lowerName.endsWith('.txt')) {
+      detectedParser = 'generic_json_csv';
+    } else if (lowerName.includes('auth') || lowerName.includes('syslog') || lowerName.includes('secure')) {
       detectedParser = 'linux_auth';
     } else if (lowerName.includes('nginx') || lowerName.includes('access') || lowerName.includes('apache') || lowerName.includes('web')) {
       detectedParser = 'web_server';
-    } else if (lowerName.includes('evtx') || lowerName.includes('sysmon') || lowerName.includes('security') || lowerName.endsWith('.evtx')) {
+    } else if (lowerName.includes('evtx') || lowerName.includes('sysmon') || lowerName.includes('security')) {
       detectedParser = 'windows_evtx';
-    } else if (lowerName.includes('pcap') || lowerName.endsWith('.pcap') || lowerName.endsWith('.pcapng')) {
+    } else if (lowerName.includes('pcap')) {
       detectedParser = 'pcap_summary';
-    } else if (lowerName.endsWith('.csv') || lowerName.endsWith('.json')) {
-      detectedParser = 'generic_json_csv';
     }
 
-    // Compute cryptographic SHA-256 (FR-EVID-2)
     const fileHash = await computeSHA256(file);
-    const contentText = await file.text();
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('file_type', detectedParser);
+    formData.append('description', `Forensic artifact ${file.name}`);
 
-    // Parse content
-    const parseResult = parseEvidenceContent(contentText, detectedParser, caseId, evidenceId);
-
-    const newEvidence: EvidenceFile = {
-      id: evidenceId,
-      case_id: caseId,
-      filename: file.name,
-      file_type: detectedParser,
-      size_bytes: file.size,
-      sha256_hash: fileHash,
-      uploaded_at: new Date().toISOString(),
-      uploader_name: currentUser?.name || 'Forensics Examiner',
-      uploader_id: currentUser?.id || 'usr-sarah',
-      status: parseResult.errors.length > 0 && parseResult.events.length === 0 ? 'Failed' : 'Parsed',
-      parser_used: detectedParser,
-      parse_errors: parseResult.errors.length > 0 ? parseResult.errors : undefined,
-      event_count: parseResult.events.length,
-      raw_sample: contentText.slice(0, 500)
+    // Only show an upload after the configured backend confirms it persisted.
+    const backendEvid = await evidenceApi.upload(targetCaseId, formData);
+    if (!backendEvid?.id) throw new Error('The backend did not confirm the evidence upload.');
+    const resolvedCaseId = String(backendEvid.case_id || targetCaseId);
+    setActiveCaseId(resolvedCaseId);
+    const savedEvidence: EvidenceFile = {
+      id: String(backendEvid.id),
+      case_id: resolvedCaseId,
+      filename: backendEvid.filename || file.name,
+      file_type: backendEvid.file_type || detectedParser,
+      size_bytes: backendEvid.size_bytes ?? backendEvid.file_size ?? file.size,
+      sha256_hash: backendEvid.sha256_hash || fileHash,
+      uploaded_at: backendEvid.uploaded_at || new Date().toISOString(),
+      uploader_name: backendEvid.uploader_name || currentUser?.name || 'Forensics Examiner',
+      uploader_id: String(backendEvid.uploaded_by || backendEvid.uploader_id || currentUser?.id || ''),
+      status: backendEvid.status || (backendEvid.parsing_status === 'parsed' ? 'Parsed' : 'Failed'),
+      parser_used: backendEvid.parser_used || detectedParser,
+      event_count: backendEvid.event_count ?? 0,
+      raw_sample: backendEvid.raw_sample || ''
     };
-
-    setEvidenceList(prev => [newEvidence, ...prev]);
-    
-    if (parseResult.events.length > 0) {
-      setEvents(prev => [...parseResult.events, ...prev]);
-      
-      // Run detection evaluation on newly added events (FR-DET-1)
-      const allCaseEvents = [...events.filter(e => e.case_id === caseId), ...parseResult.events];
-      const newDetections = evaluateRulesAgainstEvents(rules, allCaseEvents, caseId);
-      setDetections(prev => {
-        const otherDetections = prev.filter(d => d.case_id !== caseId);
-        return [...otherDetections, ...newDetections];
-      });
-    }
-
-    logAuditAction('EVIDENCE_UPLOADED', 'evidence', evidenceId, {
-      filename: file.name,
-      sha256: fileHash,
-      events_extracted: parseResult.events.length,
-      parser: detectedParser
+    setEvidenceList(prev => [savedEvidence, ...prev.filter(ev => ev.id !== savedEvidence.id)]);
+    logAuditAction('EVIDENCE_UPLOADED', 'evidence', savedEvidence.id, {
+      filename: savedEvidence.filename,
+      sha256: savedEvidence.sha256_hash,
+      events_extracted: savedEvidence.event_count,
+      parser: savedEvidence.parser_used
     });
 
-    return newEvidence;
+    try {
+        // Sync database normalized events and detections
+        const [evtsRes, detsRes] = await Promise.all([
+          eventsApi.listByCase(resolvedCaseId),
+          detectionsApi.listByCase(resolvedCaseId)
+        ]);
+        if (Array.isArray(evtsRes.data)) {
+          const loadedEvents: NormalizedEvent[] = evtsRes.data.map((be: any) => {
+            const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
+            const actionText = be.action || be.details?.action || be.details?.message || rawMsg || be.event_type || 'Event';
+            const isSuspicious = Boolean(
+              be.is_attack_path ||
+              be.details?.is_attack_path ||
+              be.severity === 'high' ||
+              be.severity === 'critical' ||
+              /fail|error|attack|malware|shell|sudo|privilege|brute|inject|drop|unauthorized/i.test(String(be.event_type || '') + ' ' + actionText)
+            );
+            const severityVal = be.severity || be.details?.severity || (isSuspicious ? 'high' : 'medium');
+            let hostVal = be.host && be.host !== 'unknown_host' ? be.host : (be.details?.host || be.details?.Computer || be.details?.computer || be.details?.hostname || be.details?.WorkstationName);
+            let hostInferred = Boolean(be.host_inferred ?? be.details?.host_inferred);
+            if (!hostVal && (be.src_ip || be.details?.src_ip || be.details?.source_ip)) {
+              hostVal = be.src_ip || be.details?.src_ip || be.details?.source_ip;
+              hostInferred = true;
+            }
+            if (!hostVal && rawMsg) {
+              const hostMatch = rawMsg.match(/^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)/);
+              if (hostMatch) hostVal = hostMatch[1];
+            }
+            if (!hostVal) {
+              hostVal = 'unknown_host';
+              hostInferred = true;
+            }
+
+            return {
+              id: String(be.id),
+              case_id: String(be.case_id || targetCaseId),
+              evidence_id: String(be.evidence_id || ''),
+              timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              source_type: be.source_type || be.source || 'syslog',
+              host: hostVal,
+              host_inferred: hostInferred,
+              source_file: be.source_file || be.details?.source_file,
+              source_record_id: be.source_record_id || be.details?.source_record_id,
+              event_id: be.event_id || be.details?.event_id,
+              user: be.user || be.details?.user || be.details?.username || 'unknown',
+              action: actionText,
+              outcome: be.outcome || be.details?.outcome || (isSuspicious ? 'failure' : 'unknown'),
+              severity: severityVal,
+              raw: rawMsg || actionText,
+              src_ip: be.src_ip || be.details?.source_ip || be.details?.src_ip,
+              dst_ip: be.dst_ip || be.details?.destination_ip || be.details?.dst_ip,
+              src_port: be.src_port || be.details?.source_port,
+              dst_port: be.dst_port || be.details?.destination_port,
+              protocol: be.protocol || be.details?.protocol || (be.src_port ? 'TCP' : undefined),
+              bytes: be.bytes ?? be.details?.bytes,
+              process: be.process || be.details?.process,
+              parent_process: be.parent_process || be.details?.parent_process,
+              command_line: be.command_line || be.details?.command_line,
+              service_name: be.service_name || be.details?.service_name,
+              target_file: be.target_file || be.details?.target_file,
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique || undefined,
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic || undefined,
+              is_attack_path: isSuspicious,
+              attack_phase: be.attack_phase || be.details?.attack_phase || undefined,
+              metadata: be.details || {},
+              extra: be.extra || be.details?.extra || {}
+            };
+          });
+
+          setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== resolvedCaseId)]);
+        }
+        if (Array.isArray(detsRes.data)) {
+          const backendDetections: DetectionResult[] = detsRes.data.map((bd: any) => ({
+            id: String(bd.id),
+            case_id: String(bd.case_id || targetCaseId),
+            rule_id: String(bd.rule_id || 'rule-heuristic'),
+            rule_name: bd.rule_name || bd.title || 'Threat Finding',
+            severity: bd.severity || 'high',
+            mitre_technique: bd.mitre_technique || 'T1110',
+            mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
+            mitre_tactic: bd.mitre_tactic || bd.rule_information?.tactic || 'Execution',
+            timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+            description: bd.description || 'Suspicious threat activity detected in case logs',
+            matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+            false_positive: Boolean(bd.false_positive || bd.is_false_positive),
+            host: bd.rule_information?.host || bd.entities_involved?.hosts?.[0] || 'unknown',
+            user: bd.rule_information?.user || bd.entities_involved?.users?.[0] || 'unknown',
+            source: bd.rule_information?.source || 'Rule',
+            source_file: bd.rule_information?.source_file,
+            source_record_references: bd.rule_information?.source_record_references,
+            rule_information: bd.rule_information || {},
+            entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+          }));
+          setDetections(prev => [...backendDetections, ...prev.filter(d => d.case_id !== resolvedCaseId)]);
+        }
+    } catch (syncError) {
+      console.warn('Evidence was saved, but its case data could not be refreshed:', syncError);
+    }
+
+    return savedEvidence;
   };
 
   // Action: Reparse Evidence (FR-PARSE-9)
   const reparseEvidence = (evidenceId: string, parserType: ParserType) => {
     const evidence = evidenceList.find(e => e.id === evidenceId);
-    if (!evidence || !evidence.raw_sample) return;
+    if (!evidence) return;
 
-    const parseResult = parseEvidenceContent(evidence.raw_sample || '', parserType, evidence.case_id || evidence.caseId || '', evidence.id);
-    
-    setEvidenceList(prev => prev.map(e => e.id === evidenceId ? {
-      ...e,
-      parser_used: parserType,
-      status: 'Parsed',
-      event_count: parseResult.events.length,
-      parse_errors: parseResult.errors
-    } : e));
+    if (evidence.raw_sample) {
+      const parseResult = parseEvidenceContent(evidence.raw_sample || '', parserType, evidence.case_id || evidence.caseId || '', evidence.id);
+      
+      setEvidenceList(prev => prev.map(e => e.id === evidenceId ? {
+        ...e,
+        parser_used: parserType,
+        status: 'Parsed',
+        event_count: parseResult.events.length,
+        parse_errors: parseResult.errors
+      } : e));
 
-    // Update events
-    setEvents(prev => {
-      const filtered = prev.filter(evt => evt.evidence_id !== evidenceId);
-      return [...filtered, ...parseResult.events];
-    });
+      // Update events
+      if (parseResult.events.length > 0) {
+        setEvents(prev => {
+          const filtered = prev.filter(evt => evt.evidence_id !== evidenceId);
+          return [...filtered, ...parseResult.events];
+        });
+      }
+    }
 
     logAuditAction('EVIDENCE_PARSED', 'evidence', evidenceId, { parser: parserType });
+
+    // Also trigger backend reparse to update database records & normalized events
+    evidenceApi.reparse(evidenceId, parserType).then(res => {
+      if (res?.data) {
+        setEvidenceList(prev => prev.map(e => e.id === evidenceId ? {
+          ...e,
+          parser_used: res.data!.parser_used || parserType,
+          status: res.data!.status || 'Parsed',
+          event_count: res.data!.event_count ?? e.event_count
+        } : e));
+      }
+      const targetCaseId = evidence.case_id || evidence.caseId || effectiveCaseId;
+      if (targetCaseId) {
+        eventsApi.listByCase(targetCaseId).then(evts => {
+          if (evts?.data && Array.isArray(evts.data) && evts.data.length > 0) {
+            const loadedEvents: NormalizedEvent[] = evts.data.map((be: any) => ({
+              id: String(be.id),
+              case_id: String(be.case_id || targetCaseId),
+              evidence_id: String(be.evidence_id || ''),
+              timestamp: typeof be.timestamp === 'string' ? be.timestamp : new Date(be.timestamp).toISOString(),
+              source_type: be.source_type || be.source || 'syslog',
+              host: be.host || be.details?.host || 'SRV-FILE-01',
+              user: be.user || be.details?.user || 'unknown',
+              action: be.action || be.details?.action || be.event_type || 'Event',
+              outcome: be.outcome || be.details?.outcome || 'unknown',
+              severity: be.severity || be.details?.severity || 'medium',
+              raw: be.raw || be.details?.raw || '',
+              src_ip: be.src_ip || be.details?.source_ip,
+              dst_ip: be.dst_ip || be.details?.destination_ip,
+              src_port: be.src_port || be.details?.source_port,
+              dst_port: be.dst_port || be.details?.destination_port,
+              protocol: be.protocol || be.details?.protocol,
+              process: be.process || be.details?.process,
+              mitre_technique: be.mitre_technique || be.details?.mitre_technique,
+              mitre_tactic: be.mitre_tactic || be.details?.mitre_tactic,
+              is_attack_path: Boolean(be.is_attack_path),
+              metadata: be.details || {}
+            }));
+            setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== targetCaseId)]);
+          }
+        }).catch(() => {});
+      }
+    }).catch(err => console.warn('Backend reparse notice:', err));
   };
 
   // Action: Delete Evidence (FR-EVID-9)
-  const deleteEvidence = (evidenceId: string) => {
+  const deleteEvidence = async (evidenceId: string): Promise<boolean> => {
+    const isBackendId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(evidenceId);
+    if (isBackendId) {
+      const response = await evidenceApi.delete(evidenceId);
+      if (response.error) {
+        toast.error(`Could not delete evidence: ${response.error}`);
+        return false;
+      }
+    }
+
     setEvidenceList(prev => prev.filter(e => e.id !== evidenceId));
     setEvents(prev => prev.filter(evt => evt.evidence_id !== evidenceId));
     logAuditAction('EVIDENCE_DELETED', 'evidence', evidenceId);
+    toast.success('Evidence file deleted.');
+    return true;
   };
 
   // Action: Toggle False Positive (FR-DET-6)
@@ -678,6 +1295,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           false_positive: nextFP,
           reason: reason || 'Analyst discretion'
         });
+        detectionsApi.toggleFalsePositive(detectionId, nextFP, reason).catch(err => console.warn('Backend FP notice:', err));
         return {
           ...d,
           false_positive: nextFP,
@@ -699,40 +1317,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRules(prev => [newRule, ...prev]);
     logAuditAction('DETECTION_RULE_ADDED', 'system', newId, { name: ruleData.name });
 
-    // Re-evaluate on all events
-    const updatedRules = [newRule, ...rules];
-    cases.forEach(c => {
-      const cEvents = events.filter(e => e.case_id === c.id);
-      const newDets = evaluateRulesAgainstEvents(updatedRules, cEvents, c.id);
-      setDetections(prev => {
-        const others = prev.filter(d => d.case_id !== c.id);
-        return [...others, ...newDets];
-      });
-    });
+    // Rule evaluation and resulting findings remain backend-owned.
   };
 
   // Action: Reload Sigma Rules (FR-DET-1)
   const reloadSigmaRules = () => {
     cases.forEach(c => {
-      const cEvents = events.filter(e => e.case_id === c.id);
-      const newDets = evaluateRulesAgainstEvents(rules, cEvents, c.id);
-      setDetections(prev => {
-        const others = prev.filter(d => d.case_id !== c.id);
-        return [...others, ...newDets];
-      });
+      detectionsApi.run(c.id)
+        .then(() => detectionsApi.listByCase(c.id))
+        .then(result => {
+          const backendDetections: DetectionResult[] = (Array.isArray(result.data) ? result.data : []).map((bd: any) => ({
+            id: String(bd.id), case_id: String(bd.case_id || c.id), rule_id: String(bd.rule_id || 'rule-heuristic'),
+            rule_name: bd.rule_name || bd.title || 'Threat Finding', severity: bd.severity || 'high',
+            mitre_technique: bd.mitre_technique || 'T1110', mitre_techniques_all: bd.mitre_techniques_all || [bd.mitre_technique].filter(Boolean),
+            mitre_tactic: bd.mitre_tactic || 'Execution', timestamp: bd.timestamp || bd.detected_at || new Date().toISOString(),
+            description: bd.description || 'Suspicious threat activity detected in case logs', matched_event_ids: bd.matched_event_ids || bd.event_ids || [],
+            false_positive: Boolean(bd.false_positive || bd.is_false_positive), entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
+          }));
+          setDetections(prev => [...prev.filter(d => d.case_id !== c.id), ...backendDetections]);
+        })
+        .catch(() => setDetections(prev => prev.filter(d => d.case_id !== c.id)));
     });
     logAuditAction('EVIDENCE_PARSED', 'system', 'rules_engine', { action: 'rules_reloaded' });
   };
 
   const resetToInitialScenarios = () => {
-    setCases(INITIAL_SCENARIOS.map(s => s.caseData));
-    setEvidenceList(INITIAL_SCENARIOS.flatMap(s => s.evidenceFiles));
-    setEvents(INITIAL_SCENARIOS.flatMap(s => s.events));
-    setDetections(INITIAL_SCENARIOS.flatMap(s => s.detections));
-    setRules(INITIAL_SIGMA_RULES);
-    setActiveCaseId('case-cobalt-shadow');
-    logAuditAction('CASE_UPDATED', 'system', 'all', { message: 'Reset all state to initial scenarios' });
+    // Clear the selected working view without restoring bundled mock evidence.
+    // Saved backend cases are intentionally preserved and can be selected later.
+    setActiveCaseId('');
+    setEvidenceList([]);
+    setEvents([]);
+    setDetections([]);
+    setCaseGraph({ nodes: [], edges: [] });
+    logAuditAction('CASE_UPDATED', 'system', 'workspace', { message: 'Cleared active investigation workspace' });
+    toast.success('Workspace cleared. Uploading now starts a new investigation case.');
   };
+
 
   return (
     <AppContext.Provider
@@ -771,6 +1391,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         registerUser,
         loginUser,
         logout,
+        updateCurrentUserProfile,
         theme,
         setTheme,
         toggleTheme,

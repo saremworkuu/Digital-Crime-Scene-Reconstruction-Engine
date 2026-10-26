@@ -7,14 +7,7 @@ export interface AuthState {
 }
 
 export const initialAuthState: AuthState = {
-  currentUser: {
-    id: 'usr-sarah',
-    name: 'Sarah Chen',
-    email: 'investigator@dcsre.corp',
-    role: 'investigator',
-    department: 'Digital Forensics',
-    active: true
-  },
-  token: 'mock-jwt-token-investigator-2026',
-  isAuthenticated: true
+  currentUser: null,
+  token: null,
+  isAuthenticated: false
 };

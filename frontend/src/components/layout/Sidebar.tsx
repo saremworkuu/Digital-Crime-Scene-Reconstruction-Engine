@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp, DEMO_USERS } from '../../store';
 import { 
   LayoutDashboard, 
@@ -12,9 +12,12 @@ import {
   ChevronDown, 
   LogOut, 
   Shield, 
-  UserCheck 
+  UserCheck,
+  RefreshCw,
+  UserCog
 } from 'lucide-react';
 import { UserRole } from '../../types';
+import { EditProfileModal } from '../EditProfileModal';
 
 interface SidebarProps {
   onOpenNewTask: () => void;
@@ -26,10 +29,46 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
     setCurrentPage, 
     currentUser, 
     setCurrentUser, 
-    logAuditAction 
+    logAuditAction,
+    resetToInitialScenarios
   } = useApp();
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const closeTimeoutRef = useRef<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProfileDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleMouseEnter = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setProfileDropdownOpen(true);
+  };
+
+  const handleMouseLeave = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setProfileDropdownOpen(false);
+    }, 150);
+  };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -126,8 +165,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
         </button>
 
         {/* User Profile Card (Anna Gunn @gunna25) */}
-        <div className="relative">
+        <div
+          ref={dropdownRef}
+          className="relative"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           <button
+            type="button"
             onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
             className="w-full flex items-center justify-between p-2 rounded-xl bg-neutral-950/70 hover:bg-neutral-900/90 border border-neutral-850 transition-all cursor-pointer text-left"
           >
@@ -172,23 +217,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
 
               <div className="space-y-1">
                 <button
-                  onClick={() => {
-                    setProfileDropdownOpen(false);
-                    setCurrentPage('admin_login');
-                  }}
-                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-[#ff936b] hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
-                >
-                  <Shield className="w-3.5 h-3.5 text-[#f95721]" />
-                  <span>Admin Login Page</span>
-                </button>
-                <button
+                  type="button"
                   onClick={() => {
                     setProfileDropdownOpen(false);
                     setCurrentPage('about');
                   }}
                   className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
                 >
-                  About DCSRE Engine
+                  About አሻራ Engine
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfileDropdownOpen(false);
+                    setIsEditProfileOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors cursor-pointer"
+                >
+                  <UserCog className="w-3.5 h-3.5 text-[#f95721]" />
+                  <span>Edit Profile</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetToInitialScenarios();
+                    setProfileDropdownOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-[#f95721] hover:bg-[#24130d] hover:text-[#fb923c] transition-colors cursor-pointer font-medium"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Clear Workspace</span>
                 </button>
               </div>
 
@@ -198,7 +256,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-red-400 hover:bg-red-950/40 transition-colors cursor-pointer font-medium"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Log Out of Enclave</span>
+                  <span>Sign Out</span>
                 </button>
               </div>
             </div>
@@ -206,6 +264,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenNewTask }) => {
         </div>
       </div>
 
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+      />
     </aside>
   );
 };

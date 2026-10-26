@@ -61,11 +61,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
     const nodes = filteredNodes;
 
     if (layout === 'hierarchical') {
-      // Stratify by role / type:
-      // Level 1: External IPs
-      // Level 2: DMZ / Web hosts
-      // Level 3: Users & internal accounts
-      // Level 4: Core DC / Internal DB / Target Files
+      // Stratify by role / type with clear left-to-right progression:
+      // Level 1: External IPs & Adversary Infrastructure
+      // Level 2: Ingress Workstations & Edge Gateways (WS-HR-12, mailgw, etc.)
+      // Level 3: Compromised / Active User Accounts
+      // Level 4: Core Domain Controllers & High-Value Target Servers (DC-01, SRV-FS-02, SRV-BKP-01)
       const levels: Record<string, GraphNode[]> = {
         lvl1: [],
         lvl2: [],
@@ -74,20 +74,27 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
       };
 
       nodes.forEach(n => {
-        if (n.type === 'ip') levels.lvl1.push(n);
-        else if (n.type === 'host' && (n.label.includes('web') || n.label.includes('dmz') || n.label.includes('ws'))) levels.lvl2.push(n);
-        else if (n.type === 'user') levels.lvl3.push(n);
-        else levels.lvl4.push(n);
+        const lbl = n.label.toLowerCase();
+        const isExtIp = n.type === 'ip' && !lbl.startsWith('10.') && !lbl.startsWith('192.168.') && !lbl.startsWith('172.');
+        if (isExtIp) {
+          levels.lvl1.push(n);
+        } else if (n.type === 'user') {
+          levels.lvl3.push(n);
+        } else if (lbl.includes('dc-') || lbl.includes('srv-') || lbl.includes('domain') || lbl.includes('file')) {
+          levels.lvl4.push(n);
+        } else {
+          levels.lvl2.push(n);
+        }
       });
 
       const tierKeys = ['lvl1', 'lvl2', 'lvl3', 'lvl4'];
-      const tierWidth = width / (tierKeys.length + 0.5);
+      const tierWidth = (width - 120) / tierKeys.length;
 
       tierKeys.forEach((tier, colIdx) => {
         const tierNodes = levels[tier];
         const count = tierNodes.length;
         tierNodes.forEach((node, rowIdx) => {
-          const x = 90 + colIdx * tierWidth;
+          const x = 75 + colIdx * tierWidth;
           const y = (height / (count + 1)) * (rowIdx + 1);
           positions[node.id] = { x, y };
         });
@@ -172,6 +179,40 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
     setDraggingNodeId(null);
   };
 
+  // Touch handlers for mobile and tablet responsiveness
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      if ((e.target as HTMLElement).tagName === 'svg') {
+        setIsPanning(true);
+        setDragStart({ x: touch.clientX - pan.x, y: touch.clientY - pan.y });
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      if (isPanning) {
+        setPan({ x: touch.clientX - dragStart.x, y: touch.clientY - dragStart.y });
+      } else if (draggingNodeId) {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const x = (touch.clientX - rect.left - pan.x) / zoom;
+        const y = (touch.clientY - rect.top - pan.y) / zoom;
+        setNodePositions(prev => ({
+          ...prev,
+          [draggingNodeId]: { x, y }
+        }));
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsPanning(false);
+    setDraggingNodeId(null);
+  };
+
   const getNodeIcon = (type: EntityType) => {
     switch (type) {
       case 'host': return <Server className="w-3.5 h-3.5" />;
@@ -197,40 +238,40 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
   };
 
   return (
-    <div className="relative bg-[#161413]/95 border border-[#2b2523] rounded-2xl overflow-hidden flex flex-col min-h-[620px] shadow-2xl backdrop-blur-xl">
+    <div className="relative bg-[#161413]/95 border border-[#2b2523] rounded-2xl overflow-hidden flex flex-col min-h-[440px] sm:min-h-[540px] md:min-h-[620px] shadow-2xl backdrop-blur-xl">
       
       {/* Top Controls Bar (Warm Brown & Cyber-Orange styling matching Dashboard & Login) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-[#12100f] border-b border-[#282321] z-10">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3.5 bg-[#12100f] border-b border-[#282321] z-10 text-xs">
         
         {/* Layout Algorithms (FR-GRAPH-4) */}
-        <div className="flex items-center gap-2.5 text-xs">
-          <span className="text-[#a8a29e] font-mono text-[11px] flex items-center gap-1.5 font-medium">
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
+          <span className="text-[#a8a29e] font-mono text-[10px] sm:text-[11px] flex items-center gap-1 sm:gap-1.5 font-medium">
             <Layers className="w-3.5 h-3.5 text-[#f95721]" /> Layout:
           </span>
           <div className="flex items-center p-0.5 bg-[#0d0c0c] border border-[#2b2523] rounded-lg">
             <button
               onClick={() => setLayout('hierarchical')}
-              className={`px-3 py-1 rounded-md transition-all text-xs font-mono cursor-pointer ${
+              className={`px-2 sm:px-3 py-1 rounded-md transition-all text-[11px] sm:text-xs font-mono cursor-pointer ${
                 layout === 'hierarchical'
                   ? 'bg-[#2a140d] text-[#f95721] font-semibold border border-[#ea580c]/50 shadow-[0_0_10px_rgba(249,87,33,0.2)]'
                   : 'text-[#a8a29e] hover:text-[#fafaf9]'
               }`}
             >
-              Progression Pipeline
+              Pipeline
             </button>
             <button
               onClick={() => setLayout('force')}
-              className={`px-3 py-1 rounded-md transition-all text-xs font-mono cursor-pointer ${
+              className={`px-2 sm:px-3 py-1 rounded-md transition-all text-[11px] sm:text-xs font-mono cursor-pointer ${
                 layout === 'force'
                   ? 'bg-[#2a140d] text-[#f95721] font-semibold border border-[#ea580c]/50 shadow-[0_0_10px_rgba(249,87,33,0.2)]'
                   : 'text-[#a8a29e] hover:text-[#fafaf9]'
               }`}
             >
-              Force / Mesh
+              Mesh
             </button>
             <button
               onClick={() => setLayout('circular')}
-              className={`px-3 py-1 rounded-md transition-all text-xs font-mono cursor-pointer ${
+              className={`px-2 sm:px-3 py-1 rounded-md transition-all text-[11px] sm:text-xs font-mono cursor-pointer ${
                 layout === 'circular'
                   ? 'bg-[#2a140d] text-[#f95721] font-semibold border border-[#ea580c]/50 shadow-[0_0_10px_rgba(249,87,33,0.2)]'
                   : 'text-[#a8a29e] hover:text-[#fafaf9]'
@@ -242,21 +283,21 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
         </div>
 
         {/* Attack Path Toggle & View Controls */}
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
           
           {/* Toggle: Attack Path Highlighting (FR-GRAPH-2) */}
-          <label className="flex items-center gap-2 cursor-pointer text-xs text-[#fafaf9] select-none bg-[#0d0c0c] border border-[#2b2523] px-3 py-1.5 rounded-lg hover:border-[#38312d] transition-colors">
+          <label className="flex items-center gap-1.5 sm:gap-2 cursor-pointer text-xs text-[#fafaf9] select-none bg-[#0d0c0c] border border-[#2b2523] px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:border-[#38312d] transition-colors">
             <input
               type="checkbox"
               checked={onlyAttackPath}
               onChange={(e) => setOnlyAttackPath(e.target.checked)}
               className="rounded border-[#38312d] bg-[#141211] text-[#f95721] accent-[#f95721] cursor-pointer"
             />
-            <span className="font-semibold text-[#f95721] font-mono text-xs">Attack Path Focus</span>
+            <span className="font-semibold text-[#f95721] font-mono text-[11px] sm:text-xs">Attack Path</span>
           </label>
 
           {/* Zoom & Pan Controls */}
-          <div className="flex items-center gap-1 bg-[#0d0c0c] border border-[#2b2523] rounded-lg p-0.5">
+          <div className="flex items-center gap-0.5 sm:gap-1 bg-[#0d0c0c] border border-[#2b2523] rounded-lg p-0.5">
             <button
               onClick={() => setZoom(z => Math.max(0.4, z - 0.15))}
               className="p-1 rounded text-[#a8a29e] hover:text-[#fafaf9] hover:bg-[#25201e] transition-colors cursor-pointer"
@@ -264,7 +305,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span className="text-[11px] font-mono text-[#d6d3d1] px-1.5 tabular-nums">
+            <span className="text-[10px] sm:text-[11px] font-mono text-[#d6d3d1] px-1 sm:px-1.5 tabular-nums">
               {Math.round(zoom * 100)}%
             </span>
             <button
@@ -286,11 +327,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
           {/* Export SVG Button */}
           <button
             onClick={exportSvg}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-all font-mono text-xs cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-all font-mono text-[11px] sm:text-xs cursor-pointer shadow-sm"
             title="Export vector SVG graph"
           >
             <Download className="w-3.5 h-3.5 text-[#f95721]" />
-            <span>Export SVG</span>
+            <span className="hidden sm:inline">Export SVG</span>
           </button>
 
         </div>
@@ -299,14 +340,17 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
 
       {/* SVG Canvas Viewport */}
       <div
-        className={`flex-1 relative overflow-hidden ${isLight ? 'bg-slate-50' : 'bg-[#0c0b0a]'} cursor-grab active:cursor-grabbing select-none transition-colors`}
+        className={`flex-1 relative overflow-hidden ${isLight ? 'bg-slate-50' : 'bg-[#0c0b0a]'} cursor-grab active:cursor-grabbing select-none transition-colors touch-none`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         <svg
           ref={svgRef}
-          className="w-full h-[540px]"
+          className="w-full h-[360px] sm:h-[460px] md:h-[540px]"
           viewBox="0 0 840 520"
         >
           <defs>
@@ -420,42 +464,68 @@ export const GraphView: React.FC<GraphViewProps> = ({ graphData }) => {
                     setDraggingNodeId(node.id);
                   }}
                 >
-                  {/* Glowing halo for compromised attack nodes */}
-                  {isCompromised && (
-                    <circle
-                      r="22"
-                      fill={isLight ? '#ea580c' : '#f95721'}
-                      opacity={isLight ? '0.25' : '0.2'}
-                      className="animate-ping"
-                    />
-                  )}
+                  {/* Distinct visual styles per Stage 7: internal host, external IP, user, compromised */}
+                  {(() => {
+                    const lbl = node.label.toLowerCase();
+                    const isExtIp = node.type === 'ip' && !lbl.startsWith('10.') && !lbl.startsWith('192.168.') && !lbl.startsWith('172.');
+                    const isUser = node.type === 'user';
+                    
+                    let strokeColor = isLight ? '#0284c7' : '#38bdf8';
+                    let fillColor = isLight ? '#f0f9ff' : '#082f49';
+                    let markerText = 'HOST';
+                    let textColor = isLight ? '#0369a1' : '#38bdf8';
 
-                  {/* Main Node Circle */}
-                  <circle
-                    r="16"
-                    fill={isCompromised ? (isLight ? '#ffedd5' : '#2e140d') : (isLight ? '#ffffff' : '#191615')}
-                    stroke={
-                      isSelected
-                        ? (isLight ? '#c2410c' : '#f95721')
-                        : isCompromised
-                        ? (isLight ? '#ea580c' : '#ea580c')
-                        : (isLight ? '#cbd5e1' : '#3a322e')
+                    if (isCompromised) {
+                      strokeColor = isLight ? '#ea580c' : '#f95721';
+                      fillColor = isLight ? '#ffedd5' : '#2e140d';
+                      markerText = 'COMP';
+                      textColor = isLight ? '#c2410c' : '#fb923c';
+                    } else if (isExtIp) {
+                      strokeColor = isLight ? '#7c3aed' : '#a855f7';
+                      fillColor = isLight ? '#f5f3ff' : '#2e1065';
+                      markerText = 'EXT';
+                      textColor = isLight ? '#6d28d9' : '#c084fc';
+                    } else if (isUser) {
+                      strokeColor = isLight ? '#059669' : '#10b981';
+                      fillColor = isLight ? '#ecfdf5' : '#064e3b';
+                      markerText = 'USER';
+                      textColor = isLight ? '#047857' : '#34d399';
                     }
-                    strokeWidth={isSelected ? 3 : isCompromised ? 2.4 : 1.5}
-                  />
 
-                  {/* Node Type Letter Marker */}
-                  <text
-                    x="0"
-                    y="4"
-                    textAnchor="middle"
-                    fill={isCompromised ? (isLight ? '#c2410c' : '#fb923c') : (isLight ? '#ea580c' : '#f97316')}
-                    fontSize="10"
-                    fontFamily="JetBrains Mono, monospace"
-                    fontWeight="bold"
-                  >
-                    {node.type === 'host' ? 'H' : node.type === 'user' ? 'U' : node.type === 'ip' ? 'IP' : 'F'}
-                  </text>
+                    if (isSelected) {
+                      strokeColor = isLight ? '#c2410c' : '#f95721';
+                    }
+
+                    return (
+                      <>
+                        {isCompromised && (
+                          <circle
+                            r="24"
+                            fill={isLight ? '#ea580c' : '#f95721'}
+                            opacity={isLight ? '0.25' : '0.2'}
+                            className="animate-ping"
+                          />
+                        )}
+                        <circle
+                          r="17"
+                          fill={fillColor}
+                          stroke={strokeColor}
+                          strokeWidth={isSelected ? 3.5 : isCompromised ? 2.5 : 1.8}
+                        />
+                        <text
+                          x="0"
+                          y="3.5"
+                          textAnchor="middle"
+                          fill={textColor}
+                          fontSize="8"
+                          fontFamily="JetBrains Mono, monospace"
+                          fontWeight="bold"
+                        >
+                          {markerText}
+                        </text>
+                      </>
+                    );
+                  })()}
 
                   {/* Node Label Below */}
                   <text

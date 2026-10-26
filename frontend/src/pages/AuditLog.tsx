@@ -10,6 +10,7 @@ export const AuditLog: React.FC = () => {
   const { auditLogs } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [actionFilter, setActionFilter] = useState('ALL');
+  const actionOptions = useMemo(() => [...new Set(auditLogs.map(log => log.action).filter(Boolean))].sort(), [auditLogs]);
 
   const filteredLogs = useMemo(() => {
     return auditLogs.filter(log => {
@@ -63,7 +64,7 @@ export const AuditLog: React.FC = () => {
             <span>Cryptographic Chain-of-Custody Audit Trail</span>
           </h1>
           <p className="text-xs text-[#a8a29e] mt-1">
-            Immutable evidentiary ledger recording every user access, evidence hashing, rule evaluation, and report export (NIST SP 800-86).
+            Immutable audit ledger recording user access, evidence hashing, rule evaluation, and report exports.
           </p>
         </div>
 
@@ -101,15 +102,7 @@ export const AuditLog: React.FC = () => {
             className="bg-[#0d0c0c] border border-[#2b2523] rounded-lg px-2.5 py-1 text-[#fafaf9] font-mono text-xs focus:outline-none focus:border-[#f95721] cursor-pointer"
           >
             <option value="ALL">All Actions</option>
-            <option value="EVIDENCE_UPLOADED">EVIDENCE_UPLOADED</option>
-            <option value="EVIDENCE_DOWNLOADED">EVIDENCE_DOWNLOADED</option>
-            <option value="EVIDENCE_PARSED">EVIDENCE_PARSED</option>
-            <option value="CASE_CREATED">CASE_CREATED</option>
-            <option value="CASE_STATUS_CHANGED">CASE_STATUS_CHANGED</option>
-            <option value="DETECTION_FP_TOGGLED">DETECTION_FP_TOGGLED</option>
-            <option value="REPORT_GENERATED">REPORT_GENERATED</option>
-            <option value="REPORT_EXPORTED">REPORT_EXPORTED</option>
-            <option value="USER_LOGIN">USER_LOGIN</option>
+            {actionOptions.map(action => <option key={action} value={action}>{action.replace(/[._]/g, ' ')}</option>)}
           </select>
         </div>
 
@@ -122,7 +115,7 @@ export const AuditLog: React.FC = () => {
       {/* Audit Log Table */}
       <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl overflow-hidden flex flex-col shadow-xl">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-xs min-w-[650px]">
             <thead>
               <tr className="border-b border-[#282321] bg-[#100f0e] text-[#a8a29e] font-mono text-[11px]">
                 <th className="py-2.5 px-4 w-12 text-center">#</th>

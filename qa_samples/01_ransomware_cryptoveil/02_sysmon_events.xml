@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Events source="Microsoft-Windows-Sysmon/Operational">
+  <Event>
+    <System>
+      <EventID>1</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:41:27.000Z"/>
+      <EventRecordID>1</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">C:\Windows\System32\cmd.exe</Data>
+      <Data Name="CommandLine">cmd.exe /c powershell -nop -w hidden -enc ...</Data>
+      <Data Name="User">ACME\mlee</Data>
+      <Data Name="ParentImage">WINWORD.EXE</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>22</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:41:30.000Z"/>
+      <EventRecordID>2</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="QueryName">cdn-sync.updates-portal.example</Data>
+      <Data Name="QueryResults">198.51.100.66</Data>
+      <Data Name="Image">powershell.exe</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>3</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:41:31.000Z"/>
+      <EventRecordID>3</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">powershell.exe</Data>
+      <Data Name="SourceIp">10.20.1.12</Data>
+      <Data Name="DestinationIp">198.51.100.66</Data>
+      <Data Name="DestinationPort">443</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>22</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:43:02.000Z"/>
+      <EventRecordID>4</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="QueryName">files-share-drop.example</Data>
+      <Data Name="QueryResults">192.0.2.88</Data>
+      <Data Name="Image">powershell.exe</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>11</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:43:08.000Z"/>
+      <EventRecordID>5</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">powershell.exe</Data>
+      <Data Name="TargetFilename">C:\Users\mlee\AppData\Roaming\svchelper.exe</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>1</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:43:09.000Z"/>
+      <EventRecordID>6</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">C:\Users\mlee\AppData\Roaming\svchelper.exe</Data>
+      <Data Name="Hashes">SHA256=cd001f4b67bb4a051fe247b41bd136ee15f69de6ebe55bb35ca743fcbb1b973a</Data>
+      <Data Name="User">ACME\mlee</Data>
+      <Data Name="ParentImage">powershell.exe</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>13</EventID>
+      <TimeCreated SystemTime="2026-09-03T07:44:00.000Z"/>
+      <EventRecordID>7</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="TargetObject">HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SvcHelper</Data>
+      <Data Name="Details">C:\Users\mlee\AppData\Roaming\svchelper.exe</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>10</EventID>
+      <TimeCreated SystemTime="2026-09-03T08:20:48.000Z"/>
+      <EventRecordID>8</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="SourceImage">C:\Windows\System32\rundll32.exe</Data>
+      <Data Name="TargetImage">C:\Windows\System32\lsass.exe</Data>
+      <Data Name="GrantedAccess">0x1fffff</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>11</EventID>
+      <TimeCreated SystemTime="2026-09-03T08:20:50.000Z"/>
+      <EventRecordID>9</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">C:\Windows\System32\rundll32.exe</Data>
+      <Data Name="TargetFilename">C:\Windows\Temp\lsass.dmp</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>3</EventID>
+      <TimeCreated SystemTime="2026-09-03T08:33:01.000Z"/>
+      <EventRecordID>10</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">svchelper.exe</Data>
+      <Data Name="SourceIp">10.20.1.12</Data>
+      <Data Name="DestinationIp">10.20.2.2</Data>
+      <Data Name="DestinationPort">445</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>3</EventID>
+      <TimeCreated SystemTime="2026-09-03T09:02:09.000Z"/>
+      <EventRecordID>11</EventRecordID>
+      <Computer>WS-HR-12</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">PsExec.exe</Data>
+      <Data Name="SourceIp">10.20.1.12</Data>
+      <Data Name="DestinationIp">10.20.2.5</Data>
+      <Data Name="DestinationPort">445</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>3</EventID>
+      <TimeCreated SystemTime="2026-09-03T09:30:05.000Z"/>
+      <EventRecordID>12</EventRecordID>
+      <Computer>SRV-FS-02</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">rclone.exe</Data>
+      <Data Name="SourceIp">10.20.2.5</Data>
+      <Data Name="DestinationIp">203.0.113.99</Data>
+      <Data Name="DestinationPort">443</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>11</EventID>
+      <TimeCreated SystemTime="2026-09-03T10:12:34.000Z"/>
+      <EventRecordID>13</EventRecordID>
+      <Computer>SRV-FS-02</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">cvlk.exe</Data>
+      <Data Name="TargetFilename">D:\Shares\Finance\README_RESTORE_FILES.txt</Data>
+    </EventData>
+  </Event>
+  <Event>
+    <System>
+      <EventID>23</EventID>
+      <TimeCreated SystemTime="2026-09-03T10:12:36.000Z"/>
+      <EventRecordID>14</EventRecordID>
+      <Computer>SRV-FS-02</Computer>
+    </System>
+    <EventData>
+      <Data Name="Image">cvlk.exe</Data>
+      <Data Name="TargetFilename">D:\Shares\Finance\Budget_2026_01.xlsx</Data>
+    </EventData>
+  </Event>
+</Events>

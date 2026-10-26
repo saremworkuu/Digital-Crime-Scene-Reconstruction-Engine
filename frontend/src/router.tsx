@@ -1,7 +1,6 @@
 import React from 'react';
 import { useStore } from './store';
 import { Login } from './pages/Login';
-import { AdminLogin } from './pages/AdminLogin';
 import { Register } from './pages/Register';
 import { Home } from './pages/Home';
 import { About } from './pages/About';
@@ -31,9 +30,6 @@ export const AppRouter: React.FC = () => {
     if (state.activeTab === 'contact') {
       return <Contact />;
     }
-    if (state.activeTab === 'admin_login') {
-      return <AdminLogin />;
-    }
     if (state.activeTab === 'register') {
       return <Register />;
     }
@@ -50,8 +46,6 @@ export const AppRouter: React.FC = () => {
       return <About />;
     case 'contact':
       return <Contact />;
-    case 'admin_login':
-      return <AdminLogin />;
     case 'dashboard':
       return <Dashboard />;
     case 'cases':
