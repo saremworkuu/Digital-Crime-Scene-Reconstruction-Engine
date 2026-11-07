@@ -202,4 +202,41 @@ npm run dev
 3. **Defense-in-Depth RBAC** — Strict role enforcement preventing unauthorized access, deletion, or tampering with active investigation cases.
 
 ---
+## 🎯 9. Project Objectives
 
+**The primary objectives of the Ashara Digital Crime Scene Reconstruction Engine are:**
+1. Automate the collection and analysis of heterogeneous digital forensic artifacts.
+2. Preserve digital evidence integrity through cryptographic fingerprinting.
+3. Normalize multi-source security events into a unified event schema.
+4. Reconstruct chronological incident timelines from fragmented evidence.
+5. Identify suspicious activities using deterministic detection rules.
+6. Map detected behaviors to the MITRE ATT&CK framework.
+7. Visualize relationships between compromised systems and suspicious entities.
+8. Generate structured and verifiable forensic investigation reports.
+9. Improve investigation efficiency, accuracy, and reproducibility.
+
+---
+## ⚠️ 10. Problem Statement
+1. Modern cyber incidents generate enormous volumes of fragmented digital evidence across multiple operating systems, network devices, applications, and security platforms.
+2. Traditional manual forensic investigation presents several challenges:
+3. Fragmented evidence across heterogeneous sources.
+4. Time-consuming manual log correlation.
+5. Difficulty reconstructing accurate incident timelines.
+6. Limited visibility into relationships between compromised entities.
+7. Risk of inconsistent investigative conclusions.
+8. Challenges maintaining evidence provenance and chain of custody.
+9. Ashara addresses these challenges by providing a centralized forensic investigation platform that transforms raw digital artifacts into structured, traceable, and evidence-supported incident reconstructions.
+
+---
+## 🚀 11. Future Enhancements
+
+**Potential future development directions include:**
+1. Integration with advanced memory forensic frameworks.
+2. Expanded digital disk image analysis.
+3. Additional threat intelligence integrations.
+4. Advanced evidence relationship visualization.
+5. Automated forensic case management.
+6. Enhanced investigation collaboration.
+7. Extended detection rule libraries.
+8. Multilingual investigation reports.
+9. Advanced forensic analytics and reporting.
