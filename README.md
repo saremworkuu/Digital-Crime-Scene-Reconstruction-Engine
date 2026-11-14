@@ -21,8 +21,12 @@
 > 🎥 **System Demonstration & Forensic Reconstruction**: [Watch 5-Minute Project Video](https://www.awesomescreenshot.com/video/57769375?key=c9aa18ff075c78c7a647b175a7febd6d)
 >
 > **Coverage**: Evidence ingestion, multi-source log normalization, deterministic MITRE ATT&CK correlation, interactive attack path graph traversal, and courtroom-ready report generation.
-
+>
 ---
+**Contributions**
+> Bitaniya Damtew: CTC-2894-26: [Presentation](https://www.awesomescreenshot.com/video/58350339?key=8a9f28fb6d779ca0c74ef82d8dd2c73f)
+>  
+
 
 ## 👥 2. Team Information
 
