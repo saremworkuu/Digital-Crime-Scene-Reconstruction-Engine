@@ -4,6 +4,9 @@ export interface GraphNode {
   id: string;
   label: string;
   type: EntityType;
+  role?: string;
+  username?: string;
+  domain?: string;
   isCompromised?: boolean;
   is_compromised?: boolean;
   isAttackPath?: boolean;

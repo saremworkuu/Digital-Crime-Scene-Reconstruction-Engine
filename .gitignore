@@ -9,3 +9,53 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+
+# Databases & local data
+*.db
+*.sqlite
+*.sqlite3
+dcsre.db
+backend/dcsre.db
+
+# Uploads & local storage
+backend/uploads/
+uploads/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Miscellaneous
+backend/package-lock.json
+scratch/
+
+# Documentation, Internal Guides & Reports (Local only - do not push to GitHub)
+docs/
+*.doc
+*.docx
+API_INTEGRATION.md
+ADMIN_DASHBOARD_PAGES.md
+ADMIN_DASHBOARD_GUIDE.md
+QA_INVESTIGATOR_CHECK.md
+QA_REPORT.md
+QA_TEST_CHECKLIST.md
+SECURITY.md
+security/
+qa/
+qa_samples/
+
