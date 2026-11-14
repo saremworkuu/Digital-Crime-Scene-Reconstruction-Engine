@@ -28,6 +28,7 @@
 >
 > Henon Chare:CTC-077-26
 [presentation](https://youtube.com/shorts/3aUULV47CVs?si=wI1eohQMVXHcrbXk)
+> 
 > Zelalem Tsegaye: CTC-2003-26: [presentation](https://drive.google.com/file/d/1P7diVieITeBlJCBz6IdR_phzofeeU-cs/view?usp=sharing)
 > 
 
