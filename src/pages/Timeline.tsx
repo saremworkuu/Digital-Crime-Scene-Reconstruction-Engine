@@ -55,10 +55,10 @@ export const Timeline: React.FC = () => {
 
       if (filters.search.trim()) {
         const q = filters.search.toLowerCase();
-        const matchesAction = evt.action.toLowerCase().includes(q);
-        const matchesHost = evt.host.toLowerCase().includes(q);
-        const matchesUser = evt.user.toLowerCase().includes(q);
-        const matchesRaw = evt.raw.toLowerCase().includes(q);
+        const matchesAction = (evt.action || '').toLowerCase().includes(q);
+        const matchesHost = (evt.host || '').toLowerCase().includes(q);
+        const matchesUser = (evt.user || '').toLowerCase().includes(q);
+        const matchesRaw = (evt.raw || '').toLowerCase().includes(q);
         const matchesIp = (evt.src_ip && evt.src_ip.includes(q)) || (evt.dst_ip && evt.dst_ip.includes(q));
         const matchesMitre = evt.mitre_technique && evt.mitre_technique.toLowerCase().includes(q);
 

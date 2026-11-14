@@ -25,6 +25,16 @@ export const authApi = {
   changePassword: async (currentPassword: string, newPassword: string) => {
     return apiClient.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword });
   },
+  updateProfile: async (data: {
+    name?: string;
+    username?: string;
+    email?: string;
+    department?: string;
+    badge_id?: string;
+    badgeId?: string;
+  }) => {
+    return apiClient.put<User>('/auth/me', data);
+  },
   listUsers: async () => {
     return apiClient.get<User[]>('/auth/users');
   }

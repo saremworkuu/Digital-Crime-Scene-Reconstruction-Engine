@@ -1,0 +1,4 @@
+timestamp,event_type,source,username,source_ip,status
+2026-10-17T09:15:22Z,login,auth-server,analyst,192.0.2.10,success
+2026-10-17T09:18:45Z,login,auth-server,unknown,192.0.2.55,failed
+2026-10-17T09:20:11Z,privilege_use,auth-server,analyst,192.0.2.10,success

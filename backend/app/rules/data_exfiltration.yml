@@ -1,0 +1,22 @@
+# Data exfiltration detection rule
+
+id: data_exfiltration
+name: Potential Data Exfiltration
+description: >-
+  Detects events indicating potentially suspicious outbound data
+  transfers, including large transfers, unusual upload activity,
+  and explicit data exfiltration indicators.
+severity: high
+mitre_technique: T1041
+mitre_tactic: Exfiltration
+
+detection:
+  event_types:
+    - data_exfiltration
+    - outbound_transfer
+    - file_upload
+    - data_transfer
+    - network_connection
+  group_by: source_ip
+  transfer_threshold_bytes: 104857600
+  cumulative_window_minutes: 60

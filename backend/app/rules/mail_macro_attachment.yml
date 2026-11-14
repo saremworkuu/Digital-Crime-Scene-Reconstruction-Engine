@@ -1,0 +1,9 @@
+id: mail_macro_attachment
+title: Macro-Enabled or Script Archive Delivered
+description: Detects user-delivered email with macro-enabled attachments or script-bearing archives.
+severity: high
+mitre_technique: T1566.001
+mitre_tactic: Initial Access
+tags: [attack.initial_access, attack.t1566.001]
+detection:
+  event_types: [email, email_delivery, mail_delivery, message_received]

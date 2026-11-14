@@ -1,0 +1,10 @@
+id: periodic_c2_beaconing
+title: Periodic External Beaconing
+description: Detects regular outbound connections to the same external address and correlates preceding DNS answers.
+severity: high
+mitre_technique: T1071
+mitre_tactic: Command and Control
+tags: [attack.command_and_control, attack.t1071]
+detection:
+  minimum_connections: 4
+  interval_tolerance_percent: 15

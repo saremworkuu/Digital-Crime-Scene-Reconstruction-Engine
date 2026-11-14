@@ -1,0 +1,11 @@
+id: smb_lateral_movement
+title: SMB or Remote Logon Lateral Movement
+description: Detects SMB/admin-share or type 3 logons reaching multiple internal hosts in a short window.
+severity: high
+mitre_technique: T1021.002
+mitre_tactic: Lateral Movement
+tags: [attack.lateral_movement, attack.t1021.002]
+detection:
+  event_types: [network_connection, network_flow, netflow, logon]
+  window_seconds: 60
+  minimum_distinct_targets: 3
