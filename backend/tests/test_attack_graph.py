@@ -225,7 +225,23 @@ def test_graph_filters_legacy_command_users_and_numeric_hosts_and_preserves_api_
         attack_labels = {n["label"] for n in attack_data["nodes"]}
         assert "WEB-01" in attack_labels
         assert "203.0.113.140" in attack_labels
+        assert "198.51.100.201" in attack_labels
+        assert "192.0.2.250" in attack_labels
         assert not (attack_labels & {n["label"] for n in benign_ext_nodes})
+
+        node_by_label = {n["label"]: n for n in attack_data["nodes"]}
+        assert node_by_label["198.51.100.201"]["role"] == "payload_host"
+        assert node_by_label["192.0.2.250"]["role"] == "mining_pool"
+        assert {"www-data", "root", "sysupdate"} <= attack_labels
+        assert "uid=33" not in attack_labels
+        assert "opsadmin" not in attack_labels
+
+        edge_pairs = {(e["source"], e["target"]): e["label"] for e in attack_data["edges"]}
+        assert ("ip-203.0.113.140", "host-WEB-01") in edge_pairs
+        assert "Initial Access" in edge_pairs[("ip-203.0.113.140", "host-WEB-01")]
+        assert ("host-WEB-01", "ip-198.51.100.201") in edge_pairs
+        assert ("host-WEB-01", "ip-192.0.2.250") in edge_pairs
+        assert ("host-WEB-01", "ip-203.0.113.140") in edge_pairs
     finally:
         if prev_db is not None:
             fastapi_app.dependency_overrides[get_db] = prev_db
@@ -237,3 +253,123 @@ def test_graph_filters_legacy_command_users_and_numeric_hosts_and_preserves_api_
             fastapi_app.dependency_overrides.pop(get_current_user, None)
         db.close()
         engine.dispose()
+
+
+def test_attack_path_only_full_compromise_roles_and_uid_preservation():
+    events = []
+    for path in sorted(WEB_COMPROMISE_DIR.iterdir()):
+        if not path.is_file():
+            continue
+        parser = get_parser(path, original_filename=path.name)
+        records = parser.parse(path, original_filename=path.name)
+        for rec in normalize_records(records, default_filename=path.name):
+            rec["id"] = str(uuid.uuid4())
+            events.append(rec)
+
+    findings = execute_detections_on_events(events, uuid.uuid4())
+    graph = build_attack_graph(events, attack_path_only=True, findings=findings)
+
+    labels = {n["label"] for n in graph["nodes"]}
+    assert {"WEB-01", "203.0.113.140", "198.51.100.201", "192.0.2.250", "www-data", "root", "sysupdate"} <= labels
+    assert "10.40.1.15" not in labels
+    assert "uid=33" not in labels
+    assert "opsadmin" not in labels
+
+    by_label = {n["label"]: n for n in graph["nodes"]}
+    assert "10.40.1.15" in ((by_label["WEB-01"].get("details") or {}).get("aliases") or [])
+    assert by_label["198.51.100.201"]["role"] == "payload_host"
+    assert by_label["192.0.2.250"]["role"] == "mining_pool"
+    for f in findings:
+        srcs = set(f.get("source_ips") or [])
+        if f.get("src_ip"):
+            srcs.add(str(f["src_ip"]))
+        assert "10.40.1.15" not in srcs, f"Victim alias IP listed as source in finding: {f.get('rule_id')}"
+
+    edge_pairs = {(e["source"], e["target"]): e["label"] for e in graph["edges"]}
+    for required_edge in (
+        ("ip-203.0.113.140", "host-WEB-01"),
+        ("host-WEB-01", "ip-198.51.100.201"),
+        ("host-WEB-01", "ip-192.0.2.250"),
+        ("host-WEB-01", "ip-203.0.113.140"),
+    ):
+        assert required_edge in edge_pairs, f"Missing required edge: {required_edge}"
+
+    # An unmapped uid without sudo/auth evidence must remain uid=999
+    unmapped_uid_graph = build_attack_graph(
+        [
+            {
+                "id": "u-1",
+                "timestamp": "2026-07-22T02:00:00Z",
+                "event_type": "auditd",
+                "details": {"host": "WEB-01", "user": "uid=999", "command_line": "id"},
+                "severity": "high",
+                "is_attack_path": True,
+            }
+        ],
+        attack_path_only=True,
+    )
+    assert "uid=999" in {n["label"] for n in unmapped_uid_graph["nodes"]}
+
+
+def test_alias_map_normalizes_netflow_pcap_waf_and_merges_graph_node():
+    raw_records = [
+        {
+            "timestamp": "2026-07-15T00:00:00Z",
+            "event_type": "vuln_scan",
+            "host": "APP-02",
+            "extra": {"host_ip": "10.99.2.25", "cve": "CVE-2024-0001"},
+        },
+        {
+            "timestamp": "2026-07-22T01:05:00Z",
+            "event_type": "netflow",
+            "source": "csv",
+            "source_file": "07_netflow_export.csv",
+            "src_ip": "10.99.2.25",
+            "dst_ip": "198.51.100.77",
+            "dst_port": 4444,
+            "protocol": "TCP",
+            "bytes": 4096,
+        },
+        {
+            "timestamp": "2026-07-22T01:06:00Z",
+            "event_type": "network_connection",
+            "source": "pcap",
+            "src_ip": "203.0.113.88",
+            "dst_ip": "10.99.2.25",
+            "dst_port": 443,
+            "protocol": "TCP",
+        },
+        {
+            "timestamp": "2026-07-22T01:07:00Z",
+            "event_type": "edr_alert",
+            "source": "SyntheticWAF",
+            "src_ip": "203.0.113.88",
+            "uri": "/login?id=1 OR 1=1",
+            "rule": "SQL Injection Attack",
+            "mitre_technique": "T1190",
+        },
+    ]
+    normalized = normalize_records(raw_records)
+    by_type = {rec["event_type"]: rec for rec in normalized}
+
+    assert by_type["netflow"]["details"]["host"] == "APP-02"
+    assert by_type["netflow"]["details"]["src_ip"] == "10.99.2.25"
+    assert by_type["netflow"]["details"]["dst_ip"] == "198.51.100.77"
+    assert by_type["network_connection"]["details"]["host"] == "APP-02"
+    assert by_type["network_connection"]["details"]["src_ip"] == "203.0.113.88"
+    assert by_type["network_connection"]["details"]["dst_ip"] == "10.99.2.25"
+    assert by_type["edr_alert"]["details"]["host"] == "unknown_host"
+    assert by_type["edr_alert"]["details"]["src_ip"] == "203.0.113.88"
+
+    for i, rec in enumerate(normalized):
+        rec["id"] = f"evt-{i}"
+
+    findings = execute_detections_on_events(normalized, uuid.uuid4())
+    graph = build_attack_graph(normalized, attack_path_only=False, findings=findings)
+
+    node_labels = {n["label"] for n in graph["nodes"]}
+    assert "APP-02" in node_labels
+    assert "10.99.2.25" not in node_labels
+    host_nodes = [n for n in graph["nodes"] if n["label"] == "APP-02"]
+    assert len(host_nodes) == 1
+    assert "10.99.2.25" in ((host_nodes[0].get("details") or {}).get("aliases") or [])

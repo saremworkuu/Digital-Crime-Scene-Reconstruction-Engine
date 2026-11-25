@@ -22,7 +22,13 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
-from app.services.entity_classification import is_internal_ip
+from app.services.entity_classification import (
+    build_host_alias_map,
+    is_internal_ip,
+    resolve_endpoint_alias,
+    resolve_host_alias,
+    strip_target_alias_ips,
+)
 from app.services.detection import extract_sqli_indicators
 
 
@@ -801,14 +807,15 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
         return 0.0
 
     sorted_events = sorted(events, key=get_ts)
+    alias_map = build_host_alias_map(sorted_events)
 
     # Single non-IP, non-numeric host in the batch (used when web/audit events arrive as unknown_host)
     batch_hosts = {
-        str(h).strip()
+        str(resolve_host_alias(h, alias_map) or h).strip()
         for h in (_extract_field_value(e, "host") for e in sorted_events)
         if h
         and str(h).strip().casefold() not in {"unknown", "unknown_host", "-"}
-        and not _looks_like_ip(str(h).strip())
+        and not _looks_like_ip(str(resolve_host_alias(h, alias_map) or h).strip())
         and not str(h).strip().isdigit()
     }
     inferred_case_host = next(iter(batch_hosts)) if len(batch_hosts) == 1 else None
@@ -821,14 +828,17 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
                 getattr(e, "event_type", None) or (e.get("event_type") if isinstance(e, dict) else "") or ""
             ).strip().lower()
             src_val = str(_extract_field_value(e, "SourceIp") or "").strip()
-            h_val = str(_extract_field_value(e, "host") or "").strip()
-            if (
+            raw_host = str(_extract_field_value(e, "host") or "").strip()
+            h_val = resolve_host_alias(raw_host, alias_map) or raw_host
+            if h_val in alias_map:
+                h_val = alias_map[h_val]
+            elif (
                 not h_val
                 or h_val.casefold() in {"unknown", "unknown_host", "-"}
                 or (ev_type in {"web_access", "web_log", "http"} and (_looks_like_ip(h_val) or h_val == src_val))
                 or (src_val and h_val == src_val and _looks_like_ip(h_val))
             ):
-                h_val = inferred_case_host or ""
+                h_val = resolve_endpoint_alias(e, alias_map) or inferred_case_host or ""
             if h_val and h_val.casefold() not in seen_cf:
                 seen_cf.add(h_val.casefold())
                 result.append(h_val)
@@ -934,7 +944,8 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
             hosts = _victim_hosts_for_events(matched_events)
             users = list({_extract_field_value(e, "user") for e in matched_events
                           if _extract_field_value(e, "user") and _extract_field_value(e, "user") not in ("unknown", "-")})
-            src_ips = sorted({str(_extract_field_value(e, "SourceIp")).strip() for e in matched_events if _extract_field_value(e, "SourceIp")})
+            raw_src_ips = sorted({str(_extract_field_value(e, "SourceIp")).strip() for e in matched_events if _extract_field_value(e, "SourceIp")})
+            src_ips = strip_target_alias_ips(raw_src_ips, hosts, alias_map)
             src_files = list({_extract_field_value(e, "source_file") for e in matched_events if _extract_field_value(e, "source_file")})
             rec_ids = [_extract_field_value(e, "source_record_id") for e in matched_events if _extract_field_value(e, "source_record_id") is not None]
 
@@ -1267,8 +1278,9 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
                 failed_evts.append(evt)
             elif is_success and len(failed_evts) >= 1:
                 all_matched = failed_evts + [evt]
-                hosts = list({_extract_field_value(e, "host") for e in all_matched if _extract_field_value(e, "host")})
-                src_ips = list({_extract_field_value(e, "SourceIp") for e in all_matched if _extract_field_value(e, "SourceIp")})
+                hosts = _victim_hosts_for_events(all_matched)
+                raw_src_ips = list({_extract_field_value(e, "SourceIp") for e in all_matched if _extract_field_value(e, "SourceIp")})
+                src_ips = strip_target_alias_ips(raw_src_ips, hosts, alias_map)
                 clean_user = user.replace("\\", "_")
                 findings.append({
                     "id": f"rule-failed-then-success-{clean_user}-{str(case_id)[:8]}",
@@ -1341,8 +1353,16 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
         if severity in ("logged_not_blocked", "blocked", "allowed", "monitored"):
             severity = "medium"
 
-        src_ip = details.get("src_ip") or details.get("source_ip") or extra.get("src_ip")
-        target_host = details.get("host") or extra.get("target")
+        raw_src_ip = details.get("src_ip") or details.get("source_ip") or extra.get("src_ip")
+        edr_hosts = _victim_hosts_for_events([evt])
+        raw_target = details.get("host") or extra.get("target")
+        target_host = (
+            edr_hosts[0]
+            if edr_hosts
+            else (resolve_host_alias(raw_target, alias_map) or raw_target)
+        )
+        filtered_src = strip_target_alias_ips([raw_src_ip], [target_host] if target_host else [], alias_map)
+        src_ip = filtered_src[0] if filtered_src else None
 
         findings.append({
             "id": f"edr-{alert_id}",

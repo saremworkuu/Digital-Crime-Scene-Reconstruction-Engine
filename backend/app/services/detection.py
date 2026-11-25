@@ -6,7 +6,13 @@ import re
 from urllib.parse import unquote_plus
 
 from app.services.rule_loader import load_rule
-from app.services.entity_classification import is_internal_ip
+from app.services.entity_classification import (
+    build_host_alias_map,
+    is_internal_ip,
+    resolve_endpoint_alias,
+    resolve_host_alias,
+    strip_target_alias_ips,
+)
 
 
 def _event_fields(event):
@@ -818,13 +824,15 @@ def detect_web_sql_injection(events) -> list[dict]:
         )
         events_by_source[str(source_ip)].append((event, matched_patterns, ts))
 
+    alias_map = build_host_alias_map(events)
+
     # Determine unambiguous non-IP server host in the event batch as fallback
     non_ip_case_hosts = {
-        str(d.get("host")).strip()
+        str(resolve_host_alias(d.get("host"), alias_map) or d.get("host")).strip()
         for d in ((getattr(e, "details", None) or (e.get("details", {}) if isinstance(e, dict) else {}) or {}) for e in events)
         if d.get("host")
         and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
-        and not _is_ip_address(d.get("host"))
+        and (d.get("host") in alias_map or not _is_ip_address(d.get("host")))
         and not str(d.get("host")).strip().isdigit()
     }
     inferred_server_host = next(iter(non_ip_case_hosts)) if len(non_ip_case_hosts) == 1 else None
@@ -846,16 +854,20 @@ def detect_web_sql_injection(events) -> list[dict]:
             for pattern in matched
         })
         victim_hosts = sorted({
-            str(d.get("host")).strip()
+            str(resolve_host_alias(d.get("host"), alias_map) or d.get("host")).strip()
             for d in ((getattr(item, "details", None) or (item.get("details", {}) if isinstance(item, dict) else {}) or {}) for item in matched_events)
             if d.get("host")
             and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
             and str(d.get("host")).strip() != source_ip
-            and not _is_ip_address(d.get("host"))
+            and (d.get("host") in alias_map or not _is_ip_address(d.get("host")))
         })
         if not victim_hosts and inferred_server_host:
             victim_hosts = [inferred_server_host]
-        source_ips = [source_ip] if source_ip and source_ip != "unknown" else []
+        source_ips = strip_target_alias_ips(
+            [source_ip] if source_ip and source_ip != "unknown" else [],
+            victim_hosts,
+            alias_map,
+        )
         target_host = victim_hosts[0] if victim_hosts else None
         matched_timestamps = sorted(ts for _, _, ts in matches if ts is not None)
         first_seen = matched_timestamps[0].isoformat() if matched_timestamps else None
@@ -1035,6 +1047,7 @@ def detect_data_exfiltration(events) -> list[dict]:
             "explicit": explicit,
         })
 
+    alias_map = build_host_alias_map(events)
     findings = []
     window = timedelta(minutes=window_minutes)
 
@@ -1096,19 +1109,54 @@ def detect_data_exfiltration(events) -> list[dict]:
             record["explicit"] for record in matched_records
         )
 
+        victim_hosts = sorted({
+            h
+            for h in (
+                resolve_host_alias((ev.details or {}).get("host"), alias_map)
+                or resolve_host_alias(source_ip, alias_map)
+                or resolve_endpoint_alias(ev, alias_map)
+                for ev in matched_events
+            )
+            if h
+        })
+        target_host = victim_hosts[0] if victim_hosts else None
+        filtered_src_ips = strip_target_alias_ips(
+            [source_ip] if source_ip and source_ip != "unknown" else [],
+            victim_hosts,
+            alias_map,
+        )
+        source_label = filtered_src_ips[0] if filtered_src_ips else (target_host or source_ip)
+        desc = (
+            (
+                f"Potential data exfiltration from host '{target_host}' to "
+                f"{', '.join(destinations)}: {len(matched_events)} matching "
+                f"event(s), with {total_bytes} recorded bytes "
+                f"and {explicit_count} explicit exfiltration indicator(s)."
+            )
+            if target_host and not filtered_src_ips
+            else (
+                f"Potential data exfiltration involving source "
+                f"'{source_ip}': {len(matched_events)} matching "
+                f"event(s), with {total_bytes} recorded bytes "
+                f"and {explicit_count} explicit exfiltration "
+                f"indicator(s)."
+            )
+        )
+
         findings.append({
             "rule_id": rule["id"],
             "rule_name": rule["id"],
             "display_name": rule["name"],
             "severity": rule["severity"],
             "mitre_technique": rule.get("mitre_technique"),
-            "description": (
-                f"Potential data exfiltration involving source "
-                f"'{source_ip}': {len(matched_events)} matching "
-                f"event(s), with {total_bytes} recorded bytes "
-                f"and {explicit_count} explicit exfiltration "
-                f"indicator(s)."
-            ),
+            "actor": filtered_src_ips[0] if filtered_src_ips else (destinations[0] if destinations else source_label),
+            "target_host": target_host,
+            "host": target_host or "unknown",
+            "hosts": victim_hosts,
+            "src_ip": filtered_src_ips[0] if filtered_src_ips else None,
+            "source_ips": filtered_src_ips,
+            "dst_ip": destinations[0] if destinations and destinations[0] != "unknown" else None,
+            "description": desc,
             "rule_information": {
                 "event_types": sorted(configured_types),
                 "grouped_by": config.get("group_by", "source_ip"),
@@ -1116,6 +1164,11 @@ def detect_data_exfiltration(events) -> list[dict]:
                 "cumulative_window_minutes": window_minutes,
                 "total_bytes_recorded": total_bytes,
                 "destinations": destinations,
+                "destination_ips": [d for d in destinations if d != "unknown"],
+                "hosts": victim_hosts,
+                "target_host": target_host,
+                "source_ips": filtered_src_ips,
+                "src_ips": filtered_src_ips,
                 "explicit_indicator_count": explicit_count,
             },
             "matching_event_ids": [
@@ -1345,12 +1398,13 @@ def detect_web_scanner_recon(events) -> list[dict]:
             continue
         events_by_ip[str(source_ip)].append((event, details, ts, event_id))
 
+    alias_map = build_host_alias_map(events)
     non_ip_case_hosts = {
-        str(d.get("host")).strip()
+        str(resolve_host_alias(d.get("host"), alias_map) or d.get("host")).strip()
         for d in ((getattr(e, "details", None) or (e.get("details", {}) if isinstance(e, dict) else {}) or {}) for e in events)
         if d.get("host")
         and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
-        and not _is_ip_address(d.get("host"))
+        and (d.get("host") in alias_map or not _is_ip_address(d.get("host")))
         and not str(d.get("host")).strip().isdigit()
     }
     inferred_server_host = next(iter(non_ip_case_hosts)) if len(non_ip_case_hosts) == 1 else None
@@ -1390,15 +1444,17 @@ def detect_web_scanner_recon(events) -> list[dict]:
 
         matched_records = [rec for rec in ip_records if rec[3] in all_matched_ids]
         victim_hosts = sorted({
-            str(d.get("host")).strip()
+            str(resolve_host_alias(d.get("host"), alias_map) or d.get("host")).strip()
             for _, d, _, _ in matched_records
             if d.get("host")
             and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
             and str(d.get("host")).strip() != source_ip
-            and not _is_ip_address(d.get("host"))
+            and (d.get("host") in alias_map or not _is_ip_address(d.get("host")))
         })
         if not victim_hosts and inferred_server_host:
             victim_hosts = [inferred_server_host]
+        source_ips = strip_target_alias_ips([source_ip], victim_hosts, alias_map)
+        primary_src = source_ips[0] if source_ips else None
 
         matched_timestamps = sorted(ts for _, _, ts, _ in matched_records if ts is not None)
         first_seen = matched_timestamps[0].isoformat() if matched_timestamps else None
@@ -1412,12 +1468,12 @@ def detect_web_scanner_recon(events) -> list[dict]:
             "severity": rule["severity"],
             "mitre_technique": rule.get("mitre_technique") or "T1595",
             "mitre_tactic": rule.get("mitre_tactic") or "Reconnaissance",
-            "actor": source_ip,
+            "actor": primary_src,
             "target_host": target_host,
             "host": target_host or "unknown",
             "hosts": victim_hosts,
-            "src_ip": source_ip,
-            "source_ips": [source_ip],
+            "src_ip": primary_src,
+            "source_ips": source_ips,
             "first_seen": first_seen,
             "last_seen": last_seen,
             "description": (
@@ -1429,8 +1485,8 @@ def detect_web_scanner_recon(events) -> list[dict]:
                 "grouped_by": config.get("group_by", "source_ip"),
                 "hosts": victim_hosts,
                 "target_host": target_host,
-                "source_ips": [source_ip],
-                "src_ips": [source_ip],
+                "source_ips": source_ips,
+                "src_ips": source_ips,
                 "tactic": rule.get("mitre_tactic") or "Reconnaissance",
                 "scanner_ua_matches": len(ua_matched_ids),
                 "not_found_burst_matches": len(burst_matched_ids),

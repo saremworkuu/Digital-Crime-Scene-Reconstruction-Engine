@@ -188,7 +188,14 @@ def _apply_single_host_inference(
     case_id: uuid.UUID,
     records: list[dict],
 ) -> list[dict]:
-    """Infer host for unknown_host records when the case has a single known non-numeric host."""
+    """Resolve host aliases (NetFlow/PCAP/WAF) and infer host for hostless records in single-host cases."""
+    from app.services.entity_classification import (
+        build_host_alias_map,
+        is_ip_address,
+        is_netflow_pcap_or_waf,
+        resolve_endpoint_alias,
+    )
+
     if not records:
         return records
 
@@ -198,21 +205,72 @@ def _apply_single_host_inference(
         if details.get("host_inferred"):
             return None
         h = str(details.get("host") or "").strip()
-        if not h or h.casefold() in {"unknown", "unknown_host", "-", "n/a"} or h.isdigit():
+        if not h or h.casefold() in {"unknown", "unknown_host", "-", "n/a"} or h.isdigit() or is_ip_address(h):
             return None
         return h
+
+    existing_events: list[Event] = []
+    if isinstance(db, Session):
+        existing_events = db.execute(
+            select(Event).where(Event.case_id == case_id)
+        ).scalars().all()
+
+    alias_map = build_host_alias_map([*existing_events, *records])
+    if alias_map:
+        for rec in records:
+            details = rec.get("details")
+            if not isinstance(details, dict):
+                continue
+            cur = str(details.get("host") or "").strip()
+            if cur in alias_map:
+                details["host"] = alias_map[cur]
+                details["host_inferred"] = True
+            elif is_netflow_pcap_or_waf(rec):
+                endpoint_host = resolve_endpoint_alias(rec, alias_map)
+                if endpoint_host and (
+                    not cur
+                    or cur.casefold() in {"unknown", "unknown_host", "-"}
+                    or is_ip_address(cur)
+                    or details.get("host_inferred")
+                ):
+                    details["host"] = endpoint_host
+                    details["host_inferred"] = True
+
+        updated_alias_rows = False
+        for ev_row in existing_events:
+            det = ev_row.details if isinstance(ev_row.details, dict) else None
+            if not det:
+                continue
+            cur = str(det.get("host") or "").strip()
+            resolved_host = None
+            if cur in alias_map:
+                resolved_host = alias_map[cur]
+            elif is_netflow_pcap_or_waf(ev_row):
+                endpoint_host = resolve_endpoint_alias(ev_row, alias_map)
+                if endpoint_host and (
+                    not cur
+                    or cur.casefold() in {"unknown", "unknown_host", "-"}
+                    or is_ip_address(cur)
+                    or det.get("host_inferred")
+                ):
+                    resolved_host = endpoint_host
+            if resolved_host and resolved_host != cur:
+                new_det = dict(det)
+                new_det["host"] = resolved_host
+                new_det["host_inferred"] = True
+                ev_row.details = new_det
+                updated_alias_rows = True
+        if updated_alias_rows and isinstance(db, Session):
+            db.flush()
 
     known_hosts = {
         h
         for h in (_valid_known_host(rec.get("details")) for rec in records)
         if h
     }
-    if isinstance(db, Session) and len(known_hosts) <= 1:
-        existing_details = db.execute(
-            select(Event.details).where(Event.case_id == case_id)
-        ).scalars().all()
-        for det in existing_details:
-            h = _valid_known_host(det)
+    if existing_events and len(known_hosts) <= 1:
+        for ev_row in existing_events:
+            h = _valid_known_host(ev_row.details if isinstance(ev_row.details, dict) else None)
             if h:
                 known_hosts.add(h)
                 if len(known_hosts) > 1:
@@ -227,20 +285,17 @@ def _apply_single_host_inference(
                 if not cur or cur.casefold() in {"unknown", "unknown_host", "-"}:
                     details["host"] = single_host
                     details["host_inferred"] = True
-        if isinstance(db, Session):
-            existing_events = db.execute(
-                select(Event).where(Event.case_id == case_id)
-            ).scalars().all()
+        if existing_events:
             updated_any = False
             for ev_row in existing_events:
                 det = ev_row.details if isinstance(ev_row.details, dict) else None
                 if not det:
                     continue
                 cur = str(det.get("host") or "").strip()
-                is_web_like = str(ev_row.event_type or "").lower() == "web_access"
+                is_web_like = str(ev_row.event_type or "").lower() == "web_access" or is_netflow_pcap_or_waf(ev_row)
                 should_backfill = (
                     not cur or cur.casefold() in {"unknown", "unknown_host", "-"}
-                    or (is_web_like and det.get("host_inferred") and cur == det.get("src_ip"))
+                    or (is_web_like and det.get("host_inferred") and (cur == det.get("src_ip") or is_ip_address(cur)))
                 )
                 if should_backfill:
                     new_det = dict(det)
@@ -248,7 +303,7 @@ def _apply_single_host_inference(
                     new_det["host_inferred"] = True
                     ev_row.details = new_det
                     updated_any = True
-            if updated_any:
+            if updated_any and isinstance(db, Session):
                 db.flush()
     return records
 

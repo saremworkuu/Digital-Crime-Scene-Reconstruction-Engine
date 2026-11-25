@@ -15,6 +15,12 @@ from app.db.models.events import Event
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.detection import DetectionResponse, FalsePositiveRequest, DetectionRuleResponse
+from app.services.entity_classification import (
+    build_host_alias_map,
+    is_ip_address,
+    resolve_host_alias,
+    strip_target_alias_ips,
+)
 from app.services.graph import extract_event_fields
 from app.services.detection import (
     detect_repeated_failed_logins,
@@ -44,7 +50,11 @@ def _severity_rank(value) -> int:
     )
 
 
-def build_detection_response(db: Session, detection: Detection) -> DetectionResponse:
+def build_detection_response(
+    db: Session,
+    detection: Detection,
+    alias_map: Optional[dict[str, str]] = None,
+) -> DetectionResponse:
     event_ids = db.execute(
         select(DetectionEvent.event_id).join(Event, Event.id == DetectionEvent.event_id).where(
             DetectionEvent.detection_id == detection.id,
@@ -59,12 +69,18 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
             Event.id.in_(event_ids),
         ).order_by(Event.timestamp.asc())
     ).scalars().all() if event_ids else []
+    if alias_map is None:
+        case_events = db.execute(
+            select(Event).where(Event.case_id == detection.case_id)
+        ).scalars().all()
+        alias_map = build_host_alias_map(case_events)
     event_time = matched_events[0].timestamp if matched_events else None
     if event_time and event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
     ts_str = event_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if event_time else None
-    observed_source_ips: list[str] = []
-    seen_src_ips: set[str] = set()
+
+    explicit_src_ips: list[str] = []
+    seen_explicit_srcs: set[str] = set()
     for val in (
         *(rule_info.get("source_ips") or []),
         *(rule_info.get("src_ips") or []),
@@ -72,18 +88,11 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None,
     ):
         sval = str(val).strip() if val else ""
-        if sval and sval.casefold() not in {"unknown", "unknown_host", "-"} and sval not in seen_src_ips:
-            seen_src_ips.add(sval)
-            observed_source_ips.append(sval)
-    for event in matched_events:
-        det = event.details if isinstance(event.details, dict) else {}
-        sval = str(det.get("src_ip") or det.get("source_ip") or "").strip()
-        if sval and sval != "-" and sval not in seen_src_ips:
-            seen_src_ips.add(sval)
-            observed_source_ips.append(sval)
+        if sval and sval.casefold() not in {"unknown", "unknown_host", "-"} and sval not in seen_explicit_srcs:
+            seen_explicit_srcs.add(sval)
+            explicit_src_ips.append(sval)
 
-    # Deduplicate victim hosts case-insensitively (preferring non-lowercased/canonical form)
-    # while never treating an attacker/client source IP as a victim host.
+    # Deduplicate victim hosts case-insensitively, resolving alias IPs to their host name.
     host_by_cf: dict[str, str] = {}
     for value in (
         rule_info.get("target_host"),
@@ -97,24 +106,49 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
     ):
         if not value:
             continue
-        h_str = str(value).strip()
-        if h_str.casefold() in {"unknown", "unknown_host", "-"} or h_str in seen_src_ips:
+        raw_h = str(value).strip()
+        if raw_h.casefold() in {"unknown", "unknown_host", "-"}:
             continue
-        cf = h_str.casefold()
-        if cf not in host_by_cf or (host_by_cf[cf].islower() and not h_str.islower()):
-            host_by_cf[cf] = h_str
+        resolved = resolve_host_alias(raw_h, alias_map) or raw_h
+        if resolved in seen_explicit_srcs and resolved not in alias_map.values():
+            continue
+        cf = resolved.casefold()
+        if cf not in host_by_cf or (host_by_cf[cf].islower() and not resolved.islower()):
+            host_by_cf[cf] = resolved
     victim_hosts = sorted(host_by_cf.values())
+
+    raw_src_candidates = list(explicit_src_ips)
+    for event in matched_events:
+        det = event.details if isinstance(event.details, dict) else {}
+        sval = str(det.get("src_ip") or det.get("source_ip") or "").strip()
+        if sval and sval != "-":
+            raw_src_candidates.append(sval)
+    observed_source_ips = strip_target_alias_ips(raw_src_candidates, victim_hosts, alias_map)
+    seen_src_ips = set(observed_source_ips)
+    victim_hosts = [h for h in victim_hosts if h not in seen_src_ips]
 
     existing_entities = rule_info.get("entities") or {}
     observed_users = unique_users([
         *(existing_entities.get("users") or []),
         *([rule_info.get("user")] if rule_info.get("user") else []),
     ])
-    observed_ips = list(dict.fromkeys([
-        *(existing_entities.get("ips") or []),
-        *observed_source_ips,
-        *[value for value in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if value],
-    ]))
+    observed_ips = strip_target_alias_ips(
+        [
+            *(existing_entities.get("ips") or []),
+            *observed_source_ips,
+            *[
+                value
+                for value in (
+                    rule_info.get("src_ip"),
+                    rule_info.get("dst_ip"),
+                    rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None,
+                )
+                if value
+            ],
+        ],
+        victim_hosts,
+        alias_map,
+    )
 
     return DetectionResponse(
         id=detection.id,
@@ -350,6 +384,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
             pass
 
     findings = _coalesce_findings_by_host(findings, events)
+    case_alias_map = build_host_alias_map(events)
 
     saved_detections = []
     pending_links: list[DetectionEvent] = []
@@ -381,7 +416,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         if finding.get("source"):
             rule_info["source"] = finding["source"]
         if finding.get("host"):
-            rule_info["host"] = finding["host"]
+            rule_info["host"] = resolve_host_alias(finding["host"], case_alias_map) or finding["host"]
         if finding.get("user"):
             rule_info["user"] = finding["user"]
         if finding.get("source_file"):
@@ -391,6 +426,35 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         for key in ("actor", "actor_role", "target_host", "target_role", "src_ip", "dst_ip", "source_ips", "hosts"):
             if finding.get(key) is not None:
                 rule_info[key] = finding[key]
+        if rule_info.get("target_host"):
+            rule_info["target_host"] = resolve_host_alias(rule_info["target_host"], case_alias_map) or rule_info["target_host"]
+        resolved_hosts = []
+        for h_val in (rule_info.get("hosts") or [rule_info.get("target_host") or rule_info.get("host")]):
+            rh = resolve_host_alias(h_val, case_alias_map) or (str(h_val).strip() if h_val else "")
+            if rh and rh.casefold() not in {"unknown", "unknown_host", "-"} and rh not in resolved_hosts:
+                resolved_hosts.append(rh)
+        if resolved_hosts:
+            rule_info["hosts"] = resolved_hosts
+            if not rule_info.get("target_host") or str(rule_info.get("target_host")) in case_alias_map:
+                rule_info["target_host"] = resolved_hosts[0]
+            if not rule_info.get("host") or str(rule_info.get("host")) in case_alias_map:
+                rule_info["host"] = resolved_hosts[0]
+        filtered_src_ips = strip_target_alias_ips(
+            [
+                *(rule_info.get("source_ips") or []),
+                *(rule_info.get("src_ips") or []),
+                rule_info.get("src_ip"),
+            ],
+            resolved_hosts,
+            case_alias_map,
+        )
+        rule_info["source_ips"] = filtered_src_ips
+        rule_info["src_ips"] = filtered_src_ips
+        rule_info["src_ip"] = filtered_src_ips[0] if filtered_src_ips else None
+        if rule_info.get("actor") and is_ip_address(rule_info.get("actor")):
+            actor_filtered = strip_target_alias_ips([rule_info["actor"]], resolved_hosts, case_alias_map)
+            if not actor_filtered:
+                rule_info["actor"] = rule_info.get("dst_ip") or (filtered_src_ips[0] if filtered_src_ips else None)
         if finding.get("first_seen"):
             rule_info["first_seen"] = str(finding["first_seen"])
         if finding.get("last_seen"):
@@ -442,7 +506,9 @@ def run_detection(
 ):
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=False)
     detections = _execute_case_detections(case.id, db)
-    responses = [build_detection_response(db, d) for d in detections]
+    events = db.execute(select(Event).where(Event.case_id == case.id)).scalars().all()
+    alias_map = build_host_alias_map(events)
+    responses = [build_detection_response(db, d, alias_map=alias_map) for d in detections]
     return sorted(responses, key=lambda response: response.timestamp or "")
 
 
@@ -467,7 +533,9 @@ def get_case_detections(
         if has_events:
             detections = _execute_case_detections(case.id, db)
 
-    return [build_detection_response(db, d) for d in detections]
+    events = db.execute(select(Event).where(Event.case_id == case.id)).scalars().all()
+    alias_map = build_host_alias_map(events)
+    return [build_detection_response(db, d, alias_map=alias_map) for d in detections]
 
 
 @router.post("/{detection_id}/false-positive")

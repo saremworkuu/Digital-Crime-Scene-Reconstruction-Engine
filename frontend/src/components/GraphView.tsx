@@ -38,6 +38,7 @@ const LEGEND_ROLES: VisualNodeRole[] = [
   'attacker_c2',
   'payload_host',
   'exfil_destination',
+  'mining_pool',
   'benign_external',
 ];
 

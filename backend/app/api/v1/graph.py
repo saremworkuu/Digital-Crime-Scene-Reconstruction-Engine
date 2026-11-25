@@ -45,8 +45,22 @@ def get_attack_graph(
     for detection in detections:
         info = detection.rule_information or {}
         findings.append({
-            "actor": info.get("actor"), "actor_role": info.get("actor_role"),
+            "rule_id": detection.rule_id,
+            "rule_name": detection.rule_name,
+            "mitre_tactic": info.get("tactic") or "",
+            "mitre_technique": detection.mitre_technique,
+            "description": detection.description,
+            "actor": info.get("actor"),
+            "actor_role": info.get("actor_role"),
             "target_host": info.get("target_host") or info.get("host"),
             "target_role": info.get("target_role"),
+            "hosts": info.get("hosts") or [],
+            "source_ips": info.get("source_ips") or info.get("src_ips") or ([info["src_ip"]] if info.get("src_ip") else []),
+            "src_ip": info.get("src_ip"),
+            "dst_ip": info.get("dst_ip") or info.get("destination_ip"),
+            "user": info.get("user"),
+            "users": info.get("users") or [],
+            "matching_event_ids": info.get("matching_event_ids") or [],
+            "rule_information": info,
         })
     return build_attack_graph(events, attack_path_only=attack_path_only, findings=findings)

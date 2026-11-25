@@ -3,6 +3,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from app.services.entity_classification import (
+    build_host_alias_map,
+    is_netflow_pcap_or_waf,
+    resolve_endpoint_alias,
+)
+
 
 def normalize_timestamp(record: dict[str, Any]) -> str | None:
     """
@@ -76,7 +82,11 @@ def normalize_timestamp(record: dict[str, Any]) -> str | None:
         return None
 
 
-def normalize_record(record: dict[str, Any], default_filename: str = "") -> dict[str, Any]:
+def normalize_record(
+    record: dict[str, Any],
+    default_filename: str = "",
+    alias_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """
     Convert one parser record into the common DCSRE event format with all canonical fields.
     """
@@ -97,15 +107,26 @@ def normalize_record(record: dict[str, Any], default_filename: str = "") -> dict
     is_web_event = event_type.strip().lower() in {"web_access", "web_log", "http"} or source_name in {
         "web_server", "apache", "nginx", "iis",
     }
+    netflow_pcap_waf = is_netflow_pcap_or_waf(record)
+
+    if alias_map:
+        if host and str(host).strip() in alias_map:
+            host = alias_map[str(host).strip()]
+            host_inferred = True
+        elif netflow_pcap_waf and not host:
+            endpoint_host = resolve_endpoint_alias(record, alias_map)
+            if endpoint_host:
+                host = endpoint_host
+                host_inferred = True
 
     if not host:
-        # Check src_ip for flow/network records — never treat web client src_ip as server host.
+        # Never treat client/source IP on web, WAF, NetFlow, or PCAP records as the host.
         src_ip = record.get("src_ip") or record.get("source_ip") or record.get("SourceIp")
-        if src_ip and not is_web_event:
+        if src_ip and not is_web_event and not netflow_pcap_waf:
             host = src_ip
             host_inferred = True
         else:
-            # Fallback only when record truly has no host
+            # Fallback when record has no resolved host yet
             host = "unknown_host"
             host_inferred = True
     elif host_inferred is None:
@@ -223,12 +244,18 @@ def normalize_record(record: dict[str, Any], default_filename: str = "") -> dict
 def normalize_records(
     records: list[dict[str, Any]],
     default_filename: str = "",
+    alias_map: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Normalize multiple records, skipping invalid timestamps unless explicitly inferred."""
+    resolved_aliases = alias_map if alias_map is not None else build_host_alias_map(records)
     normalized = []
 
     for record in records:
-        event = normalize_record(record, default_filename=default_filename)
+        event = normalize_record(
+            record,
+            default_filename=default_filename,
+            alias_map=resolved_aliases,
+        )
 
         if event["timestamp"] is None and not event.get("timestamp_inferred"):
             continue

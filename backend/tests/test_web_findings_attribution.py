@@ -236,3 +236,98 @@ def test_sqli_merged_finding_counts_first_seen_tactic_and_benign_exclusion(tmp_p
             fastapi_app.dependency_overrides.pop(get_current_user, None)
         db.close()
         engine.dispose()
+
+
+def test_netflow_waf_and_findings_resolve_vuln_scan_alias_regardless_of_upload_order(tmp_path, monkeypatch):
+    upload_order = [
+        "07_netflow_export.csv",
+        "04_waf_alerts.json",
+        "06_vulnerability_scan_2026-07-15.xml",
+    ]
+    for fname in upload_order:
+        assert (WEB_COMPROMISE_DIR / fname).is_file()
+
+    test_db = tmp_path / "alias_order.sqlite"
+    engine = create_engine(f"sqlite:///{test_db}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    TestSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    upload_dir = tmp_path / "evidence_uploads_alias"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(evidence_module, "UPLOAD_DIR", upload_dir)
+
+    db = TestSession()
+    user = User(
+        username=f"inv_{uuid.uuid4().hex[:8]}",
+        email=f"inv_{uuid.uuid4().hex[:8]}@dcsre.test",
+        hashed_password=hash_password("Investigator#2026"),
+        role=UserRole.INVESTIGATOR,
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    case = Case(
+        name="Alias Resolution Order Case",
+        description="NetFlow + WAF uploaded before VulnScan",
+        status=CaseStatus.OPEN,
+        created_by=user.id,
+    )
+    db.add(case)
+    db.commit()
+
+    def override_get_db():
+        session = TestSession()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    prev_db = fastapi_app.dependency_overrides.get(get_db)
+    prev_user = fastapi_app.dependency_overrides.get(get_current_user)
+    fastapi_app.dependency_overrides[get_db] = override_get_db
+    fastapi_app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        client = TestClient(fastapi_app)
+        for fname in upload_order:
+            fpath = WEB_COMPROMISE_DIR / fname
+            with fpath.open("rb") as fh:
+                res = client.post(
+                    f"/api/v1/evidence/cases/{case.id}/evidence/upload",
+                    files={"file": (fname, fh, "text/plain")},
+                    data={"description": fname},
+                )
+                assert res.status_code == 201, res.text
+
+        events = client.get(f"/api/v1/events/cases/{case.id}/events").json()
+        netflow_rows = [e for e in events if e.get("source_file") == "07_netflow_export.csv"]
+        waf_rows = [e for e in events if e.get("source_file") == "04_waf_alerts.json"]
+        assert netflow_rows and waf_rows
+
+        for row in netflow_rows:
+            assert row.get("host") == "WEB-01"
+            assert row.get("src_ip")
+            assert row.get("dst_ip")
+        for row in waf_rows:
+            assert row.get("host") == "WEB-01"
+            assert row.get("src_ip") != "WEB-01"
+
+        detections = client.get(f"/api/v1/detections/cases/{case.id}/detections").json()
+        assert detections
+        for det in detections:
+            assert "10.40.1.15" not in (det.get("source_ips") or []), det
+            assert "10.40.1.15" not in (det.get("hosts") or []), det
+
+        graph = client.get(f"/api/v1/graph/cases/{case.id}/graph").json()
+        node_labels = [n["label"] for n in graph["nodes"]]
+        assert node_labels.count("WEB-01") == 1
+        assert "10.40.1.15" not in node_labels
+    finally:
+        if prev_db is not None:
+            fastapi_app.dependency_overrides[get_db] = prev_db
+        else:
+            fastapi_app.dependency_overrides.pop(get_db, None)
+        if prev_user is not None:
+            fastapi_app.dependency_overrides[get_current_user] = prev_user
+        else:
+            fastapi_app.dependency_overrides.pop(get_current_user, None)
+        db.close()
+        engine.dispose()

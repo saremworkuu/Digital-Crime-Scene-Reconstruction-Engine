@@ -44,17 +44,27 @@ function severityColor(s: string) {
   }
 }
 
-// Module-level + sessionStorage caches and in-flight deduplication so StrictMode, tab switches, and F5 reloads are instant
+// Module-level + storage caches and in-flight deduplication so StrictMode, tab switches, and F5 reloads are instant
 const latestReportCache = new Map<string, BackendReport>();
 const reportHistoryCache = new Map<string, ReportHistoryItem[]>();
 const inFlightLatest = new Map<string, Promise<BackendReport | null>>();
 const inFlightHistory = new Map<string, Promise<ReportHistoryItem[] | null>>();
+const inFlightGenerate = new Map<string, Promise<BackendReport | null>>();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('dcsre:workspace-cleared', () => {
+    latestReportCache.clear();
+    reportHistoryCache.clear();
+  });
+}
 
 function getCachedReport(caseId: string): BackendReport | null {
   const mem = latestReportCache.get(caseId);
   if (mem) return mem;
   try {
-    const raw = sessionStorage.getItem(`dcsre_report_cache_${caseId}`);
+    const raw =
+      sessionStorage.getItem(`dcsre_report_cache_${caseId}`) ??
+      localStorage.getItem(`dcsre_report_cache_${caseId}`);
     if (raw) {
       const parsed = JSON.parse(raw) as BackendReport;
       latestReportCache.set(caseId, parsed);
@@ -68,8 +78,14 @@ function getCachedReport(caseId: string): BackendReport | null {
 
 function setCachedReport(caseId: string, data: BackendReport) {
   latestReportCache.set(caseId, data);
+  const serialized = JSON.stringify(data);
   try {
-    sessionStorage.setItem(`dcsre_report_cache_${caseId}`, JSON.stringify(data));
+    localStorage.setItem(`dcsre_report_cache_${caseId}`, serialized);
+  } catch {
+    // ignore quota errors
+  }
+  try {
+    sessionStorage.setItem(`dcsre_report_cache_${caseId}`, serialized);
   } catch {
     // ignore quota errors
   }
@@ -79,6 +95,7 @@ function deleteCachedReport(caseId: string) {
   latestReportCache.delete(caseId);
   try {
     sessionStorage.removeItem(`dcsre_report_cache_${caseId}`);
+    localStorage.removeItem(`dcsre_report_cache_${caseId}`);
   } catch {
     // ignore
   }
@@ -88,7 +105,9 @@ function getCachedHistory(caseId: string): ReportHistoryItem[] | null {
   const mem = reportHistoryCache.get(caseId);
   if (mem) return mem;
   try {
-    const raw = sessionStorage.getItem(`dcsre_history_cache_${caseId}`);
+    const raw =
+      sessionStorage.getItem(`dcsre_history_cache_${caseId}`) ??
+      localStorage.getItem(`dcsre_history_cache_${caseId}`);
     if (raw) {
       const parsed = JSON.parse(raw) as ReportHistoryItem[];
       if (Array.isArray(parsed)) {
@@ -104,8 +123,14 @@ function getCachedHistory(caseId: string): ReportHistoryItem[] | null {
 
 function setCachedHistory(caseId: string, list: ReportHistoryItem[]) {
   reportHistoryCache.set(caseId, list);
+  const serialized = JSON.stringify(list);
   try {
-    sessionStorage.setItem(`dcsre_history_cache_${caseId}`, JSON.stringify(list));
+    localStorage.setItem(`dcsre_history_cache_${caseId}`, serialized);
+  } catch {
+    // ignore
+  }
+  try {
+    sessionStorage.setItem(`dcsre_history_cache_${caseId}`, serialized);
   } catch {
     // ignore
   }
@@ -115,6 +140,7 @@ function deleteCachedHistory(caseId: string) {
   reportHistoryCache.delete(caseId);
   try {
     sessionStorage.removeItem(`dcsre_history_cache_${caseId}`);
+    localStorage.removeItem(`dcsre_history_cache_${caseId}`);
   } catch {
     // ignore
   }
@@ -160,6 +186,26 @@ function fetchReportHistoryDeduped(caseId: string): Promise<ReportHistoryItem[] 
   return promise;
 }
 
+function generateReportDeduped(caseId: string): Promise<BackendReport | null> {
+  const existing = inFlightGenerate.get(caseId);
+  if (existing) return existing;
+  const promise = reportsApi.generate(caseId)
+    .then((res) => {
+      const data = (res?.data as BackendReport) || null;
+      if (data) setCachedReport(caseId, data);
+      return data;
+    })
+    .catch((err) => {
+      console.warn('Could not compile report on backend:', err);
+      return null;
+    })
+    .finally(() => {
+      inFlightGenerate.delete(caseId);
+    });
+  inFlightGenerate.set(caseId, promise);
+  return promise;
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -168,6 +214,7 @@ export const Reports: React.FC = () => {
   const {
     cases,
     activeCase,
+    activeCaseEvidence,
     setActiveCaseId,
     setCurrentPage,
     logAuditAction,
@@ -212,6 +259,11 @@ export const Reports: React.FC = () => {
   // ---------------------------------------------------------------------------
   const activeCaseIdRef = useRef<string | null>(activeCase?.id ?? null);
   activeCaseIdRef.current = activeCase?.id ?? null;
+  const autoCompiledForCaseRef = useRef<Set<string>>(new Set());
+  const [historyResolvedCaseId, setHistoryResolvedCaseId] = useState<string | null>(null);
+  const caseHasEvidence = Boolean(
+    activeCase && (activeCaseEvidence.length > 0 || (activeCase.evidence_count ?? 0) > 0)
+  );
 
   const loadLatestReport = useCallback(async (): Promise<boolean> => {
     const caseId = activeCase?.id;
@@ -230,33 +282,123 @@ export const Reports: React.FC = () => {
     let cancelled = false;
     const caseId = activeCase?.id;
 
-    setSelectedHistoryId(null);
     setViewingHistory(null);
-    setReportData(null);
     setReportLoadError(null);
-    setIsLoadingReport(false);
 
     if (!caseId) {
+      setSelectedHistoryId(null);
+      setReportData(null);
       setReportHistory([]);
+      setIsLoadingReport(false);
+      setHistoryResolvedCaseId(null);
       return;
     }
 
-    // Load only the saved Report History on open; keep the report view blank
-    // until the user selects a history item or generates a new version.
-    const cachedHistory = getCachedHistory(caseId) || [];
-    setReportHistory(cachedHistory);
+    let hasFreshUpload = false;
+    try {
+      hasFreshUpload =
+        sessionStorage.getItem(`dcsre_fresh_upload_${caseId}`) === '1' ||
+        localStorage.getItem(`dcsre_fresh_upload_${caseId}`) === '1';
+    } catch {
+      // ignore
+    }
 
-    const loadHistoryOnly = async () => {
-      await loadReportHistory();
-      if (cancelled) return;
+    const cachedHistory = getCachedHistory(caseId) || [];
+    const cachedReport = hasFreshUpload ? null : getCachedReport(caseId);
+    setReportHistory(cachedHistory);
+    setReportData(cachedReport);
+    setSelectedHistoryId(
+      cachedReport && cachedHistory.length > 0
+        ? (cachedHistory.find((h) => h.version === cachedReport.version)?.id ?? cachedHistory[0]?.id ?? null)
+        : null
+    );
+    setHistoryResolvedCaseId(null);
+
+    const canExpectReport = hasFreshUpload || caseHasEvidence || cachedHistory.length > 0;
+    if (!cachedReport && canExpectReport) {
+      setIsLoadingReport(true);
+    } else {
+      setIsLoadingReport(false);
+    }
+
+    const loadHistoryAndReport = async () => {
+      setLoadingHistory(true);
+      try {
+        if (hasFreshUpload) {
+          const list = await fetchReportHistoryDeduped(caseId);
+          if (cancelled || activeCaseIdRef.current !== caseId) return;
+          const resolvedHistory = list || [];
+          setReportHistory(resolvedHistory);
+          setHistoryResolvedCaseId(caseId);
+
+          const compiled =
+            resolvedHistory.length > 0
+              ? await generateReportDeduped(caseId)
+              : await fetchLatestReportDeduped(caseId);
+          if (cancelled || activeCaseIdRef.current !== caseId) return;
+
+          if (compiled) {
+            autoCompiledForCaseRef.current.add(caseId);
+            try {
+              sessionStorage.removeItem(`dcsre_fresh_upload_${caseId}`);
+              localStorage.removeItem(`dcsre_fresh_upload_${caseId}`);
+            } catch {
+              // ignore
+            }
+            setReportData(compiled);
+            setReportLoadError(null);
+            deleteCachedHistory(caseId);
+            const refreshed = await fetchReportHistoryDeduped(caseId);
+            if (!cancelled && activeCaseIdRef.current === caseId && refreshed) {
+              setReportHistory(refreshed);
+              const matching = refreshed.find((h) => h.version === compiled.version) || refreshed[0];
+              if (matching?.id) setSelectedHistoryId(matching.id);
+            }
+          }
+          return;
+        }
+
+        // Fetch history and latest report concurrently so opening or refreshing Reports
+        // displays the report immediately as soon as it is ready.
+        const shouldFetchLatest = Boolean(cachedReport) || canExpectReport;
+        const [list, latest] = await Promise.all([
+          fetchReportHistoryDeduped(caseId),
+          shouldFetchLatest ? fetchLatestReportDeduped(caseId) : Promise.resolve(null),
+        ]);
+        if (cancelled || activeCaseIdRef.current !== caseId) return;
+
+        const resolvedHistory = list || cachedHistory;
+        if (list) setReportHistory(list);
+        setHistoryResolvedCaseId(caseId);
+
+        if (latest) {
+          setReportData(latest);
+          setReportLoadError(null);
+          const matching = resolvedHistory.find((h) => h.version === latest.version) || resolvedHistory[0];
+          if (matching?.id) setSelectedHistoryId(matching.id);
+        } else if (resolvedHistory.length > 0 && !cachedReport) {
+          // Fallback to compiling/loading latest if history just became non-empty
+          const fallbackLatest = await fetchLatestReportDeduped(caseId);
+          if (!cancelled && activeCaseIdRef.current === caseId && fallbackLatest) {
+            setReportData(fallbackLatest);
+            const matching = resolvedHistory.find((h) => h.version === fallbackLatest.version) || resolvedHistory[0];
+            if (matching?.id) setSelectedHistoryId(matching.id);
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingHistory(false);
+          setIsLoadingReport(false);
+        }
+      }
     };
 
-    void loadHistoryOnly();
+    void loadHistoryAndReport();
 
     return () => {
       cancelled = true;
     };
-  }, [activeCase?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeCase?.id, caseHasEvidence]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------------------
   // Generate a new version
@@ -294,7 +436,9 @@ export const Reports: React.FC = () => {
     try {
       const res = await reportsApi.getSaved(activeCase.id, item.id);
       if (res.data) {
-        setReportData(res.data as BackendReport);
+        const loaded = res.data as BackendReport;
+        setCachedReport(activeCase.id, loaded);
+        setReportData(loaded);
         setSelectedHistoryId(item.id);
         setViewingHistory(null);
       } else {
@@ -325,9 +469,13 @@ export const Reports: React.FC = () => {
         selectedHistoryId === item.id ||
         (!selectedHistoryId && reportData?.version === item.version);
       if (deletingDisplayedReport) {
+        autoCompiledForCaseRef.current.add(activeCase.id);
         deleteCachedReport(activeCase.id);
         setSelectedHistoryId(null);
         setReportData(null);
+      }
+      if (nextHistory.length === 0) {
+        autoCompiledForCaseRef.current.add(activeCase.id);
       }
       deleteCachedHistory(activeCase.id);
       await loadReportHistory();
@@ -738,13 +886,13 @@ export const Reports: React.FC = () => {
       </div>
 
       {/* ── Forensic Report Document Body ─────────────────────────────────── */}
-      {loadingHistoryReport ? (
+      {loadingHistoryReport || isLoadingReport || (activeCase && loadingHistory && !rd) ? (
         <div
           id="forensic-report-container"
           className="bg-[#161413]/95 border border-[#2b2523] rounded-2xl p-8 md:p-12 text-[#a8a29e] max-w-4xl mx-auto shadow-2xl backdrop-blur-xl text-center text-xs font-mono"
         >
           <Loader2 className="w-5 h-5 animate-spin text-[#f95721] mx-auto mb-2" />
-          Opening saved report…
+          {loadingHistoryReport ? 'Opening saved report…' : 'Compiling forensic report…'}
         </div>
       ) : !rd ? (
         <div
@@ -756,10 +904,8 @@ export const Reports: React.FC = () => {
           )}
           <p className="text-xs font-mono text-[#78716c]">
             {!activeCase
-              ? 'Select an investigation above to view its report history or generate a new report.'
-              : reportHistory.length > 0
-                ? 'Select a saved report in Report History above to view it, or click "Generate New Version" to create a new report.'
-                : 'No report opened yet. Click "Generate New Version" above to compile a report.'}
+              ? 'Select an investigation above or upload evidence to generate a forensic report.'
+              : 'No report generated yet. Upload evidence or click "Generate New Version" above.'}
           </p>
         </div>
       ) : (

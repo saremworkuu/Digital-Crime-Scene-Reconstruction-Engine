@@ -159,6 +159,126 @@ interface AppContextType {
 const AppContext: React.Context<AppContextType | undefined> =
   ((globalThis as any).__DCSRE_APP_CONTEXT__ ??= createContext<AppContextType | undefined>(undefined));
 
+const WS_CLEARED_KEY = 'dcsre_workspace_cleared';
+const WS_CLEARED_AT_KEY = 'dcsre_workspace_cleared_at';
+const WS_POST_CLEAR_CASES_KEY = 'dcsre_post_clear_case_ids';
+const CACHED_CASES_KEY = 'dcsre_cached_cases';
+const CACHED_AUDIT_KEY = 'dcsre_cached_audit_logs';
+const CURRENT_PAGE_KEY = 'dcsre_current_page';
+
+const CACHE_PREFIXES = [
+  'dcsre_report_cache_',
+  'dcsre_history_cache_',
+  'dcsre_evidence_cache_',
+  'dcsre_events_cache_',
+  'dcsre_detections_cache_',
+  'dcsre_graph_cache_',
+  'dcsre_fresh_upload_',
+];
+
+function safeGetStorage(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(key) ?? localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetStorage(key: string, value: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore quota errors in localStorage
+  }
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // ignore quota errors in sessionStorage
+  }
+}
+
+function safeGetJson<T>(key: string, fallback: T): T {
+  const raw = safeGetStorage(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function isWorkspaceCleared(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(WS_CLEARED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function getPostClearCaseIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(WS_POST_CLEAR_CASES_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.map(String)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function addPostClearCaseId(caseId: string): void {
+  if (typeof window === 'undefined' || !caseId || !isWorkspaceCleared()) return;
+  try {
+    const ids = getPostClearCaseIds();
+    ids.add(String(caseId));
+    localStorage.setItem(WS_POST_CLEAR_CASES_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    // ignore
+  }
+}
+
+function clearWorkspaceStorageKeys(markCleared: boolean): void {
+  if (typeof window === 'undefined') return;
+  const clearStore = (storage: Storage) => {
+    try {
+      storage.removeItem('dcsre_active_case_id');
+      storage.removeItem(CACHED_CASES_KEY);
+      storage.removeItem(CACHED_AUDIT_KEY);
+      if (!markCleared) {
+        storage.removeItem(CURRENT_PAGE_KEY);
+      }
+      for (let i = storage.length - 1; i >= 0; i--) {
+        const k = storage.key(i);
+        if (k && CACHE_PREFIXES.some(prefix => k.startsWith(prefix))) {
+          storage.removeItem(k);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+  clearStore(sessionStorage);
+  clearStore(localStorage);
+  try {
+    if (markCleared) {
+      localStorage.setItem(WS_CLEARED_KEY, '1');
+      localStorage.setItem(WS_CLEARED_AT_KEY, new Date().toISOString());
+      localStorage.setItem(WS_POST_CLEAR_CASES_KEY, '[]');
+    } else {
+      localStorage.removeItem(WS_CLEARED_KEY);
+      localStorage.removeItem(WS_CLEARED_AT_KEY);
+      localStorage.removeItem(WS_POST_CLEAR_CASES_KEY);
+    }
+    window.dispatchEvent(new CustomEvent('dcsre:workspace-cleared'));
+  } catch {
+    // ignore
+  }
+}
+
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Registered Users Directory (with LocalStorage persistence)
   const [users, setUsers] = useState<User[]>(() => {
@@ -301,7 +421,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [currentPage, setCurrentPageState] = useState<string>(() => {
     try {
       if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user')) {
-        return sessionStorage.getItem('dcsre_current_page') || 'dashboard';
+        return safeGetStorage(CURRENT_PAGE_KEY) || 'dashboard';
       }
     } catch {
       // ignore
@@ -310,19 +430,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
   const setCurrentPage = (page: string) => {
     setCurrentPageState(page);
-    try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('dcsre_current_page', page);
-      }
-    } catch {
-      // ignore
-    }
+    safeSetStorage(CURRENT_PAGE_KEY, page);
   };
 
   const [activeCaseId, setActiveCaseIdState] = useState<string>(() => {
     try {
       if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user')) {
-        return sessionStorage.getItem('dcsre_active_case_id') || localStorage.getItem('dcsre_active_case_id') || '';
+        const storedId = safeGetStorage('dcsre_active_case_id') || '';
+        if (storedId && isWorkspaceCleared() && !getPostClearCaseIds().has(storedId)) {
+          return '';
+        }
+        return storedId;
       }
     } catch {
       // ignore
@@ -355,16 +473,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  // Start with no selected case data. The signed-in user's backend cases are
-  // loaded immediately after authentication; sample data is only available via
-  // the explicit reset action.
+  // Hydrate workspace state synchronously on refresh so cases, evidence, timeline,
+  // detections, graph, and audit trail remain intact until Clear Workspace is used.
   const [cases, setCases] = useState<Case[]>(() => {
     try {
       if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user')) {
-        const cached = sessionStorage.getItem('dcsre_cached_cases');
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed)) return parsed;
+        const parsed = safeGetJson<Case[]>(CACHED_CASES_KEY, []);
+        if (Array.isArray(parsed)) {
+          if (isWorkspaceCleared()) {
+            const allowed = getPostClearCaseIds();
+            return parsed.filter(c => allowed.has(String(c.id)));
+          }
+          return parsed;
         }
       }
     } catch {
@@ -372,15 +492,57 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     return [];
   });
-  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>([]);
-  const [events, setEvents] = useState<NormalizedEvent[]>([]);
+  const [evidenceList, setEvidenceList] = useState<EvidenceFile[]>(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user') && activeCaseId) {
+      const cached = safeGetJson<EvidenceFile[]>(`dcsre_evidence_cache_${activeCaseId}`, []);
+      if (Array.isArray(cached)) return cached;
+    }
+    return [];
+  });
+  const [events, setEvents] = useState<NormalizedEvent[]>(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user') && activeCaseId) {
+      const cached = safeGetJson<NormalizedEvent[]>(`dcsre_events_cache_${activeCaseId}`, []);
+      if (Array.isArray(cached)) return cached;
+    }
+    return [];
+  });
   const [rules, setRules] = useState<DetectionRule[]>(INITIAL_SIGMA_RULES);
-  const [detections, setDetections] = useState<DetectionResult[]>([]);
-  const [caseGraph, setCaseGraph] = useState<AttackGraphData>({ nodes: [], edges: [] });
+  const [detections, setDetections] = useState<DetectionResult[]>(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user') && activeCaseId) {
+      const cached = safeGetJson<DetectionResult[]>(`dcsre_detections_cache_${activeCaseId}`, []);
+      if (Array.isArray(cached)) return cached;
+    }
+    return [];
+  });
+  const [caseGraph, setCaseGraph] = useState<AttackGraphData>(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user') && activeCaseId) {
+      const cached = safeGetJson<AttackGraphData>(`dcsre_graph_cache_${activeCaseId}`, { nodes: [], edges: [] });
+      if (cached && Array.isArray(cached.nodes)) return cached;
+    }
+    return { nodes: [], edges: [] };
+  });
   const [graphAttackPathOnly, setGraphAttackPathOnly] = useState<boolean>(true);
 
   // Audit Log store (Tamper-evident chain-of-custody) (FR-AUDIT-1..5)
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('dcsre_auth_user')) {
+      const cached = safeGetJson<AuditLogEntry[]>(CACHED_AUDIT_KEY, []);
+      if (Array.isArray(cached)) {
+        return sortAuditLogsChronological(cached);
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    if (!currentUser) return;
+    safeSetStorage(CACHED_CASES_KEY, JSON.stringify(cases));
+  }, [cases, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    safeSetStorage(CACHED_AUDIT_KEY, JSON.stringify(auditLogs));
+  }, [auditLogs, currentUser]);
 
 
   // Synchronize cases, rules, and audit logs with FastAPI backend
@@ -389,7 +551,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const syncCases = casesApi.list().then((casesRes) => {
       if (Array.isArray(casesRes.data)) {
-        const backendCases: Case[] = casesRes.data.map((bc: any) => ({
+        let backendCases: Case[] = casesRes.data.map((bc: any) => ({
           id: String(bc.id),
           name: bc.name,
           description: bc.description || '',
@@ -406,22 +568,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           tags: bc.tags || []
         }));
 
-        // A successful backend response is authoritative, including an empty
-        // list. Keeping the demo case here can make uploads target a case ID
-        // that does not exist in the database.
-        setCases(backendCases);
-        try {
-          if (typeof window !== 'undefined') {
-            sessionStorage.setItem('dcsre_cached_cases', JSON.stringify(backendCases));
-          }
-        } catch {
-          // ignore
+        if (isWorkspaceCleared()) {
+          const postClearIds = getPostClearCaseIds();
+          backendCases = backendCases.filter(c => postClearIds.has(c.id));
         }
 
+        // Preserve any just-created case whose backend creation is still in-flight
+        setCases(prev => {
+          const inFlightPending = prev.filter(
+            c => c.id.startsWith('case-') && Boolean(pendingCaseCreationRef.current[c.id]) && !backendCases.some(bc => bc.id === c.id)
+          );
+          return [...inFlightPending, ...backendCases];
+        });
+
         setActiveCaseId(prev => {
-          const stored = typeof window !== 'undefined'
-            ? (sessionStorage.getItem('dcsre_active_case_id') || localStorage.getItem('dcsre_active_case_id') || '')
-            : '';
+          const stored = safeGetStorage('dcsre_active_case_id') || '';
           const candidate = prev || stored;
           if (!candidate) return '';
           if (backendCases.some(c => c.id === candidate)) return candidate;
@@ -445,7 +606,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const syncAudit = auditApi.list().then((auditRes) => {
       if (Array.isArray(auditRes.data)) {
-        const backendLogs: AuditLogEntry[] = auditRes.data.map((al: any) => ({
+        let backendLogs: AuditLogEntry[] = auditRes.data.map((al: any) => ({
           id: String(al.id),
           user_id: String(al.user_id || 'system'),
           user_name: al.user_name || 'Unknown user',
@@ -459,6 +620,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           user_agent: al.user_agent || '',
           details: al.details || {}
         }));
+
+        if (isWorkspaceCleared()) {
+          const postClearIds = getPostClearCaseIds();
+          const clearedAtIso = safeGetStorage(WS_CLEARED_AT_KEY) || '';
+          const clearedMs = clearedAtIso ? Date.parse(clearedAtIso) : 0;
+          backendLogs = backendLogs.filter(al => {
+            if (al.case_id && postClearIds.has(al.case_id)) return true;
+            if (!al.case_id && clearedMs > 0) {
+              const alMs = Date.parse(al.timestamp);
+              return Number.isFinite(alMs) && alMs > clearedMs;
+            }
+            return false;
+          });
+        }
 
         setAuditLogs(sortAuditLogsChronological(backendLogs));
       }
@@ -673,6 +848,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setActiveCaseId('');
+    clearWorkspaceStorageKeys(false);
     setCurrentUser(matched);
 
     logAuditAction(
@@ -718,22 +894,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDetections([]);
     setActiveCaseId('');
     setCurrentPage('home');
-    try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('dcsre_current_page');
-        sessionStorage.removeItem('dcsre_active_case_id');
-        localStorage.removeItem('dcsre_active_case_id');
-        sessionStorage.removeItem('dcsre_cached_cases');
-        for (let i = sessionStorage.length - 1; i >= 0; i--) {
-          const k = sessionStorage.key(i);
-          if (k && (k.startsWith('dcsre_report_cache_') || k.startsWith('dcsre_history_cache_') || k.startsWith('dcsre_evidence_cache_'))) {
-            sessionStorage.removeItem(k);
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
+    clearWorkspaceStorageKeys(false);
     toast.success(`${roleLabel} ${userName} has signed out successfully. Session closed.`);
   };
 
@@ -851,20 +1012,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return;
     }
 
-    // Hydrate cached evidence immediately on page refresh so uploaded files stay visible while refreshing from backend
-    try {
-      const cachedEvRaw = sessionStorage.getItem(`dcsre_evidence_cache_${targetCaseId}`);
-      if (cachedEvRaw) {
-        const cachedEv = JSON.parse(cachedEvRaw);
-        if (Array.isArray(cachedEv)) {
-          setEvidenceList(prev => {
-            if (prev.some(e => e.case_id === targetCaseId)) return prev;
-            return [...prev, ...cachedEv];
-          });
-        }
-      }
-    } catch {
-      // ignore
+    // Hydrate cached evidence, events, detections, and graph immediately on page refresh
+    const cachedEv = safeGetJson<EvidenceFile[]>(`dcsre_evidence_cache_${targetCaseId}`, []);
+    if (Array.isArray(cachedEv) && cachedEv.length > 0) {
+      setEvidenceList(prev => (prev.some(e => e.case_id === targetCaseId) ? prev : [...prev, ...cachedEv]));
+    }
+    const cachedEvents = safeGetJson<NormalizedEvent[]>(`dcsre_events_cache_${targetCaseId}`, []);
+    if (Array.isArray(cachedEvents) && cachedEvents.length > 0) {
+      setEvents(prev => (prev.some(e => e.case_id === targetCaseId) ? prev : [...prev, ...cachedEvents]));
+    }
+    const cachedDets = safeGetJson<DetectionResult[]>(`dcsre_detections_cache_${targetCaseId}`, []);
+    if (Array.isArray(cachedDets) && cachedDets.length > 0) {
+      setDetections(prev => (prev.some(d => d.case_id === targetCaseId) ? prev : [...prev, ...cachedDets]));
+    }
+    const cachedGraph = safeGetJson<AttackGraphData>(`dcsre_graph_cache_${targetCaseId}`, { nodes: [], edges: [] });
+    if (cachedGraph && Array.isArray(cachedGraph.nodes) && cachedGraph.nodes.length > 0) {
+      setCaseGraph(prev => (prev.nodes.length > 0 ? prev : cachedGraph));
     }
 
     let isMounted = true;
@@ -900,11 +1063,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }));
 
           loadedArtifactCasesRef.current.add(targetCaseId);
-          try {
-            sessionStorage.setItem(`dcsre_evidence_cache_${targetCaseId}`, JSON.stringify(backendEvidence));
-          } catch {
-            // ignore
-          }
+          safeSetStorage(`dcsre_evidence_cache_${targetCaseId}`, JSON.stringify(backendEvidence));
           setEvidenceList(prev => {
             const others = prev.filter(e => e.case_id !== targetCaseId);
             return [...others, ...backendEvidence];
@@ -972,6 +1131,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             };
           });
 
+          safeSetStorage(`dcsre_events_cache_${targetCaseId}`, JSON.stringify(loadedEvents));
           setEvents(prev => [
             ...prev.filter(e => e.case_id !== targetCaseId),
             ...loadedEvents
@@ -1005,6 +1165,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
           }));
 
+          safeSetStorage(`dcsre_detections_cache_${targetCaseId}`, JSON.stringify(backendDetections));
           setDetections(prev => {
             const others = prev.filter(d => d.case_id !== targetCaseId);
             return [...others, ...backendDetections];
@@ -1092,10 +1253,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let current = true;
     graphApi.getCaseGraph(effectiveCaseId, graphAttackPathOnly)
       .then(response => {
-        if (current && response.data) setCaseGraph(response.data);
+        if (current && response.data) {
+          setCaseGraph(response.data);
+          safeSetStorage(`dcsre_graph_cache_${effectiveCaseId}`, JSON.stringify(response.data));
+        }
       })
       .catch(() => {
-        if (current) setCaseGraph({ nodes: [], edges: [] });
+        if (current) {
+          setCaseGraph(prev => (prev.nodes.length > 0 ? prev : { nodes: [], edges: [] }));
+        }
       });
     return () => { current = false; };
   }, [effectiveCaseId, activeCaseEvents.length, activeCaseDetections.length, graphAttackPathOnly]);
@@ -1156,6 +1322,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const creationPromise = casesApi.create({ name, description, tags }).then(res => {
       if (res.data?.id) {
         const backendId = String(res.data.id);
+        addPostClearCaseId(backendId);
         loadedArtifactCasesRef.current.add(backendId);
         setCases(prev => prev.map(c => c.id === newId ? { ...c, id: backendId } : c));
         setEvidenceList(prev => prev.map(ev => ev.case_id === newId ? { ...ev, case_id: backendId } : ev));
@@ -1242,6 +1409,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             throw new Error(created.error || 'Create an investigation case before uploading evidence.');
           }
           const createdId = String(created.data.id);
+          addPostClearCaseId(createdId);
           const createdBy = (created.data as any).created_by || created.data.owner_id || currentUser?.id || '';
           const newCase: Case = {
             id: createdId,
@@ -1330,11 +1498,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     setEvidenceList(prev => {
       const next = [savedEvidence, ...prev.filter(ev => ev.id !== savedEvidence.id)];
+      safeSetStorage(
+        `dcsre_evidence_cache_${resolvedCaseId}`,
+        JSON.stringify(next.filter(ev => ev.case_id === resolvedCaseId))
+      );
+      safeSetStorage(`dcsre_fresh_upload_${resolvedCaseId}`, '1');
       try {
-        sessionStorage.setItem(
-          `dcsre_evidence_cache_${resolvedCaseId}`,
-          JSON.stringify(next.filter(ev => ev.case_id === resolvedCaseId))
-        );
+        sessionStorage.removeItem(`dcsre_report_cache_${resolvedCaseId}`);
+        sessionStorage.removeItem(`dcsre_history_cache_${resolvedCaseId}`);
+        localStorage.removeItem(`dcsre_report_cache_${resolvedCaseId}`);
+        localStorage.removeItem(`dcsre_history_cache_${resolvedCaseId}`);
       } catch {
         // ignore
       }
@@ -1431,6 +1604,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           };
         });
 
+        safeSetStorage(`dcsre_events_cache_${resolvedCaseId}`, JSON.stringify(loadedEvents));
         setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== resolvedCaseId)]);
       }
       if (Array.isArray(detsRes.data)) {
@@ -1459,6 +1633,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           rule_information: bd.rule_information || {},
           entities_involved: bd.entities_involved || { hosts: [], users: [], ips: [] }
         }));
+        safeSetStorage(`dcsre_detections_cache_${resolvedCaseId}`, JSON.stringify(backendDetections));
         setDetections(prev => [...backendDetections, ...prev.filter(d => d.case_id !== resolvedCaseId)]);
       }
     } catch (syncError) {
@@ -1644,7 +1819,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const resetToInitialScenarios = () => {
     // Clear the active frontend workspace view across all tabs (including Cases
-    // and Audit Trail) without deleting saved records or audit rows in the DB.
+    // and Audit Trail) without deleting saved records or audit rows in the DB,
+    // and persist the cleared workspace boundary across page refreshes.
     loadedArtifactCasesRef.current.clear();
     setActiveCaseId('');
     setCases([]);
@@ -1653,24 +1829,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDetections([]);
     setCaseGraph({ nodes: [], edges: [] });
     setAuditLogs([]);
-    try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('dcsre_cached_cases');
-        for (let i = sessionStorage.length - 1; i >= 0; i--) {
-          const k = sessionStorage.key(i);
-          if (
-            k &&
-            (k.startsWith('dcsre_report_cache_') ||
-              k.startsWith('dcsre_history_cache_') ||
-              k.startsWith('dcsre_evidence_cache_'))
-          ) {
-            sessionStorage.removeItem(k);
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
+    clearWorkspaceStorageKeys(true);
     toast.success('Workspace cleared. Uploading now starts a new investigation case.');
   };
 

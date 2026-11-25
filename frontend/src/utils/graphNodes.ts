@@ -7,6 +7,7 @@ export type VisualNodeRole =
   | 'attacker_c2'
   | 'payload_host'
   | 'exfil_destination'
+  | 'mining_pool'
   | 'benign_external'
   | 'benign_external_group';
 
@@ -33,6 +34,7 @@ export interface NodeRoleIndex {
   attackerIps: Set<string>;
   payloadHosts: Set<string>;
   exfilDestinations: Set<string>;
+  miningPools: Set<string>;
 }
 
 export function buildNodeRoleIndex(
@@ -42,11 +44,24 @@ export function buildNodeRoleIndex(
   const attackerIps = new Set<string>();
   const payloadHosts = new Set<string>();
   const exfilDestinations = new Set<string>();
+  const miningPools = new Set<string>();
 
   for (const d of detections) {
     const tactic = String(d.mitre_tactic || '').toLowerCase();
     const ruleId = String(d.rule_id || '').toLowerCase();
     const ri = d.rule_information || {};
+
+    if (tactic === 'impact' || ruleId.includes('miner') || d.mitre_technique === 'T1496') {
+      const poolList: string[] = [
+        ...(Array.isArray(ri.destination_ips) ? ri.destination_ips : []),
+        ...(ri.dst_ip ? [String(ri.dst_ip)] : []),
+        ...(ri.destination_ip ? [String(ri.destination_ip)] : []),
+      ];
+      for (const ip of poolList) {
+        if (ip && !isPrivateIpAddress(String(ip))) miningPools.add(String(ip));
+      }
+      continue;
+    }
 
     const srcList: string[] = [
       ...(d.source_ips || []),
@@ -79,6 +94,13 @@ export function buildNodeRoleIndex(
       while ((m = IPV4_URL_HOST_RE.exec(desc)) !== null) {
         payloadHosts.add(m[1]);
       }
+      const dstList: string[] = [
+        ...(Array.isArray(ri.destination_ips) ? ri.destination_ips : []),
+        ...(ri.dst_ip ? [String(ri.dst_ip)] : []),
+      ];
+      for (const ip of dstList) {
+        if (ip && !isPrivateIpAddress(String(ip))) payloadHosts.add(String(ip));
+      }
     }
   }
 
@@ -91,14 +113,19 @@ export function buildNodeRoleIndex(
         if (!isPrivateIpAddress(m[1])) payloadHosts.add(m[1]);
       }
     }
-    if (evt.dst_port === 4444 || evt.dst_port === 3333) {
+    if (evt.dst_port === 4444) {
       if (evt.dst_ip && !isPrivateIpAddress(evt.dst_ip)) {
         attackerIps.add(evt.dst_ip);
       }
     }
+    if (evt.dst_port === 3333) {
+      if (evt.dst_ip && !isPrivateIpAddress(evt.dst_ip)) {
+        miningPools.add(evt.dst_ip);
+      }
+    }
   }
 
-  return { attackerIps, payloadHosts, exfilDestinations };
+  return { attackerIps, payloadHosts, exfilDestinations, miningPools };
 }
 
 export function classifyVisualNodeRole(
@@ -115,7 +142,13 @@ export function classifyVisualNodeRole(
       : 'internal_host';
   }
 
+  if (node.role === 'mining_pool') return 'mining_pool';
+  if (node.role === 'payload_host') return 'payload_host';
+  if (node.role === 'exfil_destination') return 'exfil_destination';
+  if (node.role === 'c2') return 'attacker_c2';
+
   const label = String(node.label || '').trim();
+  const isMiningPool = roleIndex.miningPools.has(label);
   const isPayload = roleIndex.payloadHosts.has(label);
   const isExfil = roleIndex.exfilDestinations.has(label);
   const isAttacker =
@@ -123,6 +156,7 @@ export function classifyVisualNodeRole(
     roleIndex.attackerIps.has(label) ||
     Boolean(node.is_compromised);
 
+  if (isMiningPool) return 'mining_pool';
   if (isPayload && !isAttacker) return 'payload_host';
   if (isExfil && !isAttacker) return 'exfil_destination';
   if (isAttacker) return 'attacker_c2';
@@ -206,6 +240,16 @@ export const ROLE_PALETTE: Record<VisualNodeRole, RolePalette> = {
     textDark: '#c084fc',
     textLight: '#6d28d9',
     swatchClass: 'bg-[#a855f7] border-[#7c3aed]',
+  },
+  mining_pool: {
+    label: 'Mining pool',
+    badge: 'POOL',
+    stroke: '#06b6d4',
+    fillDark: '#083344',
+    fillLight: '#ecfeff',
+    textDark: '#22d3ee',
+    textLight: '#0e7490',
+    swatchClass: 'bg-[#06b6d4] border-[#0891b2]',
   },
   benign_external: {
     label: 'Benign External',

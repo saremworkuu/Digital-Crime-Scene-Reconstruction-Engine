@@ -38,7 +38,7 @@ import { SeverityTag } from '../components/SeverityTag';
 
 export const Timeline: React.FC = () => {
 
-  const { activeCase, activeCaseEvents } = useApp();
+  const { activeCase, activeCaseEvents, activeCaseDetections } = useApp();
 
 
 
@@ -161,8 +161,8 @@ export const Timeline: React.FC = () => {
 
   // Compute automated correlated attack chains (FR-CORR-1, FR-CORR-2, FR-CORR-3)
   const attackChains = useMemo(() => {
-    return correlateAttackChains(incidentEvents, 45);
-  }, [incidentEvents]);
+    return correlateAttackChains(activeCaseEvents, activeCaseDetections, 45);
+  }, [activeCaseEvents, activeCaseDetections]);
 
 
 
@@ -298,7 +298,7 @@ export const Timeline: React.FC = () => {
 
                     <SeverityTag severity={chain.highestSeverity} />
 
-                    <span className="font-semibold text-[#fafaf9] truncate max-w-[240px]">
+                    <span className="font-semibold text-[#fafaf9] truncate" title={chain.name}>
 
                       {chain.name}
 
