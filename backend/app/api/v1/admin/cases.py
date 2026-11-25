@@ -12,6 +12,7 @@ from app.db.models.user import User
 from app.db.models.evidence import Evidence
 from app.db.models.case_assignment import CaseAssignment
 from app.db.models.audit_log import AuditLog
+from app.services.audit import log_audit_event
 from app.schemas.admin import (
     AdminCaseResponse,
     AdminCaseStatusUpdateRequest,
@@ -138,13 +139,14 @@ def update_case_status(
     except Exception:
         c.status = CaseStatus.OPEN
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
+    log_audit_event(
+        db=db,
+        user=current_admin,
         case_id=c.id,
-        action="CASE_STATUS_UPDATE",
+        action="case.status_changed",
         resource=f"case:{c.id}",
-        details={"from": old_status, "to": body.status}
-    ))
+        details={"from": old_status, "to": body.status},
+    )
 
     db.commit()
     db.refresh(c)
@@ -179,13 +181,14 @@ def assign_case_investigators(
                 assigned_by=current_admin.id,
             ))
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
+    log_audit_event(
+        db=db,
+        user=current_admin,
         case_id=c.id,
-        action="CASE_ASSIGNMENT",
+        action="case.assigned",
         resource=f"case:{c.id}",
-        details={"assigned_investigators": body.investigators}
-    ))
+        details={"assigned_investigators": body.investigators},
+    )
 
     db.commit()
     db.refresh(c)
@@ -202,14 +205,15 @@ def toggle_case_legal_hold(
     c = resolve_case(case_id, db)
     c.legal_hold = body.legal_hold
 
-    action_name = "CASE_LEGAL_HOLD_SET" if body.legal_hold else "CASE_LEGAL_HOLD_REMOVED"
-    db.add(AuditLog(
-        user_id=current_admin.id,
+    action_name = "case.legal_hold_set" if body.legal_hold else "case.legal_hold_removed"
+    log_audit_event(
+        db=db,
+        user=current_admin,
         case_id=c.id,
         action=action_name,
         resource=f"case:{c.id}",
-        details={"legal_hold": body.legal_hold, "reason": body.reason or "Admin command directive"}
-    ))
+        details={"legal_hold": body.legal_hold, "reason": body.reason or "Admin command directive"},
+    )
 
     db.commit()
     db.refresh(c)
@@ -226,14 +230,15 @@ def toggle_case_archive(
     c = resolve_case(case_id, db)
     c.is_archived = body.is_archived
 
-    action_name = "CASE_ARCHIVE" if body.is_archived else "CASE_UNARCHIVE"
-    db.add(AuditLog(
-        user_id=current_admin.id,
+    action_name = "case.archived" if body.is_archived else "case.unarchived"
+    log_audit_event(
+        db=db,
+        user=current_admin,
         case_id=c.id,
         action=action_name,
         resource=f"case:{c.id}",
-        details={"is_archived": body.is_archived}
-    ))
+        details={"is_archived": body.is_archived},
+    )
 
     db.commit()
     db.refresh(c)

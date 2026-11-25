@@ -293,7 +293,7 @@ class WindowsEVTXParser(BaseParser):
         return records
 
     def _parse_xml(self, file_path: Path, filename: str) -> list[dict[str, Any]]:
-        """Parses an XML file containing one or more <Event> elements or <Finding> elements (vulnerability scans)."""
+        """Parses an XML file containing <Event> elements, <Finding> elements, or generic records."""
         records = []
         try:
             tree = ET.parse(str(file_path))
@@ -307,29 +307,98 @@ class WindowsEVTXParser(BaseParser):
             except Exception as e:
                 raise ValueError(f"Invalid XML in {filename}: {e}")
 
+        parent_map = {child: parent for parent in root.iter() for child in parent}
+
+        def _find_ancestor_attr_or_text(elem: ET.Element, tags: tuple[str, ...], attrs: tuple[str, ...]) -> Optional[str]:
+            cur: Optional[ET.Element] = elem
+            while cur is not None:
+                local = cur.tag.split("}")[-1]
+                if local in tags:
+                    for attr in attrs:
+                        val = cur.get(attr)
+                        if val:
+                            return val.strip()
+                    for child in cur:
+                        if child.tag.split("}")[-1] in attrs and child.text and child.text.strip():
+                            return child.text.strip()
+                for attr in attrs:
+                    val = cur.get(attr)
+                    if val:
+                        return val.strip()
+                cur = parent_map.get(cur)
+            return None
+
         # Check for vulnerability scan format (e.g., <Finding> elements)
-        finding_elements = root.findall(".//Finding")
+        finding_elements = [el for el in root.iter() if el.tag.split("}")[-1] == "Finding"]
         if finding_elements:
-            # Vulnerability scan: one event per <Finding>
+            root_timestamp = (
+                _get_element_text(root, "timestamp")
+                or _get_element_text(root, "Timestamp")
+                or root.get("date")
+                or root.get("timestamp")
+            )
             for record_number, elem in enumerate(finding_elements, start=1):
-                # Extract finding details
-                finding_id = _get_element_text(elem, "id") or _get_element_text(elem, "FindingID")
-                title = _get_element_text(elem, "title") or _get_element_text(elem, "Title") or _get_element_text(elem, "name")
-                severity = _get_element_text(elem, "severity") or _get_element_text(elem, "Severity") or "medium"
-                description = _get_element_text(elem, "description") or _get_element_text(elem, "Description")
-                host = _get_element_text(elem, "host") or _get_element_text(elem, "Host") or "unknown_host"
-                cve = _get_element_text(elem, "cve") or _get_element_text(elem, "CVE")
-                
+                finding_id = (
+                    elem.get("id")
+                    or elem.get("finding_id")
+                    or _get_element_text(elem, "id")
+                    or _get_element_text(elem, "FindingID")
+                )
+                title = (
+                    _get_element_text(elem, "title")
+                    or _get_element_text(elem, "Title")
+                    or _get_element_text(elem, "name")
+                    or elem.get("title")
+                    or elem.get("name")
+                )
+                severity = (
+                    elem.get("severity")
+                    or elem.get("Severity")
+                    or _get_element_text(elem, "severity")
+                    or _get_element_text(elem, "Severity")
+                    or "medium"
+                ).lower()
+                description = (
+                    _get_element_text(elem, "description")
+                    or _get_element_text(elem, "Description")
+                    or elem.get("description")
+                    or title
+                )
+                host = (
+                    _get_element_text(elem, "host")
+                    or _get_element_text(elem, "Host")
+                    or elem.get("host")
+                    or _find_ancestor_attr_or_text(elem, ("Host", "host"), ("name", "hostname", "host", "ip"))
+                    or "unknown_host"
+                )
+                host_ip = _find_ancestor_attr_or_text(elem, ("Host", "host"), ("ip", "address", "ip_address"))
+                cve = (
+                    _get_element_text(elem, "cve")
+                    or _get_element_text(elem, "CVE")
+                    or elem.get("cve")
+                )
+                ts = (
+                    elem.get("first_detected")
+                    or elem.get("timestamp")
+                    or elem.get("date")
+                    or _get_element_text(elem, "timestamp")
+                    or _get_element_text(elem, "first_detected")
+                    or root_timestamp
+                )
+                status_attr = elem.get("status") or _get_element_text(elem, "status")
+                ticket_attr = elem.get("ticket") or _get_element_text(elem, "ticket")
+
                 raw_str = ET.tostring(elem, encoding="unicode")
-                
+
                 action = f"Vulnerability: {title or 'Finding'} ({severity})"
                 if cve:
                     action += f" [{cve}]"
-                
+
                 records.append({
-                    "timestamp": None,  # Vulnerability scans may not have timestamps
+                    "timestamp": ts,
+                    "timestamp_inferred": ts is None,
                     "host": host,
-                    "host_inferred": False,
+                    "host_inferred": host == "unknown_host",
                     "source_file": filename,
                     "source_record_id": record_number,
                     "event_type": "vulnerability_finding",
@@ -338,7 +407,7 @@ class WindowsEVTXParser(BaseParser):
                     "process": None,
                     "parent_process": None,
                     "command_line": description,
-                    "src_ip": None,
+                    "src_ip": host_ip,
                     "dst_ip": None,
                     "src_port": None,
                     "dst_port": None,
@@ -352,26 +421,71 @@ class WindowsEVTXParser(BaseParser):
                         "finding_id": finding_id,
                         "title": title,
                         "severity": severity,
+                        "status": status_attr,
+                        "ticket": ticket_attr,
                         "description": description,
                         "cve": cve,
-                        "timestamp_inferred": True,
+                        "host_ip": host_ip,
+                        "timestamp_inferred": ts is None,
                     },
                 })
             return records
 
-        # Find all <Event> elements (Sysmon-style)
-        event_elements = root.findall(".//Event")
-        if not event_elements:
-            event_elements = [child for child in root if child.tag.split("}")[-1] == "Event"]
-        if not event_elements and root.tag.split("}")[-1] == "Event":
-            event_elements = [root]
+        # Find all <Event> elements (Sysmon / Windows EVTX XML), ignoring XML namespaces
+        event_elements = [el for el in root.iter() if el.tag.split("}")[-1] == "Event"]
+        if event_elements:
+            for record_number, elem in enumerate(event_elements, start=1):
+                rec_id = None
+                for child in elem.iter():
+                    if child.tag.split("}")[-1] == "EventRecordID" and child.text and child.text.strip():
+                        rec_id = child.text.strip()
+                        break
+                rec_num = int(rec_id) if rec_id and rec_id.isdigit() else record_number
+                raw_str = ET.tostring(elem, encoding="unicode")
+                record = _parse_xml_event_element(elem, rec_num, filename, raw_str)
+                records.append(record)
+            return records
 
-        for record_number, elem in enumerate(event_elements, start=1):
-            rec_id = _get_element_text(elem, ".//EventRecordID")
-            rec_num = int(rec_id) if rec_id and rec_id.isdigit() else record_number
+        # Generic XML fallback (e.g. <Record>, <Entry>, <Alert>, <Item>, <Log>, or top-level children)
+        generic_tags = {"Record", "Entry", "Alert", "Item", "Log", "host", "Host"}
+        generic_elements = [el for el in root.iter() if el.tag.split("}")[-1] in generic_tags]
+        if not generic_elements:
+            generic_elements = list(root)
+
+        for record_number, elem in enumerate(generic_elements, start=1):
+            attrs = dict(elem.attrib)
+            children_data = {
+                child.tag.split("}")[-1]: child.text.strip()
+                for child in elem
+                if child.text and child.text.strip()
+            }
+            merged = {**attrs, **children_data}
+            ts = (
+                merged.get("timestamp")
+                or merged.get("time")
+                or merged.get("date")
+                or merged.get("TimeCreated")
+                or root.get("date")
+                or root.get("startstr")
+            )
+            host = merged.get("host") or merged.get("hostname") or merged.get("name") or merged.get("Computer") or "unknown_host"
             raw_str = ET.tostring(elem, encoding="unicode")
-            record = _parse_xml_event_element(elem, rec_num, filename, raw_str)
-            records.append(record)
+            records.append({
+                "timestamp": ts,
+                "timestamp_inferred": ts is None,
+                "host": host,
+                "host_inferred": host == "unknown_host",
+                "source_file": filename,
+                "source_record_id": record_number,
+                "event_type": f"xml_{elem.tag.split('}')[-1].lower()}",
+                "event_id": merged.get("id") or str(record_number),
+                "user": merged.get("user") or merged.get("username"),
+                "src_ip": merged.get("ip") or merged.get("src_ip") or merged.get("addr"),
+                "dst_ip": merged.get("dst_ip"),
+                "raw": raw_str,
+                "action": merged.get("title") or merged.get("action") or merged.get("message") or f"XML {elem.tag.split('}')[-1]}",
+                "extra": merged,
+            })
 
         return records
 

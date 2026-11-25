@@ -16,6 +16,8 @@ class EvidenceResponse(BaseModel):
     file_size: int
     sha256_hash: str
     uploaded_at: datetime
+    received_at: Optional[datetime] = None
+    parsed_at: Optional[datetime] = None
     parsing_status: ParsingStatus
     parsing_error: Optional[str] = None
     parser_used: Optional[str] = None

@@ -10,7 +10,7 @@ import {
   ShieldAlert,
   FileText,
   History,
-  Home as HomeIcon
+  LogOut
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -37,7 +37,7 @@ interface SidebarNavProps {
 }
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ className = '' }) => {
-  const { currentPage, setCurrentPage, theme, currentUser } = useApp();
+  const { currentPage, setCurrentPage, theme, currentUser, logout } = useApp();
 
   const isLight = theme === 'light';
   const isAdmin = currentUser?.role === 'admin';
@@ -105,36 +105,23 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ className = '' }) => {
         })}
       </nav>
 
-      {/* Return to Home Page button for signed-in users */}
+      {/* Sign Out button for signed-in users */}
       <div className={`pt-3 mt-auto border-t ${isLight ? 'border-slate-200' : 'border-[#24201e]'}`}>
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setCurrentPage('home');
+            logout();
           }}
-          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all group cursor-pointer ${
-            currentPage === 'home'
-              ? isLight
-                ? 'bg-[#ea580c]/10 text-[#ea580c] border border-[#ea580c]/30'
-                : 'bg-[#221712] text-[#f95721] border border-[#ea580c]/50'
-              : isLight
-              ? 'text-[#52525b] hover:text-[#18181b] hover:bg-[#f4f4f5] border border-transparent'
-              : 'text-[#a8a29e] hover:text-[#fafaf9] hover:bg-[#1a1716] border border-[#26211f]'
-          }`}
-          title="Redirect to Home Page"
-        >
-          <div className="flex items-center gap-2">
-            <HomeIcon className="w-4 h-4 text-[#f95721] group-hover:scale-110 transition-transform" />
-            <span className="font-medium">Go to Home</span>
-          </div>
-          <span className={`font-mono text-[9px] uppercase px-1.5 py-0.5 rounded ${
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all group cursor-pointer ${
             isLight
-              ? 'bg-orange-50 text-orange-700 border border-orange-200'
-              : 'bg-[#24130d] text-[#f95721] border border-[#ea580c]/40'
-          }`}>
-            Public
-          </span>
+              ? 'text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200'
+              : 'text-red-400 hover:text-red-300 hover:bg-red-950/30 border border-[#26211f] hover:border-red-500/30'
+          }`}
+          title="Sign Out"
+        >
+          <LogOut className="w-4 h-4 group-hover:scale-110 transition-transform" />
+          <span className="font-medium">Sign Out</span>
         </button>
       </div>
     </aside>

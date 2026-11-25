@@ -30,16 +30,30 @@ def _kv(text: str) -> dict:
 
 
 def _build_cmdline(fields: dict) -> str | None:
-    """Reconstruct command line from a0..aN fields."""
-    args = []
-    i = 0
-    while True:
-        key = f"a{i}"
-        if key not in fields:
-            break
-        args.append(fields[key])
-        i += 1
-    return " ".join(args) if args else None
+    """Reconstruct command line from all present a0..aN fields, ignoring argc."""
+    arg_keys: list[tuple[int, str]] = []
+    for key in fields:
+        m = re.fullmatch(r"a(\d+)", key)
+        if m:
+            arg_keys.append((int(m.group(1)), key))
+    if not arg_keys:
+        return None
+    arg_keys.sort(key=lambda item: item[0])
+    return " ".join(fields[key] for _, key in arg_keys)
+
+
+def _format_audit_uid(value: str | None) -> str | None:
+    """Format auditd uid/auid values while ignoring unset sentinel 4294967295."""
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if cleaned.lower() in {"", "-", "4294967295", "unset"}:
+        return None
+    if cleaned == "0":
+        return "root"
+    if cleaned.isdigit():
+        return f"uid={cleaned}"
+    return cleaned
 
 
 class AuditdParser(BaseParser):
@@ -86,20 +100,15 @@ class AuditdParser(BaseParser):
             except Exception:
                 timestamp_str = None
 
-            exe = merged.get("exe") or merged.get("a0")
+            exe = merged.get("exe") or merged.get("comm") or merged.get("a0")
             user = (
-                merged.get("uid")
-                or merged.get("auid")
-                or merged.get("user")
-                or merged.get("acct")
+                _format_audit_uid(merged.get("uid"))
+                or _format_audit_uid(merged.get("auid"))
+                or _format_audit_uid(merged.get("user"))
+                or _format_audit_uid(merged.get("acct"))
             )
-            # Prefer named user over UID numbers
-            for ukey in ("acct", "subj", "comm"):
-                if merged.get(ukey) and not merged[ukey].isdigit():
-                    user = merged[ukey]
-                    break
 
-            host = merged.get("hostname") or merged.get("node") or "unknown_host"
+            host = merged.get("node") or merged.get("hostname") or "unknown_host"
             syscall_name = merged.get("syscall")
             pid = merged.get("pid")
 

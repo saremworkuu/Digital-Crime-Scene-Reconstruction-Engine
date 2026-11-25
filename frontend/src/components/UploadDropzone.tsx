@@ -31,6 +31,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
     setErrorMessage(null);
 
     const uploadsSummary: { name: string; hash: string; events: number; status: string }[] = [];
+    let batchCaseId = caseId;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -43,7 +44,10 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
 
       try {
         const parserOverride = selectedParser === 'auto' ? undefined : selectedParser;
-        const result = await uploadEvidence(caseId, file, parserOverride);
+        const result = await uploadEvidence(batchCaseId, file, parserOverride);
+        if (!batchCaseId && result.case_id) {
+          batchCaseId = result.case_id;
+        }
         uploadsSummary.push({
           name: result.filename,
           hash: result.sha256_hash,

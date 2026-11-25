@@ -37,9 +37,10 @@ def get_attack_graph(
         .order_by(Event.timestamp.asc(), Event.id.asc())
     ).scalars().all()
 
-    from app.api.v1.detections import _execute_case_detections
-    _execute_case_detections(case.id, db)
     detections = db.execute(select(Detection).where(Detection.case_id == case.id)).scalars().all()
+    if not detections and events:
+        from app.api.v1.detections import _execute_case_detections
+        detections = _execute_case_detections(case.id, db)
     findings = []
     for detection in detections:
         info = detection.rule_information or {}

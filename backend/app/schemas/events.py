@@ -34,7 +34,13 @@ class EventResponse(BaseModel):
     src_port: Optional[int] = None
     dst_port: Optional[int] = None
     protocol: Optional[str] = None
+    packets: Optional[int] = None
     bytes: Optional[int] = None
+    flags: Optional[str] = None
+    http_request: Optional[str] = None
+    http_status: Optional[str] = None
+    payload_preview: Optional[str] = None
+    payload_untrusted: Optional[bool] = None
     process: Optional[str] = None
     parent_process: Optional[str] = None
     command_line: Optional[str] = None
@@ -44,6 +50,11 @@ class EventResponse(BaseModel):
     mitre_tactic: Optional[str] = None
     is_attack_path: Optional[bool] = False
     attack_phase: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
+    ticket: Optional[str] = None
+    first_detected: Optional[str] = None
+    date_only: Optional[bool] = False
     extra: Optional[dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -53,6 +64,8 @@ class EventResponse(BaseModel):
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         value = value.astimezone(timezone.utc)
+        if value.microsecond:
+            return value.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     @model_validator(mode="before")
@@ -100,6 +113,9 @@ class EventResponse(BaseModel):
             if src_ip_cand and src_ip_cand != "-":
                 host = src_ip_cand
                 host_inferred = True
+            elif details.get("thread_id") is not None or ev_type in {"db_query", "db_connect"}:
+                host = "unknown_host"
+                host_inferred = True
             else:
                 iso_log_match = re.match(
                     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+([a-zA-Z0-9_.-]+)(?:\s|$)",
@@ -107,8 +123,9 @@ class EventResponse(BaseModel):
                 )
                 syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
                 host_match = iso_log_match or syslog_match
-                if host_match:
-                    host = host_match.group(1)
+                candidate = host_match.group(1) if host_match else None
+                if candidate and not candidate.isdigit():
+                    host = candidate
                     host_inferred = False
                 else:
                     host = "unknown_host"
@@ -204,11 +221,13 @@ class EventResponse(BaseModel):
         bytes_val = details.get("bytes")
         bytes_int = int(bytes_val) if bytes_val is not None and str(bytes_val).isdigit() else None
 
-        is_suspicious = any(
+        category = details.get("category") or ("context" if ev_type == "vuln_scan" else None)
+        is_context_event = category == "context" or ev_type == "vuln_scan"
+        is_suspicious = False if is_context_event else any(
             w in str(ev_type).lower() or w in str(action).lower() or w in str(command_line or "").lower()
             for w in ["fail", "error", "attack", "malware", "shell", "sudo", "privilege", "brute", "inject", "drop", "unauthorized", "cvlk", "rclone", "psexec", "mimikatz", "vssadmin", "ntdsutil", "comsvcs"]
         )
-        severity = details.get("severity") or ("high" if is_suspicious else "low")
+        severity = details.get("severity") or extra.get("severity") or ("high" if is_suspicious else "low")
         raw = details.get("raw") or details.get("raw_message") or details.get("original_log") or raw_msg or str(details)
 
         d["source_type"] = src
@@ -228,7 +247,15 @@ class EventResponse(BaseModel):
         d["src_port"] = int(src_port) if src_port is not None and str(src_port).isdigit() else None
         d["dst_port"] = int(dst_port) if dst_port is not None and str(dst_port).isdigit() else None
         d["protocol"] = details.get("protocol") or details.get("proto") or ("TCP" if dst_port else None)
+        packets_val = details.get("packets") if details.get("packets") is not None else extra.get("packets")
+        d["packets"] = int(packets_val) if packets_val is not None and str(packets_val).isdigit() else None
         d["bytes"] = bytes_int
+        d["flags"] = details.get("flags") or extra.get("flags")
+        d["http_request"] = details.get("http_request") or extra.get("http_request")
+        d["http_status"] = details.get("http_status") or extra.get("http_status")
+        d["payload_preview"] = details.get("payload_preview") or extra.get("payload_preview")
+        raw_untrusted = details.get("payload_untrusted") if "payload_untrusted" in details else extra.get("payload_untrusted")
+        d["payload_untrusted"] = bool(raw_untrusted) if raw_untrusted is not None else None
         d["process"] = process
         d["parent_process"] = parent_process
         d["command_line"] = command_line
@@ -236,8 +263,13 @@ class EventResponse(BaseModel):
         d["target_file"] = target_file
         d["mitre_technique"] = details.get("mitre_technique")
         d["mitre_tactic"] = details.get("mitre_tactic")
-        d["is_attack_path"] = bool(details.get("is_attack_path", False) or is_suspicious)
+        d["is_attack_path"] = False if is_context_event else bool(details.get("is_attack_path", False) or is_suspicious)
         d["attack_phase"] = details.get("attack_phase")
+        d["category"] = category
+        d["status"] = details.get("status") or extra.get("status")
+        d["ticket"] = details.get("ticket") or extra.get("ticket")
+        d["first_detected"] = details.get("first_detected") or extra.get("first_detected")
+        d["date_only"] = bool(details.get("date_only", extra.get("date_only", False)))
         d["extra"] = details.get("extra") or {}
         return d
 

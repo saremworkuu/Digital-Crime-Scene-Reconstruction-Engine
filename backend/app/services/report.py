@@ -116,6 +116,8 @@ def generate_forensic_report_data(
     generator_user: Any = None,
     audit_entries: Optional[List[Dict[str, Any]]] = None,
     version: str = "1.0",
+    analysis_ran: Optional[bool] = None,
+    case_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Synthesizes case metadata, evidence ledger, timeline, and MITRE detections
@@ -124,6 +126,35 @@ def generate_forensic_report_data(
     case_id = str(case_dict.get("id", ""))
     case_name = case_dict.get("name", "Untitled Incident")
     now_iso = _now_iso()
+    no_events_with_evidence = len(events) == 0 and len(evidence_list) > 0
+    analysis_not_run = bool(no_events_with_evidence or (analysis_ran is False))
+    empty_section_text = (
+        "Analysis not run / no normalized events"
+        if analysis_not_run
+        else "None identified"
+    )
+    if case_snapshot is not None:
+        snapshot_data = dict(case_snapshot)
+    else:
+        sorted_events = sorted(
+            events,
+            key=lambda ev: (str(ev.get("timestamp") or ""), str(ev.get("id") or ev.get("event_id") or "")),
+        )
+        last_ev = sorted_events[-1] if sorted_events else None
+        sorted_dets = sorted(
+            detections,
+            key=lambda d: (str(d.get("last_seen") or d.get("first_seen") or d.get("detected_at") or ""), str(d.get("id") or "")),
+        )
+        last_det = sorted_dets[-1] if sorted_dets else None
+        snapshot_data = {
+            "evidence_count": len(evidence_list),
+            "event_count": len(events),
+            "detection_count": len(detections),
+            "latest_event_id": str(last_ev.get("id") or last_ev.get("event_id") or "") if last_ev else None,
+            "latest_event_timestamp": str(last_ev.get("timestamp") or "") if last_ev else None,
+            "latest_detection_id": str(last_det.get("id") or "") if last_det else None,
+            "latest_detection_timestamp": str(last_det.get("last_seen") or last_det.get("first_seen") or last_det.get("detected_at") or "") if last_det else None,
+        }
     tactic_warnings: List[str] = []
     ip_map = build_ip_host_map(events)
     event_hosts = {
@@ -394,6 +425,8 @@ def generate_forensic_report_data(
             "hash_verified_at": ev.get("hash_verified_at"),
             "uploaded_by": uploader,
             "uploaded_at": ev.get("uploaded_at"),
+            "received_at": ev.get("received_at") or ev.get("uploaded_at"),
+            "parsed_at": ev.get("parsed_at"),
             "ingested_at": ev.get("ingested_at"),
             "event_count": ev.get("event_count", 0),
             "size_bytes": ev.get("size_bytes", 0),
@@ -514,7 +547,7 @@ def generate_forensic_report_data(
         })
 
     if not remediation:
-        remediation = [{"action": "None identified", "finding_refs": ""}]
+        remediation = [{"action": empty_section_text, "finding_refs": ""}]
 
     # ------------------------------------------------------------------
     # fix-9: Executive summary with GiB, ransomware family, phishing facts
@@ -581,6 +614,8 @@ def generate_forensic_report_data(
             "hash_verified_at": ev.get("hash_verified_at"),
             "event_count": ev.get("event_count", 0),
             "uploaded_at": ev.get("uploaded_at"),
+            "received_at": ev.get("received_at") or ev.get("uploaded_at"),
+            "parsed_at": ev.get("parsed_at"),
             "uploader": ev.get("uploader_name", "Unknown"),
         }
         for ev in evidence_list
@@ -634,12 +669,14 @@ def generate_forensic_report_data(
         },
         "attack_timeline_summary": attack_events,
         "compromised_assets": {
-            "hosts": sorted(compromised_hosts) or ["None identified"],
-            "users": unique_users(compromised_users) or ["None identified"],
-            "adversary_infrastructure": sorted(adversary_infra) or ["None identified"],
-            "observed_ips": sorted(observed_ips) or ["None identified"],
+            "hosts": sorted(compromised_hosts) or [empty_section_text],
+            "users": unique_users(compromised_users) or [empty_section_text],
+            "adversary_infrastructure": sorted(adversary_infra) or [empty_section_text],
+            "observed_ips": sorted(observed_ips) or [empty_section_text],
             "dwell_time": dwell_time_str,
         },
+        "analysis_not_run": analysis_not_run,
+        "case_snapshot": snapshot_data,
         "entity_groups": {
             "compromised_hosts": sorted(compromised_hosts),
             "compromised_accounts": unique_users(compromised_users),
@@ -714,8 +751,18 @@ def _custody_entries(report_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         for evidence in report_data.get("evidence_manifest") or report_data.get("evidence_inventory") or []
     ]
 
+_EMPTY_SECTION_LABELS = {"None identified", "Analysis not run / no normalized events"}
+
+
 def render_report_html(report_data: Dict[str, Any]) -> str:
     is_draft = report_data.get("status", "DRAFT") == "DRAFT"
+    is_stale = bool(report_data.get("stale"))
+    empty_msg = (
+        "Analysis not run / no normalized events"
+        if report_data.get("analysis_not_run")
+        else "None identified"
+    )
+    esc_empty = esc(empty_msg)
 
     def _hash_cls(st: Any) -> str:
         s = str(st or "")
@@ -754,7 +801,7 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
         f"<td>{esc(ev.get('source_file') or ev.get('source') or '')}</td>"
         f"<td>{esc(', '.join(ev.get('source_record_references') or []))}</td></tr>"
         for ev in report_data.get("attack_timeline_summary", [])
-    ]) or "<tr><td colspan='9'>None identified</td></tr>"
+    ]) or f"<tr><td colspan='9'>{esc_empty}</td></tr>"
 
     detection_rows = "".join([
         f"<tr><td><strong>{esc(d.get('rule_name'))}</strong></td>"
@@ -765,11 +812,11 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
         f"<td><code>{esc(_format_event_time(d.get('first_seen')))}</code></td>"
         f"<td>{esc(d.get('description', ''))}</td></tr>"
         for d in report_data.get("mitre_coverage", [])
-    ]) or "<tr><td colspan='7'>None identified</td></tr>"
+    ]) or f"<tr><td colspan='7'>{esc_empty}</td></tr>"
     indicator_rows = "".join(
         f"<tr><td>{esc(item.get('type'))}</td><td><code>{esc(item.get('value'))}</code></td><td>{esc(item.get('role') or 'Observed')}</td><td>{esc(item.get('source_finding') or 'Observed event')}</td></tr>"
         for item in report_data.get("indicators", [])
-    ) or "<tr><td colspan='4'>None identified</td></tr>"
+    ) or f"<tr><td colspan='4'>{esc_empty}</td></tr>"
     artifact_rows = "".join(
         f"<li><strong>{esc(e.get('filename'))}</strong> — document artifact; {esc(e.get('size_display', _format_size(e.get('size_bytes'))))}</li>"
         for e in report_data.get("evidence_manifest", []) if e.get("document_artifact")
@@ -779,16 +826,20 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
         f"<li><strong>{html.escape(str(r.get('action', r if isinstance(r, str) else '')))}</strong>"
         f"{(' <em>(findings: ' + html.escape(str(r.get('finding_refs', ''))) + ')</em>') if isinstance(r, dict) and r.get('finding_refs') else ''}</li>"
         for r in report_data.get("remediation", [])
-    ]) or "<li>None identified</li>"
+    ]) or f"<li>{esc_empty}</li>"
 
     comp = report_data.get("compromised_assets", {})
     groups = report_data.get("entity_groups", {})
     comp_rows = (
-        "".join(f"<tr><td>Compromised Host</td><td><strong>{esc(h)}</strong></td><td>Observed in finding-linked events</td></tr>" for h in groups.get("compromised_hosts", comp.get("hosts", [])) if h != "None identified")
-        + "".join(f"<tr><td>Compromised Account</td><td><strong>{esc(u)}</strong></td><td>Observed in finding-linked events</td></tr>" for u in groups.get("compromised_accounts", comp.get("users", [])) if u != "None identified")
+        "".join(f"<tr><td>Compromised Host</td><td><strong>{esc(h)}</strong></td><td>Observed in finding-linked events</td></tr>" for h in groups.get("compromised_hosts", comp.get("hosts", [])) if h not in _EMPTY_SECTION_LABELS)
+        + "".join(f"<tr><td>Compromised Account</td><td><strong>{esc(u)}</strong></td><td>Observed in finding-linked events</td></tr>" for u in groups.get("compromised_accounts", comp.get("users", [])) if u not in _EMPTY_SECTION_LABELS)
         + "".join(f"<tr><td>Adversary Infrastructure: {esc(', '.join(item.get('roles') or ['Other Observed Addresses']))}</td><td><strong>{esc(item.get('address'))}</strong></td><td>Finding-linked indicator; attribution requires review</td></tr>" for item in groups.get("adversary_infrastructure", []))
         + "".join(f"<tr><td>Other Observed Address</td><td><strong>{esc(ip)}</strong></td><td>Observed in evidence; no adversary role assigned</td></tr>" for ip in groups.get("other_observed_addresses", []))
-    ) or "<tr><td colspan='3'>None identified</td></tr>"
+    ) or f"<tr><td colspan='3'>{esc_empty}</td></tr>"
+
+    stale_banner = ""
+    if is_stale:
+        stale_banner = "<div class='stale-banner'>STALE: case changed after this report was generated - regenerate</div>"
 
     draft_banner = ""
     if is_draft:
@@ -805,6 +856,7 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
     h1 {{ border-bottom: 3px solid #f95721; padding-bottom: 8px; }}
     h2 {{ border-bottom: 1.5px solid #e2e8f0; padding-bottom: 6px; margin-top: 32px; color: #ea580c; }}
     .draft-banner {{ background: #fef3c7; border: 2px solid #d97706; color: #92400e; font-weight: bold; padding: 12px 20px; border-radius: 6px; margin-bottom: 20px; font-size: 14px; }}
+    .stale-banner {{ background: #fee2e2; border: 2px solid #dc2626; color: #991b1b; font-weight: bold; padding: 12px 20px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }}
     .classification {{ display: inline-block; padding: 4px 10px; background: #ffedd5; color: #c2410c; font-weight: bold; border-radius: 4px; font-size: 11px; margin-bottom: 12px; }}
     table {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; }}
     th, td {{ border: 1px solid #cbd5e1; padding: 8px; text-align: left; }}
@@ -824,6 +876,7 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
 </head>
 <body>
   <div class="classification">{html.escape(report_data.get('classification', ''))}</div>
+  {stale_banner}
   {draft_banner}
   <h1>DCSRE DIGITAL FORENSIC RECONSTRUCTION REPORT</h1>
   <table>
@@ -946,7 +999,19 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     story = []
 
     is_draft = report_data.get("status", "DRAFT") == "DRAFT"
+    is_stale = bool(report_data.get("stale"))
+    empty_msg = (
+        "Analysis not run / no normalized events"
+        if report_data.get("analysis_not_run")
+        else "None identified"
+    )
     story.append(Paragraph("DCSRE DIGITAL FORENSIC RECONSTRUCTION REPORT", title_style))
+    if is_stale:
+        stale_style = ParagraphStyle('Stale', parent=styles['Normal'],
+            fontName='Helvetica-Bold', fontSize=9, leading=12,
+            textColor=colors.HexColor('#991b1b'), backColor=colors.HexColor('#fee2e2'),
+            spaceAfter=6)
+        story.append(Paragraph("STALE: case changed after this report was generated - regenerate", stale_style))
     if is_draft:
         draft_style = ParagraphStyle('Draft', parent=styles['Normal'],
             fontName='Helvetica-Bold', fontSize=9, leading=12,
@@ -1008,16 +1073,16 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         [Paragraph("<b>Entity Type</b>", cell_bold), Paragraph("<b>Identifier</b>", cell_bold), Paragraph("<b>Status</b>", cell_bold)]
     ]
     for h in comp.get("hosts", []):
-        if h != "None identified": comp_data.append([Paragraph("Host", cell_style), Paragraph(html.escape(str(h)), cell_bold), Paragraph("Observed in matching findings/events", cell_style)])
+        if h not in _EMPTY_SECTION_LABELS: comp_data.append([Paragraph("Host", cell_style), Paragraph(html.escape(str(h)), cell_bold), Paragraph("Observed in matching findings/events", cell_style)])
     for u in comp.get("users", []):
-        if u != "None identified": comp_data.append([Paragraph("User Account", cell_style), Paragraph(html.escape(str(u)), cell_bold), Paragraph("Observed in matching findings/events", cell_style)])
+        if u not in _EMPTY_SECTION_LABELS: comp_data.append([Paragraph("User Account", cell_style), Paragraph(html.escape(str(u)), cell_bold), Paragraph("Observed in matching findings/events", cell_style)])
     groups = report_data.get("entity_groups", {})
     for item in groups.get("adversary_infrastructure", []):
         comp_data.append([Paragraph("Adversary Infrastructure", cell_style), Paragraph(html.escape(str(item.get("address"))), cell_bold), Paragraph(html.escape(", ".join(item.get("roles") or ["Other Observed Addresses"])), cell_style)])
     for ip in groups.get("other_observed_addresses", []):
         comp_data.append([Paragraph("Other Observed Address", cell_style), Paragraph(html.escape(str(ip)), cell_bold), Paragraph("Observed in evidence; no adversary role assigned", cell_style)])
     if len(comp_data) == 1:
-        comp_data.append([Paragraph("None identified", cell_style), "", ""])
+        comp_data.append([Paragraph(empty_msg, cell_style), "", ""])
     t3 = Table(comp_data, colWidths=[130, 220, 190], repeatRows=1)
     t3.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
@@ -1040,7 +1105,7 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
          Paragraph(html.escape(str(d.get("description",""))), cell_style)]
         for d in report_data.get("mitre_coverage", [])
     ]
-    det_data = det_hdr + (det_rows if det_rows else [[Paragraph("None identified", cell_style)] + [""]*6])
+    det_data = det_hdr + (det_rows if det_rows else [[Paragraph(empty_msg, cell_style)] + [""]*6])
     t4 = Table(det_data, colWidths=[100, 55, 75, 45, 65, 75, 125], repeatRows=1)
     t4.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
@@ -1061,7 +1126,7 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
          Paragraph(html.escape("; ".join((ev.get("corroborated_by") or []) + [str(ev.get("source_file") or ev.get("source") or ""), ", ".join(ev.get("source_record_references") or [])]).strip("; ")), cell_style)]
         for ev in report_data.get("attack_timeline_summary", [])
     ]
-    tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph("None identified", cell_style)] + [""]*4])
+    tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph(empty_msg, cell_style)] + [""]*4])
     t5 = Table(tl_data, colWidths=[100, 80, 80, 165, 115], repeatRows=1)
     t5.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
@@ -1081,7 +1146,7 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
          Paragraph(html.escape(str(item.get("source_finding") or "Observed event")), cell_style)]
         for item in report_data.get("indicators", [])
     ]
-    ind_data = ind_hdr + (ind_rows if ind_rows else [[Paragraph("None identified", cell_style)] + [""] * 3])
+    ind_data = ind_hdr + (ind_rows if ind_rows else [[Paragraph(empty_msg, cell_style)] + [""] * 3])
     ind_table = Table(ind_data, colWidths=[65, 230, 90, 155], repeatRows=1)
     ind_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
@@ -1092,7 +1157,10 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     story.append(Spacer(1, 4))
 
     story.append(Paragraph("7. Remediation Directives (generated from findings)", h2_style))
-    for idx, r in enumerate(report_data.get("remediation", []), 1):
+    rem_items = report_data.get("remediation", [])
+    if not rem_items:
+        story.append(Paragraph(empty_msg, body_style))
+    for idx, r in enumerate(rem_items, 1):
         action = r.get("action", r) if isinstance(r, dict) else str(r)
         refs = r.get("finding_refs", "") if isinstance(r, dict) else ""
         txt = f"<b>{idx}.</b> {html.escape(str(action))}"

@@ -22,6 +22,9 @@ class ForensicReportResponse(BaseModel):
     attack_timeline_summary: List[Dict[str, Any]] = Field(default_factory=list)
     compromised_assets: Dict[str, Any] = Field(default_factory=dict)
     recommendations: List[str] = Field(default_factory=list)
+    stale: Optional[bool] = None
+    analysis_not_run: Optional[bool] = None
+    case_snapshot: Optional[Dict[str, Any]] = None
 
 
 class ReportSummaryItem(BaseModel):

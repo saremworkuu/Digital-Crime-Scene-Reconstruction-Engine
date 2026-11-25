@@ -2,6 +2,8 @@
 from collections import defaultdict, deque
 from datetime import timedelta
 from datetime import datetime
+import re
+from urllib.parse import unquote_plus
 
 from app.services.rule_loader import load_rule
 from app.services.entity_classification import is_internal_ip
@@ -695,9 +697,90 @@ def detect_lateral_movement(events) -> list[dict]:
 
 
 
+_SQLI_REGEX_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("quote_tampering", re.compile(r"(?:[?&]\w+=-?\d+|where\s+\w+\s*=\s*-?\d+)['\"](?:\s|$|--|#|;)", re.IGNORECASE)),
+    ("boolean_tautology", re.compile(r"(?:'\s*or\s*'1'\s*=\s*'1|(?:\bor\b|\band\b)\s+['\"]?1['\"]?\s*=\s*['\"]?[12]\b)", re.IGNORECASE)),
+    ("order_by_enum", re.compile(r"\border\s+by\s+\d+\s*(?:--|#|/\*)", re.IGNORECASE)),
+    ("union_select", re.compile(r"\bunion\s+(?:all\s+)?select\b", re.IGNORECASE)),
+    ("information_schema", re.compile(r"\binformation_schema\b", re.IGNORECASE)),
+    ("db_fingerprint_func", re.compile(r"\b(?:version|database|current_user)\s*\(\s*\)|\bgroup_concat\s*\(", re.IGNORECASE)),
+    ("time_or_oob_sqli", re.compile(r"\b(?:sleep|benchmark|extractvalue|updatexml|load_file)\s*\(|\b(?:waitfor\s+delay|xp_cmdshell|into\s+outfile)\b|;\s*drop\s+table\b", re.IGNORECASE)),
+    ("sqlmap_ua", re.compile(r"\bsqlmap(?:/|\b)", re.IGNORECASE)),
+]
+
+
+def _decode_web_text(value: str) -> str:
+    """URL-decode query strings (converting + and %20 to spaces) safely."""
+    text = str(value or "")
+    if not text:
+        return ""
+    decoded = unquote_plus(text)
+    if "%" in decoded:
+        decoded = unquote_plus(decoded)
+    return decoded
+
+
+def extract_sqli_indicators(event) -> list[str]:
+    """Return matched SQL injection indicator names for web, WAF, or DB query events."""
+    is_dict = isinstance(event, dict)
+    details = (event.get("details") if is_dict else getattr(event, "details", None)) or {}
+    if not isinstance(details, dict):
+        details = {}
+    extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
+
+    raw_event_type = event.get("event_type") if is_dict else getattr(event, "event_type", "")
+    ev_type = str(raw_event_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+    # Restrict matching to web, WAF, and database query events so non-SQL host logs do not trigger.
+    source_name = str((event.get("source") if is_dict else getattr(event, "source", "")) or extra.get("source") or "").strip().lower()
+    source_file = str(details.get("source_file") or "").strip().lower()
+    is_waf_alert = ev_type in {"waf_alert", "edr_alert", "json_event"} and (
+        "waf" in source_name or "waf" in source_file or bool(extra.get("uri")) or bool(details.get("uri"))
+    )
+    if ev_type not in {"http_request", "web_request", "web_access", "http", "db_query", "waf_alert"} and not is_waf_alert:
+        return []
+
+    raw_candidates = [
+        details.get("url", ""),
+        details.get("path", ""),
+        details.get("query_string", ""),
+        details.get("query", ""),
+        details.get("request_uri", ""),
+        details.get("request", ""),
+        details.get("uri", ""),
+        details.get("sql", ""),
+        details.get("command_line", ""),
+        details.get("user_agent", ""),
+        details.get("body", ""),
+        extra.get("uri", ""),
+    ]
+    if is_waf_alert or ev_type == "db_query":
+        raw_candidates.extend([
+            details.get("message", ""),
+            details.get("action", ""),
+            extra.get("message", ""),
+        ])
+    if ev_type in {"http_request", "web_request", "web_access", "http"}:
+        raw_candidates.extend([
+            details.get("raw", ""),
+            details.get("raw_message", ""),
+        ])
+
+    decoded_candidates = [
+        _decode_web_text(str(val))
+        for val in raw_candidates
+        if val
+    ]
+    if not decoded_candidates:
+        return []
+
+    searchable = "\n".join(decoded_candidates)
+    return [name for name, pattern in _SQLI_REGEX_PATTERNS if pattern.search(searchable)]
+
+
 def detect_web_sql_injection(events) -> list[dict]:
     """
-    Detect potential SQL injection indicators in web request events.
+    Detect potential SQL injection indicators in web, WAF, and DB query events.
     These indicators require investigation and do not prove exploitation.
     """
     rule = load_rule("web_sql_injection")
@@ -711,56 +794,18 @@ def detect_web_sql_injection(events) -> list[dict]:
         normalize(item) for item in config["event_types"]
     }
 
-    # High-signal SQL injection indicators. These are heuristics,
-    # not a complete SQL parser or proof of a successful attack.
-    sql_patterns = [
-        "' or '1'='1",
-        '" or "1"="1',
-        "' or 1=1",
-        "or 1=1",
-        "union select",
-        "information_schema",
-        "sleep(",
-        "benchmark(",
-        "waitfor delay",
-        "xp_cmdshell",
-        "'; drop table",
-        " extractvalue(",
-        "updatexml(",
-    ]
-
     events_by_source = defaultdict(list)
 
     for event in events:
-        details = event.details or {}
-        event_type = normalize(event.event_type)
+        details, ts, event_id = _event_fields(event)
+        if not event_id:
+            continue
+        event_type = normalize(event.get("event_type") if isinstance(event, dict) else getattr(event, "event_type", ""))
 
         if event_type not in configured_types:
             continue
 
-        # Inspect only fields likely to contain HTTP request data.
-        searchable_fields = [
-            details.get("url", ""),
-            details.get("path", ""),
-            details.get("query_string", ""),
-            details.get("query", ""),
-            details.get("request_uri", ""),
-            details.get("request", ""),
-            details.get("message", ""),
-            details.get("user_agent", ""),
-            details.get("body", ""),
-        ]
-
-        searchable_text = " ".join(
-            str(value) for value in searchable_fields if value
-        ).lower()
-
-        matched_patterns = [
-            pattern.strip()
-            for pattern in sql_patterns
-            if pattern in searchable_text
-        ]
-
+        matched_patterns = extract_sqli_indicators(event)
         if not matched_patterns:
             continue
 
@@ -771,11 +816,25 @@ def detect_web_sql_injection(events) -> list[dict]:
             or details.get("ip")
             or "unknown"
         )
-        source_ip = str(source_ip)
+        events_by_source[str(source_ip)].append((event, matched_patterns, ts))
 
-        events_by_source[source_ip].append(
-            (event, matched_patterns)
-        )
+    # Determine unambiguous non-IP server host in the event batch as fallback
+    non_ip_case_hosts = {
+        str(d.get("host")).strip()
+        for d in ((getattr(e, "details", None) or (e.get("details", {}) if isinstance(e, dict) else {}) or {}) for e in events)
+        if d.get("host")
+        and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
+        and not _is_ip_address(d.get("host"))
+        and not str(d.get("host")).strip().isdigit()
+    }
+    inferred_server_host = next(iter(non_ip_case_hosts)) if len(non_ip_case_hosts) == 1 else None
+
+    # Associate DB-level SQLi queries (which lack a client src_ip) with the web SQLi source
+    # when there is a single attributed source IP on the same case/host.
+    attributed_ips = [ip for ip in events_by_source if ip != "unknown"]
+    if "unknown" in events_by_source and len(attributed_ips) == 1:
+        unknown_matches = events_by_source.pop("unknown")
+        events_by_source[attributed_ips[0]].extend(unknown_matches)
 
     findings = []
 
@@ -783,28 +842,58 @@ def detect_web_sql_injection(events) -> list[dict]:
         matched_events = [item[0] for item in matches]
         patterns = sorted({
             pattern
-            for _, matched in matches
+            for _, matched, _ in matches
             for pattern in matched
         })
+        victim_hosts = sorted({
+            str(d.get("host")).strip()
+            for d in ((getattr(item, "details", None) or (item.get("details", {}) if isinstance(item, dict) else {}) or {}) for item in matched_events)
+            if d.get("host")
+            and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
+            and str(d.get("host")).strip() != source_ip
+            and not _is_ip_address(d.get("host"))
+        })
+        if not victim_hosts and inferred_server_host:
+            victim_hosts = [inferred_server_host]
+        source_ips = [source_ip] if source_ip and source_ip != "unknown" else []
+        target_host = victim_hosts[0] if victim_hosts else None
+        matched_timestamps = sorted(ts for _, _, ts in matches if ts is not None)
+        first_seen = matched_timestamps[0].isoformat() if matched_timestamps else None
+        last_seen = matched_timestamps[-1].isoformat() if matched_timestamps else None
 
         findings.append({
             "rule_id": rule["id"],
             "rule_name": rule["id"],
             "display_name": rule["name"],
             "severity": rule["severity"],
-            "mitre_technique": rule.get("mitre_technique"),
+            "mitre_technique": rule.get("mitre_technique") or "T1190",
+            "mitre_tactic": rule.get("mitre_tactic") or "Initial Access",
+            "actor": source_ips[0] if source_ips else None,
+            "target_host": target_host,
+            "host": target_host or "unknown",
+            "src_ip": source_ips[0] if source_ips else None,
+            "source_ips": source_ips,
+            "hosts": victim_hosts,
+            "first_seen": first_seen,
+            "last_seen": last_seen,
             "description": (
                 f"Potential SQL injection indicators detected in "
-                f"{len(matched_events)} web event(s) associated with "
+                f"{len(matched_events)} web/database event(s) associated with "
                 f"source IP '{source_ip}'."
             ),
             "rule_information": {
                 "event_types": sorted(configured_types),
                 "grouped_by": config.get("group_by", "source_ip"),
                 "matched_patterns": patterns,
+                "hosts": victim_hosts,
+                "target_host": target_host,
+                "source_ips": source_ips,
+                "src_ips": source_ips,
+                "tactic": rule.get("mitre_tactic") or "Initial Access",
             },
             "matching_event_ids": [
-                str(item.id) for item in matched_events
+                str(getattr(item, "id", None) or (item.get("id") if isinstance(item, dict) else ""))
+                for item in matched_events
             ],
         })
 
@@ -1213,6 +1302,140 @@ def detect_dns_tunneling(events) -> list[dict]:
             "matching_event_ids": [
                 str(item.id) for item in matched_events
             ],
+        })
+
+    return findings
+
+
+def detect_web_scanner_recon(events) -> list[dict]:
+    """
+    Detect web vulnerability scanner activity (T1595) via known scanner user
+    agents OR 10+ HTTP 404 responses from one IP within 60 seconds.
+    """
+    rule = load_rule("web_scanner_recon")
+    config = rule["detection"]
+
+    normalize = lambda value: (
+        str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    )
+    configured_types = {normalize(item) for item in config.get("event_types", [])}
+    scanner_agents = [str(ua).strip().lower() for ua in config.get("scanner_user_agents", []) if ua]
+    target_status = int(config.get("status_code", 404))
+    threshold = int(config.get("threshold", 10))
+    window = timedelta(seconds=int(config.get("window_seconds", 60)))
+
+    if threshold <= 0 or window.total_seconds() <= 0:
+        raise ValueError("Scanner detection threshold and window must be positive.")
+
+    events_by_ip = defaultdict(list)
+    for event in events:
+        details, ts, event_id = _event_fields(event)
+        if not event_id:
+            continue
+        raw_type = event.get("event_type") if isinstance(event, dict) else getattr(event, "event_type", "")
+        if normalize(raw_type) not in configured_types:
+            continue
+        source_ip = (
+            details.get("source_ip")
+            or details.get("src_ip")
+            or details.get("client_ip")
+            or details.get("ip")
+        )
+        if not source_ip:
+            continue
+        events_by_ip[str(source_ip)].append((event, details, ts, event_id))
+
+    non_ip_case_hosts = {
+        str(d.get("host")).strip()
+        for d in ((getattr(e, "details", None) or (e.get("details", {}) if isinstance(e, dict) else {}) or {}) for e in events)
+        if d.get("host")
+        and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
+        and not _is_ip_address(d.get("host"))
+        and not str(d.get("host")).strip().isdigit()
+    }
+    inferred_server_host = next(iter(non_ip_case_hosts)) if len(non_ip_case_hosts) == 1 else None
+
+    findings = []
+    for source_ip, ip_records in events_by_ip.items():
+        ip_records.sort(key=lambda item: item[2].timestamp() if item[2] else 0.0)
+
+        ua_matched_ids: set[str] = set()
+        not_found_window = deque()
+        burst_matched_ids: set[str] = set()
+
+        for _, details, ts, event_id in ip_records:
+            ua_text = " ".join(
+                str(details.get(k) or "")
+                for k in ("user_agent", "UserAgent")
+            ).lower()
+            if ua_text and any(agent in ua_text for agent in scanner_agents):
+                ua_matched_ids.add(event_id)
+
+            status_raw = details.get("status_code") or details.get("status")
+            try:
+                status_int = int(status_raw) if status_raw is not None else None
+            except (TypeError, ValueError):
+                status_int = None
+
+            if status_int == target_status and ts is not None:
+                while not_found_window and ts - not_found_window[0][0] > window:
+                    not_found_window.popleft()
+                not_found_window.append((ts, event_id))
+                if len(not_found_window) >= threshold:
+                    burst_matched_ids.update(eid for _, eid in not_found_window)
+
+        all_matched_ids = ua_matched_ids | burst_matched_ids
+        if not all_matched_ids:
+            continue
+
+        matched_records = [rec for rec in ip_records if rec[3] in all_matched_ids]
+        victim_hosts = sorted({
+            str(d.get("host")).strip()
+            for _, d, _, _ in matched_records
+            if d.get("host")
+            and str(d.get("host")).strip().casefold() not in {"unknown", "unknown_host", "-"}
+            and str(d.get("host")).strip() != source_ip
+            and not _is_ip_address(d.get("host"))
+        })
+        if not victim_hosts and inferred_server_host:
+            victim_hosts = [inferred_server_host]
+
+        matched_timestamps = sorted(ts for _, _, ts, _ in matched_records if ts is not None)
+        first_seen = matched_timestamps[0].isoformat() if matched_timestamps else None
+        last_seen = matched_timestamps[-1].isoformat() if matched_timestamps else None
+        target_host = victim_hosts[0] if victim_hosts else None
+
+        findings.append({
+            "rule_id": rule["id"],
+            "rule_name": rule["name"],
+            "display_name": rule["name"],
+            "severity": rule["severity"],
+            "mitre_technique": rule.get("mitre_technique") or "T1595",
+            "mitre_tactic": rule.get("mitre_tactic") or "Reconnaissance",
+            "actor": source_ip,
+            "target_host": target_host,
+            "host": target_host or "unknown",
+            "hosts": victim_hosts,
+            "src_ip": source_ip,
+            "source_ips": [source_ip],
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "description": (
+                f"Automated web scanner reconnaissance detected from source IP "
+                f"'{source_ip}' across {len(matched_records)} HTTP request(s)."
+            ),
+            "rule_information": {
+                "event_types": sorted(configured_types),
+                "grouped_by": config.get("group_by", "source_ip"),
+                "hosts": victim_hosts,
+                "target_host": target_host,
+                "source_ips": [source_ip],
+                "src_ips": [source_ip],
+                "tactic": rule.get("mitre_tactic") or "Reconnaissance",
+                "scanner_ua_matches": len(ua_matched_ids),
+                "not_found_burst_matches": len(burst_matched_ids),
+            },
+            "matching_event_ids": [rec[3] for rec in matched_records],
         })
 
     return findings

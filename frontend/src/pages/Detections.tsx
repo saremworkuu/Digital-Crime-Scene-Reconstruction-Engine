@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
 import { DetectionResult, DetectionRule, EventSeverity } from '../types';
 import { SeverityTag } from '../components/SeverityTag';
 import { MitreBadge } from '../components/MitreBadge';
@@ -103,7 +104,7 @@ export const Detections: React.FC = () => {
             <span>Findings & Threat Detections</span>
           </h1>
           <p className="text-xs text-[#a8a29e] mt-0.5">
-            Case: <strong className="text-[#fafaf9]">{activeCase?.name}</strong> · Continuous rule evaluation with Sigma syntax matching and MITRE taxonomy tagging
+            Case: <strong className="text-[#fafaf9]">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : ''}</strong> · Continuous rule evaluation with Sigma syntax matching and MITRE taxonomy tagging
           </p>
         </div>
 
@@ -320,10 +321,25 @@ export const Detections: React.FC = () => {
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-[#26211f] text-xs">
                     <div className="flex flex-wrap items-center gap-4 text-[11px] font-mono text-[#a8a29e]">
                       <span>Detected: {det.timestamp.replace('T', ' ').slice(0, 19)} UTC</span>
-                      {det.entities_involved.hosts && (
-                        <span>Hosts: <strong className="text-[#fafaf9]">{det.entities_involved.hosts.join(', ')}</strong></span>
-                      )}
-                      {det.entities_involved.users && (
+                      {(() => {
+                        const sourceIps = det.source_ips?.length
+                          ? det.source_ips
+                          : (det.rule_information?.source_ips || det.rule_information?.src_ips || (det.src_ip ? [det.src_ip] : []));
+                        const targetHosts = det.hosts?.length
+                          ? det.hosts
+                          : (det.entities_involved?.hosts || (det.target_host ? [det.target_host] : []));
+                        return (
+                          <>
+                            {sourceIps.length > 0 && (
+                              <span>Source: <strong className="text-[#ff8d60]">{sourceIps.join(', ')}</strong></span>
+                            )}
+                            {targetHosts.length > 0 && (
+                              <span>Target host: <strong className="text-[#fafaf9]">{targetHosts.join(', ')}</strong></span>
+                            )}
+                          </>
+                        );
+                      })()}
+                      {det.entities_involved.users && det.entities_involved.users.length > 0 && (
                         <span>Users: <strong className="text-[#fafaf9]">{det.entities_involved.users.join(', ')}</strong></span>
                       )}
                       <span>Matched Events: <strong className="text-[#f95721]">{det.matched_event_ids.length}</strong></span>

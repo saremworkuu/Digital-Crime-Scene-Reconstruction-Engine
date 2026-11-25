@@ -1,5 +1,7 @@
 import { NormalizedEvent } from '../types';
 
+export const MIN_CHAIN_CONFIDENCE = 0.70;
+
 export interface AttackChain {
   id: string;
   name: string;
@@ -14,10 +16,17 @@ export interface AttackChain {
 /**
  * Correlates events sharing common entities within time windows (FR-CORR-1, FR-CORR-2, FR-CORR-3)
  */
-export function correlateAttackChains(events: NormalizedEvent[], windowMinutes = 30): AttackChain[] {
-  if (events.length === 0) return [];
+export function correlateAttackChains(
+  events: NormalizedEvent[],
+  windowMinutes = 30,
+  minConfidence = MIN_CHAIN_CONFIDENCE
+): AttackChain[] {
+  const incidentEvents = events.filter(
+    e => e.category !== 'context' && e.source_type !== 'vuln_scan' && e.metadata?.category !== 'context'
+  );
+  if (incidentEvents.length === 0) return [];
 
-  const sorted = [...events].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const sorted = [...incidentEvents].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   const chains: AttackChain[] = [];
   const visited = new Set<string>();
 
@@ -88,16 +97,19 @@ export function correlateAttackChains(events: NormalizedEvent[], windowMinutes =
         }
       }
 
-      chains.push({
-        id: `chain-${root.id}`,
-        name: `${chainEvents[0].action} -> ${chainEvents[chainEvents.length - 1].action}`,
-        events: chainEvents,
-        entities: Array.from(chainEntities),
-        startTime: chainEvents[0].timestamp,
-        endTime: chainEvents[chainEvents.length - 1].timestamp,
-        confidenceScore: Number(score.toFixed(2)),
-        highestSeverity
-      });
+      const confidenceScore = Number(score.toFixed(2));
+      if (confidenceScore >= minConfidence) {
+        chains.push({
+          id: `chain-${root.id}`,
+          name: `${chainEvents[0].action} -> ${chainEvents[chainEvents.length - 1].action}`,
+          events: chainEvents,
+          entities: Array.from(chainEntities),
+          startTime: chainEvents[0].timestamp,
+          endTime: chainEvents[chainEvents.length - 1].timestamp,
+          confidenceScore,
+          highestSeverity
+        });
+      }
     }
   }
 

@@ -1,10 +1,21 @@
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from app.parsers.auth_log import AuthLogParser
 from app.parsers.generic_csv_json import GenericCSVJSONParser
 from app.parsers.log_parser import LogFileParser
 from app.parsers.txt_parser import TextFileParser
 from app.parsers.web_access import WebAccessParser
+
+
+def _is_vuln_scan_xml(file_path: Path) -> bool:
+    """Return True only when the XML file root tag is VulnScan."""
+    try:
+        for _, elem in ET.iterparse(file_path, events=("start",)):
+            return elem.tag.split("}")[-1] == "VulnScan"
+    except Exception:
+        return False
+    return False
 
 
 def _is_auditd_file(filename: str) -> bool:
@@ -40,6 +51,13 @@ def get_parser(
     if extension in (".csv", ".json"):
         return GenericCSVJSONParser()
 
+    if "mysql" in lower_name:
+        try:
+            from app.parsers.mysql_general import MySQLGeneralLogParser
+            return MySQLGeneralLogParser()
+        except Exception:
+            pass
+
     if extension == ".log":
         # Check if it looks like an auth log or access log by filename
         if "auth" in lower_name or "secure" in lower_name:
@@ -58,6 +76,12 @@ def get_parser(
         return WebAccessParser()
 
     if extension == ".xml":
+        if file_path and file_path.is_file() and _is_vuln_scan_xml(file_path):
+            try:
+                from app.parsers.vuln_scan import VulnScanParser
+                return VulnScanParser()
+            except Exception:
+                pass
         try:
             from app.parsers.windows_evtx import WindowsEVTXParser
             return WindowsEVTXParser()

@@ -14,6 +14,10 @@ export interface DetectionAlert {
   falsePositive: boolean;
   falsePositiveReason?: string;
   falsePositiveMarkedBy?: string;
+  targetHost?: string;
+  hosts?: string[];
+  sourceIps?: string[];
+  source_ips?: string[];
   entitiesInvolved: {
     hosts?: string[];
     users?: string[];

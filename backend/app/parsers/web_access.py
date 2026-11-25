@@ -15,6 +15,7 @@ class WebAccessParser(BaseParser):
         r'\[(?P<timestamp>[^\]]+)\]\s+'
         r'"(?P<method>\S+)\s+(?P<path>\S+)\s+(?P<protocol>[^"]+)"\s+'
         r'(?P<status_code>\d{3})\s+(?P<response_size>\d+|-)'
+        r'(?:\s+"(?P<referer>[^"]*)"\s+"(?P<user_agent>[^"]*)")?'
     )
 
     WEB_IP_FIELDS = {"source_ip", "src_ip", "client_ip"}
@@ -63,6 +64,24 @@ class WebAccessParser(BaseParser):
 
         return self._parse_key_value_line(line) is not None
 
+    @staticmethod
+    def _format_action(
+        method: str,
+        path: str,
+        status_code: Any = None,
+        user_agent: str | None = None,
+    ) -> str:
+        """Build a concise HTTP request title under 160 characters."""
+        ua_short = ""
+        if user_agent and user_agent != "-":
+            ua_token = re.split(r"[#\s(]", user_agent.strip(), maxsplit=1)[0]
+            ua_short = ua_token[:40]
+        status_part = f" -> {status_code}" if status_code not in (None, "") else ""
+        ua_part = f" ({ua_short})" if ua_short else ""
+        budget = 159 - len(method) - 1 - len(status_part) - len(ua_part)
+        display_path = path if len(path) <= budget else (path[: max(0, budget - 3)] + "..." if budget > 3 else path[:budget])
+        return f"{method} {display_path}{status_part}{ua_part}"[:159]
+
     def parse(
         self,
         file_path: Path,
@@ -97,6 +116,13 @@ class WebAccessParser(BaseParser):
                             record["response_size"]
                         )
 
+                    record["action"] = self._format_action(
+                        record.get("method", "GET"),
+                        record.get("path", "/"),
+                        record.get("status_code"),
+                        record.get("user_agent"),
+                    )
+
                     records.append(record)
                     continue
 
@@ -117,6 +143,13 @@ class WebAccessParser(BaseParser):
                             )
                         except ValueError:
                             pass
+
+                    record["action"] = self._format_action(
+                        record.get("method", "GET"),
+                        record.get("path", "/"),
+                        record.get("status_code"),
+                        record.get("user_agent"),
+                    )
 
                     records.append(record)
                     continue

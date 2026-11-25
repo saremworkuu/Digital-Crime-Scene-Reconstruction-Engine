@@ -13,6 +13,7 @@ from app.db.models.user import User
 from app.db.models.evidence import Evidence
 from app.db.models.login_attempt import LoginAttempt
 from app.db.models.audit_log import AuditLog
+from app.services.audit import log_audit_event, utc_now
 from app.db.seed_admin_data import seed_admin_data
 from app.schemas.admin import (
     AdminSystemHealthResponse,
@@ -87,12 +88,13 @@ def retry_queue_job(
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="INGESTION_JOB_RETRY",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="ingestion.retried",
         resource=f"queue_job:{job_id}",
-        details={"job_id": job_id}
-    ))
+        details={"job_id": job_id},
+    )
     db.commit()
 
     return {
@@ -100,7 +102,7 @@ def retry_queue_job(
         "file_name": "retried_evidence_stream.pcap",
         "parser_type": "PCAP",
         "status": "processing",
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": utc_now().isoformat(),
     }
 
 
@@ -155,12 +157,13 @@ def update_admin_settings(
         s.failed_login_lockout_limit = patch.failed_login_lockout_limit
         details["failed_login_lockout_limit"] = patch.failed_login_lockout_limit
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="SYSTEM_SETTINGS_UPDATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="system.settings_updated",
         resource="settings:global-settings",
-        details=details
-    ))
+        details=details,
+    )
 
     db.commit()
     db.refresh(s)
@@ -182,12 +185,13 @@ def reset_demo_data(
 ):
     seed_admin_data(db)
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="DEMO_DATA_RESET",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="system.demo_data_reset",
         resource="system:admin-seed-reset",
-        details={"reset_initiated": True}
-    ))
+        details={"reset_initiated": True},
+    )
     db.commit()
 
     return {"message": "Demo data refreshed and synchronized successfully."}

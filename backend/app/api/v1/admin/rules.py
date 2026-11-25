@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.db.models.sigma_rule import SigmaRule
 from app.db.models.user import User
 from app.db.models.audit_log import AuditLog
+from app.services.audit import log_audit_event
 from app.schemas.admin import (
     AdminSigmaRuleResponse,
     AdminSigmaRuleCreateRequest,
@@ -86,12 +87,13 @@ def create_admin_rule(
     )
     db.add(new_rule)
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="SIGMA_RULE_CREATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="sigma_rule.created",
         resource=f"rule:{rule_id}",
-        details={"name": data.name, "mitre_id": data.mitre_id, "severity": data.severity}
-    ))
+        details={"name": data.name, "mitre_id": data.mitre_id, "severity": data.severity},
+    )
 
     db.commit()
     db.refresh(new_rule)
@@ -129,12 +131,13 @@ def update_admin_rule(
         r.enabled = patch.enabled
         details["enabled"] = patch.enabled
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="SIGMA_RULE_UPDATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="sigma_rule.updated",
         resource=f"rule:{rule_id}",
-        details=details
-    ))
+        details=details,
+    )
 
     db.commit()
     db.refresh(r)
@@ -154,13 +157,14 @@ def toggle_admin_rule(
 
     r.enabled = body.enabled
 
-    action_name = "SIGMA_RULE_ENABLE" if body.enabled else "SIGMA_RULE_DISABLE"
-    db.add(AuditLog(
-        user_id=current_admin.id,
+    action_name = "sigma_rule.enabled" if body.enabled else "sigma_rule.disabled"
+    log_audit_event(
+        db=db,
+        user=current_admin,
         action=action_name,
         resource=f"rule:{rule_id}",
-        details={"name": r.name, "mitre_id": r.mitre_id, "enabled": body.enabled}
-    ))
+        details={"name": r.name, "mitre_id": r.mitre_id, "enabled": body.enabled},
+    )
 
     db.commit()
     db.refresh(r)
@@ -180,12 +184,13 @@ def delete_admin_rule(
     rule_info = {"name": r.name, "mitre_id": r.mitre_id}
     db.delete(r)
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="SIGMA_RULE_DELETE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="sigma_rule.deleted",
         resource=f"rule:{rule_id}",
-        details=rule_info
-    ))
+        details=rule_info,
+    )
 
     db.commit()
     return {"message": "Rule deleted successfully", "id": rule_id}
@@ -250,12 +255,13 @@ def import_admin_rules(
             db.add(new_r)
             imported_count += 1
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="SIGMA_RULES_IMPORTED",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="sigma_rule.imported",
         resource="rules:bulk-import",
-        details={"imported_count": imported_count}
-    ))
+        details={"imported_count": imported_count},
+    )
 
     db.commit()
     return {"importedCount": imported_count}

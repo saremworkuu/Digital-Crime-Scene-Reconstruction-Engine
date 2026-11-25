@@ -1,12 +1,13 @@
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID ,JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.services.audit import utc_now
 
 
 class AuditLog(Base):
@@ -57,6 +58,6 @@ class AuditLog(Base):
 
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=utc_now,
         nullable=False,
     )

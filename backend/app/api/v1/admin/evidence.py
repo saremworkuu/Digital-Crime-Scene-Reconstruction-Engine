@@ -14,6 +14,7 @@ from app.db.models.user import User
 from app.db.models.event_evidence import EventEvidence
 from app.db.models.events import Event
 from app.db.models.audit_log import AuditLog
+from app.services.audit import build_evidence_audit_details, log_audit_event
 from app.schemas.admin import (
     AdminEvidenceResponse,
     AdminEvidenceVerifyResponse,
@@ -140,18 +141,25 @@ def verify_evidence_integrity(
     ev.verified = match
     ev.sha256_hash = computed_hash
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        case_id=ev.case_id,
-        action="EVIDENCE_VERIFY",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="evidence.verified",
         resource=f"evidence:{ev.id}",
+        case_id=ev.case_id,
         details={
-            "file_name": ev.filename,
+            **build_evidence_audit_details(
+                filename=ev.filename,
+                file_size=ev.file_size,
+                file_type=ev.file_type,
+                sha256_hash=computed_hash,
+                parser=ev.parser_used,
+                events_extracted=None,
+            ),
             "match": match,
-            "sha256": computed_hash,
             "expected_sha256": expected_hash,
-        }
-    ))
+        },
+    )
 
     db.commit()
     db.refresh(ev)
@@ -193,17 +201,25 @@ def delete_admin_evidence(
     except Exception:
         pass
 
-    ev_info = {"file_name": ev.filename, "sha256": ev.sha256_hash}
+    ev_info = build_evidence_audit_details(
+        filename=ev.filename,
+        file_size=ev.file_size,
+        file_type=ev.file_type,
+        sha256_hash=ev.sha256_hash,
+        parser=ev.parser_used,
+        events_extracted=0,
+    )
     case_id_ref = ev.case_id
 
     db.delete(ev)
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        case_id=case_id_ref,
-        action="EVIDENCE_DELETE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="evidence.deleted",
         resource=f"evidence:{evidence_id}",
-        details=ev_info
-    ))
+        case_id=case_id_ref,
+        details=ev_info,
+    )
 
     db.commit()
     return {"message": "Evidence deleted successfully", "id": evidence_id}

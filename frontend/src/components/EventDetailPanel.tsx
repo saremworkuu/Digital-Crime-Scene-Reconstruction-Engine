@@ -3,6 +3,7 @@ import { ForensicEvent } from '../types';
 import { X, Copy, Terminal } from 'lucide-react';
 import { SeverityTag } from './SeverityTag';
 import { MitreBadge } from './MitreBadge';
+import { formatSafePayloadText } from '../utils/payloadText';
 
 interface EventDetailPanelProps {
   event: ForensicEvent | null;
@@ -76,9 +77,25 @@ export const EventDetailPanel: React.FC<EventDetailPanelProps> = ({ event, onClo
             </button>
           </div>
           <pre className="font-mono text-[11px] text-[#d6d3d1] p-3.5 bg-[#0d0c0c] rounded-xl border border-[#2b2523] overflow-x-auto whitespace-pre-wrap select-all selection:bg-[#f95721]/30">
-            {event.raw}
+            {formatSafePayloadText(event.raw)}
           </pre>
         </div>
+
+        {(event.payload_preview || event.metadata?.payload_preview) && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-medium text-[#fbbf24]">
+                Untrusted Payload Preview (Escaped Text)
+              </label>
+              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-[#451a03] text-[#fde68a] border border-[#b45309]">
+                Untrusted
+              </span>
+            </div>
+            <pre className="font-mono text-[11px] text-[#fde68a] p-3.5 bg-[#0d0c0c] rounded-xl border border-[#b45309]/50 overflow-x-auto whitespace-pre-wrap break-all">
+              {formatSafePayloadText(event.payload_preview || event.metadata?.payload_preview)}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from sqlalchemy import or_, func, select
+from sqlalchemy import or_, func, select, case as sql_case
 
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
@@ -76,6 +76,79 @@ def enrich_case_response(case: Case, db: Session) -> CaseResponse:
         owner_id=str(case.created_by),
         owner_name=owner_name,
     )
+
+
+def enrich_cases_batch(cases: List[Case], db: Session) -> List[CaseResponse]:
+    """Batch-computes telemetry for multiple cases using grouped queries instead of N+1 queries."""
+    if not cases:
+        return []
+
+    case_ids = [c.id for c in cases]
+    owner_ids = {c.created_by for c in cases if c.created_by}
+
+    ev_counts = dict(
+        db.execute(
+            select(Evidence.case_id, func.count(Evidence.id))
+            .where(Evidence.case_id.in_(case_ids))
+            .group_by(Evidence.case_id)
+        ).all()
+    )
+
+    evt_counts = dict(
+        db.execute(
+            select(Event.case_id, func.count(Event.id))
+            .where(Event.case_id.in_(case_ids))
+            .group_by(Event.case_id)
+        ).all()
+    )
+
+    det_rows = db.execute(
+        select(
+            Detection.case_id,
+            func.count(Detection.id),
+            func.sum(sql_case((Detection.severity == DetectionSeverity.CRITICAL, 1), else_=0)),
+        )
+        .where(Detection.case_id.in_(case_ids))
+        .group_by(Detection.case_id)
+    ).all()
+    det_counts = {cid: int(total or 0) for cid, total, _ in det_rows}
+    crit_det_counts = {cid: int(crit or 0) for cid, _, crit in det_rows}
+
+    assign_rows = db.execute(
+        select(CaseAssignment.case_id, User.username)
+        .join(User, CaseAssignment.user_id == User.id)
+        .where(CaseAssignment.case_id.in_(case_ids))
+    ).all()
+    assigned_map: dict[UUID, list[str]] = {}
+    for cid, uname in assign_rows:
+        assigned_map.setdefault(cid, []).append(uname)
+
+    owner_map = dict(
+        db.execute(
+            select(User.id, User.username).where(User.id.in_(owner_ids))
+        ).all()
+    ) if owner_ids else {}
+
+    return [
+        CaseResponse(
+            id=c.id,
+            name=c.name,
+            description=c.description,
+            status=c.status,
+            created_by=c.created_by,
+            created_at=c.created_at,
+            updated_at=c.updated_at,
+            tags=["Incident", "DFIR", "Forensics"],
+            evidence_count=int(ev_counts.get(c.id, 0) or 0),
+            event_count=int(evt_counts.get(c.id, 0) or 0),
+            detection_count=det_counts.get(c.id, 0),
+            critical_detection_count=crit_det_counts.get(c.id, 0),
+            assigned_users=assigned_map.get(c.id, []),
+            owner_id=str(c.created_by),
+            owner_name=owner_map.get(c.created_by, "Lead Investigator"),
+        )
+        for c in cases
+    ]
 
 
 @router.post(
@@ -169,7 +242,7 @@ def list_cases(
             pass
 
     cases = query.order_by(Case.created_at.desc()).all()
-    return [enrich_case_response(c, db) for c in cases]
+    return enrich_cases_batch(cases, db)
 
 
 @router.post(
@@ -394,6 +467,19 @@ def delete_case(
         allow_viewer=False,
     )
 
+    if getattr(case, "legal_hold", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Deletion Blocked: Case "{case.name}" is currently locked under Legal Hold.',
+        )
+
+    evidence_count = db.execute(
+        select(func.count(Evidence.id)).where(Evidence.case_id == case.id)
+    ).scalar() or 0
+    event_count = db.execute(
+        select(func.count(Event.id)).where(Event.case_id == case.id)
+    ).scalar() or 0
+
     try:
         case.is_deleted = True
         case.deleted_at = datetime.now(timezone.utc)
@@ -405,7 +491,11 @@ def delete_case(
             resource=f"case:{case.id}",
             request=request,
             case_id=case.id,
-            details={"case_name": case.name},
+            details={
+                "case_name": case.name,
+                "evidence_count": evidence_count,
+                "event_count": event_count,
+            },
         )
         db.commit()
 

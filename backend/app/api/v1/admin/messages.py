@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.db.models.contact_message import ContactMessage
 from app.db.models.user import User
 from app.db.models.audit_log import AuditLog
+from app.services.audit import log_audit_event, utc_now
 from app.schemas.admin import (
     AdminContactMessageResponse,
     AdminReplyMessage,
@@ -145,12 +146,13 @@ def update_message_status(
     old_status = m.status
     m.status = body.status
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="MESSAGE_STATUS_UPDATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="message.status_updated",
         resource=f"message:{message_id}",
-        details={"reference": m.reference, "from": old_status, "to": body.status}
-    ))
+        details={"reference": m.reference, "from": old_status, "to": body.status},
+    )
 
     db.commit()
     db.refresh(m)
@@ -170,12 +172,13 @@ def update_message_priority(
 
     m.priority = body.priority
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="MESSAGE_PRIORITY_UPDATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="message.priority_updated",
         resource=f"message:{message_id}",
-        details={"reference": m.reference, "priority": body.priority}
-    ))
+        details={"reference": m.reference, "priority": body.priority},
+    )
 
     db.commit()
     db.refresh(m)
@@ -195,12 +198,13 @@ def assign_message(
 
     m.assignee = body.assignee
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="MESSAGE_ASSIGNED",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="message.assigned",
         resource=f"message:{message_id}",
-        details={"reference": m.reference, "assignee": body.assignee or "Unassigned"}
-    ))
+        details={"reference": m.reference, "assignee": body.assignee or "Unassigned"},
+    )
 
     db.commit()
     db.refresh(m)
@@ -224,19 +228,20 @@ def add_message_reply(
         "author": body.author or current_admin.username,
         "role": "Administrator",
         "message": body.message,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": utc_now().isoformat(),
     })
 
     m.reply_thread = current_replies
     m.status = "replied"
     m.is_read = True
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="MESSAGE_REPLY_SENT",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="message.reply_sent",
         resource=f"message:{message_id}",
-        details={"reference": m.reference, "author": body.author or current_admin.username}
-    ))
+        details={"reference": m.reference, "author": body.author or current_admin.username},
+    )
 
     db.commit()
     db.refresh(m)
@@ -254,12 +259,13 @@ def mark_message_as_spam(
         m.status = "spam"
         m.is_read = True
 
-        db.add(AuditLog(
-            user_id=current_admin.id,
-            action="MESSAGE_MARK_SPAM",
+        log_audit_event(
+            db=db,
+            user=current_admin,
+            action="message.marked_spam",
             resource=f"message:{message_id}",
-            details={"reference": m.reference, "sender": m.sender_email}
-        ))
+            details={"reference": m.reference, "sender": m.sender_email},
+        )
         db.commit()
 
     return {"message": "Message marked as spam"}
@@ -275,12 +281,13 @@ def soft_delete_message(
     if m:
         m.status = "archived"
 
-        db.add(AuditLog(
-            user_id=current_admin.id,
-            action="MESSAGE_SOFT_DELETE",
+        log_audit_event(
+            db=db,
+            user=current_admin,
+            action="message.deleted",
             resource=f"message:{message_id}",
-            details={"reference": m.reference}
-        ))
+            details={"reference": m.reference},
+        )
         db.commit()
 
     return {"message": "Message archived"}

@@ -13,6 +13,11 @@ export interface ForensicEvent {
   srcPort?: number;
   dstPort?: number;
   protocol?: string;
+  packets?: number;
+  bytes?: number;
+  flags?: string;
+  payload_preview?: string;
+  payload_untrusted?: boolean;
   process?: string;
   action: string;
   outcome: 'success' | 'failure';

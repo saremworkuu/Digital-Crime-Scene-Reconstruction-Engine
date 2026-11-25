@@ -17,6 +17,8 @@ def normalize_timestamp(record: dict[str, Any]) -> str | None:
             timestamp = datetime.fromtimestamp(
                 float(value), tz=timezone.utc
             )
+            if timestamp.microsecond:
+                return timestamp.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             return timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
         except (TypeError, ValueError, OverflowError, OSError):
             pass
@@ -44,6 +46,18 @@ def normalize_timestamp(record: dict[str, Any]) -> str | None:
                     f"{current_year} {text}",
                     "%Y %b %d %H:%M:%S",
                 ).replace(tzinfo=timezone.utc)
+            elif re.fullmatch(
+                r"\d{1,2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2}(?:\s+[+-]\d{4})?",
+                text,
+            ):
+                # Apache/Nginx CLF timestamps: "22/Jul/2026:00:57:48 +0000"
+                normalized_text = " ".join(text.split())
+                fmt = "%d/%b/%Y:%H:%M:%S %z" if " " in normalized_text else "%d/%b/%Y:%H:%M:%S"
+                timestamp = datetime.strptime(normalized_text, fmt)
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                else:
+                    timestamp = timestamp.astimezone(timezone.utc)
             else:
                 timestamp = datetime.fromisoformat(
                     text.replace("Z", "+00:00")
@@ -54,6 +68,8 @@ def normalize_timestamp(record: dict[str, Any]) -> str | None:
 
                 timestamp = timestamp.astimezone(timezone.utc)
 
+        if timestamp.microsecond:
+            return timestamp.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         return timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     except (TypeError, ValueError, OverflowError, OSError):
@@ -76,10 +92,16 @@ def normalize_record(record: dict[str, Any], default_filename: str = "") -> dict
     )
     host_inferred = record.get("host_inferred")
 
+    event_type = str(record.get("event_type") or "event")
+    source_name = str(record.get("source") or "").strip().lower()
+    is_web_event = event_type.strip().lower() in {"web_access", "web_log", "http"} or source_name in {
+        "web_server", "apache", "nginx", "iis",
+    }
+
     if not host:
-        # Check src_ip for flow/network records
+        # Check src_ip for flow/network records — never treat web client src_ip as server host.
         src_ip = record.get("src_ip") or record.get("source_ip") or record.get("SourceIp")
-        if src_ip:
+        if src_ip and not is_web_event:
             host = src_ip
             host_inferred = True
         else:
@@ -97,7 +119,6 @@ def normalize_record(record: dict[str, Any], default_filename: str = "") -> dict
         or record.get("line_number")
         or record.get("packet_number")
     )
-    event_type = record.get("event_type", "event")
     event_id = record.get("event_id")
     user = (
         record.get("user")
@@ -187,9 +208,12 @@ def normalize_record(record: dict[str, Any], default_filename: str = "") -> dict
         # Preserve original fields for backward compatibility
         **{k: v for k, v in record.items() if k not in {"timestamp", "details"}},
     }
+    if details.get("cpu_percent") is None and record.get("cpu_pct") is not None:
+        details["cpu_percent"] = record.get("cpu_pct")
 
     return {
         "timestamp": timestamp,
+        "timestamp_inferred": bool(record.get("timestamp_inferred", False)),
         "event_type": event_type,
         "source": record.get("source") or Path(source_file or "").suffix.lstrip(".").lower() or "log",
         "details": details,
@@ -200,13 +224,13 @@ def normalize_records(
     records: list[dict[str, Any]],
     default_filename: str = "",
 ) -> list[dict[str, Any]]:
-    """Normalize multiple records, skipping invalid timestamps."""
+    """Normalize multiple records, skipping invalid timestamps unless explicitly inferred."""
     normalized = []
 
     for record in records:
         event = normalize_record(record, default_filename=default_filename)
 
-        if event["timestamp"] is None:
+        if event["timestamp"] is None and not event.get("timestamp_inferred"):
             continue
 
         normalized.append(event)

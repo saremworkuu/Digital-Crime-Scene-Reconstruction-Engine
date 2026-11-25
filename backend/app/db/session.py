@@ -33,7 +33,7 @@ else:
         parsed = urlparse(db_url)
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 5432
-        with socket.create_connection((host, port), timeout=0.3):
+        with socket.create_connection((host, port), timeout=2.0):
             postgres_available = True
     except Exception:
         postgres_available = False
@@ -59,7 +59,9 @@ else:
 
 engine = create_engine(
     db_url,
-    connect_args=connect_args
+    connect_args=connect_args,
+    pool_pre_ping=True,
+    pool_recycle=300,
 )
 
 SessionLocal = sessionmaker(

@@ -101,25 +101,44 @@ class GenericCSVJSONParser(BaseParser):
                 host = d.get("host") or d.get("computer") or src_ip or "unknown_host"
                 host_inferred = False if d.get("host") or d.get("computer") else True
 
-                # Build action based on CSV type
+                # Build action based on CSV type (kept under 160 characters)
                 if csv_type == "metric":
-                    cpu_val = d.get("cpu") or d.get("cpu_percent") or d.get("cpu_usage")
-                    mem_val = d.get("memory") or d.get("mem") or d.get("memory_percent") or d.get("mem_usage")
+                    cpu_val = d.get("cpu") or d.get("cpu_percent") or d.get("cpu_pct") or d.get("cpu_usage")
+                    if cpu_val is not None and "cpu_percent" not in d:
+                        d["cpu_percent"] = cpu_val
+                    mem_val = d.get("memory") or d.get("mem") or d.get("memory_percent") or d.get("mem_pct") or d.get("mem_usage")
                     summary_parts = []
-                    if cpu_val:
+                    if cpu_val not in (None, ""):
                         summary_parts.append(f"CPU {cpu_val}%")
-                    if mem_val:
+                    if mem_val not in (None, ""):
                         summary_parts.append(f"MEM {mem_val}%")
-                    action_val = ", ".join(summary_parts) if summary_parts else f"Metrics for {host}"
+                    action_val = f"{host} {' '.join(summary_parts)}"[:159] if summary_parts else f"Metrics for {host}"[:159]
                 elif csv_type == "network_connection":
-                    action_val = d.get("action") or f"{proto or 'IP'} {src_ip or ''}:{src_port or ''} -> {dst_ip or ''}:{dst_port or ''}"
+                    if d.get("action"):
+                        action_val = str(d["action"])[:159]
+                    else:
+                        src_ep = f"{src_ip}:{src_port}" if src_ip and src_port else (src_ip or "")
+                        dst_ep = f"{dst_ip}:{dst_port}" if dst_ip and dst_port else (dst_ip or "")
+                        base_flow = f"{proto or 'IP'} {src_ep} -> {dst_ep}".strip()
+                        raw_out = d.get("bytes_out")
+                        if raw_out is not None and str(raw_out).strip().isdigit():
+                            b_out = int(str(raw_out).strip())
+                            if b_out >= 1_000_000:
+                                size_lbl = f"{b_out / 1_000_000:.1f} MB out"
+                            elif b_out >= 1_000:
+                                size_lbl = f"{b_out / 1_000:.1f} KB out"
+                            else:
+                                size_lbl = f"{b_out} B out"
+                            action_val = f"{base_flow}, {size_lbl}"[:159]
+                        else:
+                            action_val = base_flow[:159]
                 else:
                     # Generic: show key columns
                     key_vals = []
                     for key in ["host", "user", "action", "status", "event_type"]:
                         if d.get(key):
                             key_vals.append(f"{key}={d[key]}")
-                    action_val = ", ".join(key_vals) if key_vals else "CSV record"
+                    action_val = (", ".join(key_vals) if key_vals else "CSV record")[:159]
 
                 events.append({
                     **d,
@@ -196,7 +215,17 @@ class GenericCSVJSONParser(BaseParser):
             rule_name = d.get("rule") or d.get("rule_name") or d.get("alert_name") or d.get("title")
             alert_id = d.get("id") or d.get("alert_id") or str(idx)
 
-            action = f"EDR Alert: {rule_name} ({alert_id})" if rule_name else (d.get("action") or d.get("message") or "JSON Event")
+            if rule_name:
+                action = f"EDR Alert: {rule_name} ({alert_id})"[:159]
+            elif d.get("message"):
+                parts = [str(d["message"]).strip()]
+                if d.get("rule_id"):
+                    parts.append(f"[rule {d['rule_id']}]")
+                if d.get("action"):
+                    parts.append(str(d["action"]).strip())
+                action = " ".join(parts)[:159]
+            else:
+                action = str(d.get("action") or "JSON Event")[:159]
 
             src_ip = d.get("src_ip") or d.get("source_ip") or d.get("SourceIp")
             dst_ip = d.get("dst_ip") or d.get("destination_ip") or d.get("DestinationIp")

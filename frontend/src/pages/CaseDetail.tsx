@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { SeverityTag } from '../components/SeverityTag';
 import { MitreBadge } from '../components/MitreBadge';
+import { formatCaseShortId } from '../utils/caseDisplay';
 
 export const CaseDetail: React.FC = () => {
   const {
@@ -58,7 +59,8 @@ export const CaseDetail: React.FC = () => {
               <span className="text-[#f95721] font-semibold">Status: {activeCase.status}</span>
             </div>
             <h1 className="text-xl font-bold tracking-tight text-[#fafaf9] mt-0.5">
-              {activeCase.name}
+              {activeCase.name}{' '}
+              <span className="text-sm font-mono text-[#78716c]">({formatCaseShortId(activeCase.id)})</span>
             </h1>
           </div>
         </div>

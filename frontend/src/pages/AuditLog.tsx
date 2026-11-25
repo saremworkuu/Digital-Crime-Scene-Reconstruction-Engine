@@ -5,15 +5,18 @@ import {
   Search,
   Download
 } from 'lucide-react';
+import { sortAuditLogsChronological } from '../utils/auditFormat';
 
 export const AuditLog: React.FC = () => {
   const { auditLogs } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [actionFilter, setActionFilter] = useState('ALL');
-  const actionOptions = useMemo(() => [...new Set(auditLogs.map(log => log.action).filter(Boolean))].sort(), [auditLogs]);
+
+  const normalizedLogs = useMemo(() => sortAuditLogsChronological(auditLogs), [auditLogs]);
+  const actionOptions = useMemo(() => [...new Set(normalizedLogs.map(log => log.action).filter(Boolean))].sort(), [normalizedLogs]);
 
   const filteredLogs = useMemo(() => {
-    return auditLogs.filter(log => {
+    return normalizedLogs.filter(log => {
       const matchesAction = actionFilter === 'ALL' || log.action === actionFilter;
       if (!matchesAction) return false;
 
@@ -26,7 +29,7 @@ export const AuditLog: React.FC = () => {
         JSON.stringify(log.details || {}).toLowerCase().includes(q)
       );
     });
-  }, [auditLogs, searchQuery, actionFilter]);
+  }, [normalizedLogs, searchQuery, actionFilter]);
 
   const exportAuditCsv = () => {
     const headers = ['ID', 'Timestamp_UTC', 'User_ID', 'User_Name', 'Role', 'Action', 'Target_Type', 'Target_ID', 'IP_Address', 'Details_JSON'];
@@ -128,7 +131,15 @@ export const AuditLog: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#282321]">
-              {filteredLogs.map((entry, idx) => (
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-[#78716c] font-mono text-xs">
+                    {normalizedLogs.length === 0
+                      ? 'No audit trail records in the current workspace.'
+                      : 'No audit records match the current search or action filter.'}
+                  </td>
+                </tr>
+              ) : filteredLogs.map((entry, idx) => (
                 <tr key={entry.id} className="hover:bg-[#1f1b19]/60 transition-colors font-mono">
                   <td className="py-2.5 px-4 text-center text-[#78716c]">
                     {idx + 1}

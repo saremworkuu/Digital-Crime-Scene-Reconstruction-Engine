@@ -8,6 +8,7 @@ from app.parsers.web_access import WebAccessParser
 from app.parsers.generic_csv_json import GenericCSVJSONParser
 from app.parsers.txt_parser import TextFileParser
 from app.parsers.structured_log import StructuredLogParser
+from app.parsers.mysql_general import MySQLGeneralLogParser
 
 
 class LogFileParser(BaseParser):
@@ -61,6 +62,12 @@ class LogFileParser(BaseParser):
                     file_path,
                     original_filename=filename,
                 )
+
+        if MySQLGeneralLogParser.looks_like_mysql_general(content):
+            return MySQLGeneralLogParser().parse(
+                file_path,
+                original_filename=filename,
+            )
 
         # Fallback for other timestamped text logs.
         # Parse structured timestamped key=value logs first.

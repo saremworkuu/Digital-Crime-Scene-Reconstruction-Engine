@@ -14,6 +14,12 @@ from app.schemas.admin import (
     AdminAuditEntryResponse,
     AdminAuditCreateRequest,
 )
+from app.services.audit import (
+    normalize_audit_action,
+    normalize_audit_details_for_display,
+    normalize_audit_timestamp,
+    utc_now,
+)
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
@@ -23,7 +29,10 @@ def to_admin_audit_response(a: AuditLog, user_map: Dict[str, User]) -> AdminAudi
     u_name = u.username if u else "Sarem Worku"
     role_val = (u.role.value if hasattr(u.role, "value") else str(u.role)) if u else "admin"
 
-    ts_str = a.timestamp.isoformat() if hasattr(a.timestamp, "isoformat") else str(a.timestamp)
+    ts_utc = normalize_audit_timestamp(a.timestamp)
+    ts_str = ts_utc.isoformat()
+    canon_action = normalize_audit_action(a.action)
+    norm_details = normalize_audit_details_for_display(canon_action, a.details)
 
     target_type = "SYSTEM"
     target_id = "global"
@@ -40,11 +49,11 @@ def to_admin_audit_response(a: AuditLog, user_map: Dict[str, User]) -> AdminAudi
         user_id=str(a.user_id),
         user_name=u_name,
         role=role_val,
-        action=a.action,
+        action=canon_action,
         case_id=str(a.case_id) if a.case_id else None,
         target_type=target_type,
         target_id=target_id,
-        details=a.details if isinstance(a.details, dict) else {"details": a.details},
+        details=norm_details if isinstance(norm_details, dict) else {"details": norm_details},
         ip_address=a.ip_address or "192.168.1.104",
     )
 
@@ -65,8 +74,14 @@ def get_admin_audit_logs(
     users = db.execute(select(User)).scalars().all()
     user_map = {str(u.id): u for u in users}
 
-    query = select(AuditLog).order_by(desc(AuditLog.timestamp))
-    items = db.execute(query).scalars().all()
+    raw_items = db.execute(select(AuditLog)).scalars().all()
+    items = [
+        item
+        for _, item in sorted(
+            enumerate(raw_items),
+            key=lambda pair: (-normalize_audit_timestamp(pair[1].timestamp).timestamp(), pair[0]),
+        )
+    ]
 
     filtered = []
     for a in items:
@@ -76,7 +91,7 @@ def get_admin_audit_logs(
             if resp.user_id != user and resp.user_name.lower() != user.lower():
                 continue
 
-        if action and action != "all" and resp.action.lower() != action.lower():
+        if action and action != "all" and resp.action.lower() != normalize_audit_action(action).lower():
             continue
 
         if case_id and case_id != "all":
@@ -142,11 +157,11 @@ def append_audit_entry(
         id=uuid.uuid4(),
         user_id=current_admin.id,
         case_id=case_uuid,
-        action=body.action,
+        action=normalize_audit_action(body.action),
         resource=resource_str,
         ip_address="192.168.1.104",
-        details=body.details or {},
-        timestamp=datetime.now(timezone.utc),
+        details=normalize_audit_details_for_display(normalize_audit_action(body.action), body.details or {}),
+        timestamp=utc_now(),
     )
     db.add(new_log)
     db.commit()

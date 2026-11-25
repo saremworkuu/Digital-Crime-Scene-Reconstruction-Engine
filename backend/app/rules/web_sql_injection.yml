@@ -15,4 +15,7 @@ detection:
     - web_request
     - web_access
     - waf_alert
+    - edr_alert
+    - json_event
+    - db_query
   group_by: source_ip

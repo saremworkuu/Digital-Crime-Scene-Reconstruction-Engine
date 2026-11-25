@@ -1,0 +1,24 @@
+id: web_scanner_recon
+name: Web Scanner Reconnaissance Activity
+description: >-
+  Detects automated vulnerability or directory scanner activity based on known
+  scanner user agents or high-rate HTTP 404 probing from a single source IP.
+severity: medium
+mitre_technique: T1595
+mitre_tactic: Reconnaissance
+
+detection:
+  event_types:
+    - http_request
+    - web_request
+    - web_access
+  group_by: source_ip
+  status_code: 404
+  threshold: 10
+  window_seconds: 60
+  scanner_user_agents:
+    - nikto
+    - sqlmap
+    - nmap
+    - dirbuster
+    - gobuster

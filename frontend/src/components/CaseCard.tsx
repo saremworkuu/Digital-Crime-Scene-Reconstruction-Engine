@@ -1,5 +1,6 @@
 import React from 'react';
 import { Case } from '../types';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
 import { FolderKanban, ShieldAlert, ArrowRight } from 'lucide-react';
 
 interface CaseCardProps {
@@ -28,7 +29,7 @@ export const CaseCard: React.FC<CaseCardProps> = ({ caseItem, isSelected, onSele
             <FolderKanban className="w-4 h-4" />
           </div>
           <div>
-            <h4 className="text-xs font-semibold text-[#fafaf9]">{caseItem.name}</h4>
+            <h4 className="text-xs font-semibold text-[#fafaf9]">{formatCaseNameWithId(caseItem.name, caseItem.id)}</h4>
             <span className="text-[10px] text-[#a8a29e]">Lead: {caseItem.leadInvestigator || caseItem.lead_investigator || 'Lead Examiner'}</span>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../store';
 import { ThreatMap } from '../components/ThreatMap';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
 
 export const Dashboard: React.FC = () => {
   const { activeCase, activeCaseDetections, activeCaseEvents, activeCaseEvidence, setCurrentPage } = useApp();
@@ -12,7 +13,7 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="text-sm text-[#a8a29e]">Selected case: <strong className="text-[#fafaf9]">{activeCase?.name || 'No case selected'}</strong></div>
+      <div className="text-sm text-[#a8a29e]">Selected case: <strong className="text-[#fafaf9]">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : 'No case selected'}</strong></div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5">
         {metrics.map(metric => (
           <div key={metric.label} className="rounded-2xl bg-[#161413]/90 border border-[#2b2523] p-5 shadow-xl">

@@ -146,7 +146,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ events }) => {
 
 
 
-    logAuditAction('TIMELINE_EXPORTED', 'case', activeCaseId, { format, event_count: filteredEvents.length });
+    logAuditAction('timeline.exported', 'case', activeCaseId, { format, event_count: filteredEvents.length });
 
   };
 

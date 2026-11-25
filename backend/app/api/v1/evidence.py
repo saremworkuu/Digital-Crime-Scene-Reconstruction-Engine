@@ -44,7 +44,12 @@ from app.schemas.evidence import (
 )
 from app.services.normalizer import normalize_records
 from app.services.event_service import save_normalized_events
-from app.services.audit import log_audit_event
+from app.services.audit import (
+    build_evidence_audit_details,
+    canonical_parser_name,
+    log_audit_event,
+    utc_now,
+)
 from app.core.permissions import get_authorized_case
 
 router = APIRouter()
@@ -135,8 +140,24 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
     norm_parser = _normalize_parser_slug(evidence.parser_used)
 
     ev_id = evidence.id if isinstance(evidence.id, uuid.UUID) else (uuid.UUID(str(evidence.id)) if str(evidence.id or "").strip() and str(evidence.id) != "None" else uuid.uuid4())
-    up_time = evidence.uploaded_at if isinstance(evidence.uploaded_at, datetime) else datetime.now(timezone.utc)
+    up_time = evidence.uploaded_at if isinstance(evidence.uploaded_at, datetime) else utc_now()
     up_by = evidence.uploaded_by if isinstance(evidence.uploaded_by, uuid.UUID) else (uuid.UUID(str(evidence.uploaded_by)) if str(evidence.uploaded_by or "").strip() and str(evidence.uploaded_by) != "None" else uuid.uuid4())
+
+    parsed_at_dt = None
+    try:
+        from app.db.models.audit_log import AuditLog
+        parsed_row = db.execute(
+            select(AuditLog.timestamp)
+            .where(
+                AuditLog.resource == f"evidence:{ev_id}",
+                AuditLog.action.in_(["evidence.parsed", "EVIDENCE_PARSED"]),
+            )
+            .order_by(AuditLog.timestamp.desc())
+        ).scalars().first()
+        if parsed_row is not None:
+            parsed_at_dt = parsed_row
+    except Exception:
+        pass
 
     return EvidenceResponse(
         id=ev_id,
@@ -148,6 +169,8 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
         file_size=evidence.file_size or 0,
         sha256_hash=evidence.sha256_hash or "",
         uploaded_at=up_time,
+        received_at=up_time,
+        parsed_at=parsed_at_dt,
         parsing_status=evidence.parsing_status or ParsingStatus.PENDING,
         parsing_error=evidence.parsing_error,
         parser_used=norm_parser or evidence.parser_used or "auto",
@@ -160,9 +183,88 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
     )
 
 
+def _apply_single_host_inference(
+    db: Session,
+    case_id: uuid.UUID,
+    records: list[dict],
+) -> list[dict]:
+    """Infer host for unknown_host records when the case has a single known non-numeric host."""
+    if not records:
+        return records
+
+    def _valid_known_host(details: dict | None) -> Optional[str]:
+        if not isinstance(details, dict):
+            return None
+        if details.get("host_inferred"):
+            return None
+        h = str(details.get("host") or "").strip()
+        if not h or h.casefold() in {"unknown", "unknown_host", "-", "n/a"} or h.isdigit():
+            return None
+        return h
+
+    known_hosts = {
+        h
+        for h in (_valid_known_host(rec.get("details")) for rec in records)
+        if h
+    }
+    if isinstance(db, Session) and len(known_hosts) <= 1:
+        existing_details = db.execute(
+            select(Event.details).where(Event.case_id == case_id)
+        ).scalars().all()
+        for det in existing_details:
+            h = _valid_known_host(det)
+            if h:
+                known_hosts.add(h)
+                if len(known_hosts) > 1:
+                    break
+
+    if len(known_hosts) == 1:
+        single_host = next(iter(known_hosts))
+        for rec in records:
+            details = rec.get("details")
+            if isinstance(details, dict):
+                cur = str(details.get("host") or "").strip()
+                if not cur or cur.casefold() in {"unknown", "unknown_host", "-"}:
+                    details["host"] = single_host
+                    details["host_inferred"] = True
+        if isinstance(db, Session):
+            existing_events = db.execute(
+                select(Event).where(Event.case_id == case_id)
+            ).scalars().all()
+            updated_any = False
+            for ev_row in existing_events:
+                det = ev_row.details if isinstance(ev_row.details, dict) else None
+                if not det:
+                    continue
+                cur = str(det.get("host") or "").strip()
+                is_web_like = str(ev_row.event_type or "").lower() == "web_access"
+                should_backfill = (
+                    not cur or cur.casefold() in {"unknown", "unknown_host", "-"}
+                    or (is_web_like and det.get("host_inferred") and cur == det.get("src_ip"))
+                )
+                if should_backfill:
+                    new_det = dict(det)
+                    new_det["host"] = single_host
+                    new_det["host_inferred"] = True
+                    ev_row.details = new_det
+                    updated_any = True
+            if updated_any:
+                db.flush()
+    return records
+
+
 def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = None):
     """Dispatches to designated parser or auto-selects from registry."""
     ext = Path(filename).suffix.lower()
+
+    # Format-accurate dispatch based on unambiguous file extensions first if
+    # a generic fallback slug was sent alongside an XML/EVTX/PCAP/audit file.
+    if ext in (".pcap", ".pcapng", ".xml"):
+        return get_parser(file_path, original_filename=filename)
+
+    if ext == ".evtx":
+        from app.parsers.windows_evtx import WindowsEVTXParser
+        return WindowsEVTXParser()
 
     # Manual parser override if provided
     if parser_type and parser_type.lower() != "auto":
@@ -174,8 +276,9 @@ def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = 
             from app.parsers.pcap import PCAPParser
             return PCAPParser()
         if ptype in ("generic_json_csv", "generic", "csv", "json"):
-            from app.parsers.generic_csv_json import GenericCSVJSONParser
-            return GenericCSVJSONParser()
+            if ext in (".csv", ".json"):
+                from app.parsers.generic_csv_json import GenericCSVJSONParser
+                return GenericCSVJSONParser()
         if ptype in ("linux_auth", "auth"):
             from app.parsers.auth_log import AuthLogParser
             return AuthLogParser()
@@ -183,25 +286,7 @@ def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = 
             from app.parsers.web_access import WebAccessParser
             return WebAccessParser()
         if ptype in ("structured_log", "audit", "log"):
-            from app.parsers.log_parser import LogFileParser
-            return LogFileParser()
-
-    # Format-accurate dispatch based on unambiguous file extensions
-    if ext in (".pcap", ".pcapng"):
-        from app.parsers.pcap import PCAPParser
-        return PCAPParser()
-
-    if ext in (".evtx", ".xml"):
-        from app.parsers.windows_evtx import WindowsEVTXParser
-        return WindowsEVTXParser()
-
-    if ext in (".csv", ".json"):
-        from app.parsers.generic_csv_json import GenericCSVJSONParser
-        return GenericCSVJSONParser()
-
-    if ext in (".log", ".txt", ".audit"):
-        from app.parsers.log_parser import LogFileParser
-        return LogFileParser()
+            return get_parser(file_path, original_filename=filename) or LogFileParser()
 
     return get_parser(file_path, original_filename=filename)
 
@@ -277,6 +362,7 @@ def _create_single_evidence(
                 detail="Empty files are not allowed.",
             )
 
+        received_at = utc_now()
         evidence = Evidence(
             case_id=case.id,
             uploaded_by=current_user.id,
@@ -286,10 +372,14 @@ def _create_single_evidence(
             file_path=str(file_path),
             sha256_hash=sha256.hexdigest(),
             file_size=file_size,
+            uploaded_at=received_at,
             parsing_status=ParsingStatus.PENDING,
         )
         db.add(evidence)
         db.flush()
+
+        parser = resolve_parser(file_path, filename, parser_type)
+        canonical_parser = canonical_parser_name(parser.__class__.__name__) if parser is not None else None
 
         log_audit_event(
             db=db,
@@ -298,11 +388,17 @@ def _create_single_evidence(
             resource=f"evidence:{evidence.id}",
             request=request,
             case_id=evidence.case_id,
+            timestamp=received_at,
             details={
-                "filename": evidence.filename,
-                "file_type": evidence.file_type,
-                "file_size": evidence.file_size,
-                "sha256_hash": evidence.sha256_hash,
+                **build_evidence_audit_details(
+                    filename=evidence.filename,
+                    file_size=evidence.file_size,
+                    file_type=evidence.file_type,
+                    sha256_hash=evidence.sha256_hash,
+                    parser=canonical_parser,
+                    events_extracted=0,
+                ),
+                "received_at": received_at.isoformat(),
             },
         )
         db.commit()
@@ -310,7 +406,6 @@ def _create_single_evidence(
         db.refresh(evidence)
 
         # Parse evidence
-        parser = resolve_parser(file_path, filename, parser_type)
         if parser is None:
             evidence.parsing_status = ParsingStatus.FAILED
             evidence.parsing_error = "No suitable parser was found for this file format."
@@ -319,6 +414,7 @@ def _create_single_evidence(
             try:
                 records = parser.parse(file_path, original_filename=filename)
                 normalized_records = normalize_records(records, default_filename=filename)
+                _apply_single_host_inference(db, evidence.case_id, normalized_records)
                 # A4: pass the real upload time so event_service can store
                 # ingested_at in details separately from the evidence event_time.
                 save_normalized_events(
@@ -326,10 +422,32 @@ def _create_single_evidence(
                     case_id=evidence.case_id,
                     evidence_id=evidence.id,
                     records=normalized_records,
-                    ingested_at=evidence.uploaded_at,
+                    ingested_at=received_at,
                 )
+                parsed_at = utc_now()
                 evidence.parsing_status = ParsingStatus.PARSED
                 evidence.parsing_error = None
+                log_audit_event(
+                    db=db,
+                    user=current_user,
+                    action="evidence.parsed",
+                    resource=f"evidence:{evidence.id}",
+                    request=request,
+                    case_id=evidence.case_id,
+                    timestamp=parsed_at,
+                    details={
+                        **build_evidence_audit_details(
+                            filename=evidence.filename,
+                            file_size=evidence.file_size,
+                            file_type=evidence.file_type,
+                            sha256_hash=evidence.sha256_hash,
+                            parser=canonical_parser,
+                            events_extracted=len(normalized_records),
+                        ),
+                        "received_at": received_at.isoformat(),
+                        "parsed_at": parsed_at.isoformat(),
+                    },
+                )
                 try:
                     from app.api.v1.detections import _execute_case_detections
                     _execute_case_detections(evidence.case_id, db)
@@ -528,14 +646,42 @@ def reparse_evidence(
         try:
             records = parser.parse(file_path, original_filename=evidence.filename)
             normalized = normalize_records(records, default_filename=evidence.filename)
+            _apply_single_host_inference(db, evidence.case_id, normalized)
             save_normalized_events(
                 db=db,
                 case_id=evidence.case_id,
                 evidence_id=evidence.id,
                 records=normalized,
             )
+            parsed_at = utc_now()
             evidence.parsing_status = ParsingStatus.PARSED
             evidence.parsing_error = None
+            received_iso = (
+                evidence.uploaded_at.isoformat()
+                if hasattr(evidence.uploaded_at, "isoformat")
+                else str(evidence.uploaded_at)
+            )
+            log_audit_event(
+                db=db,
+                user=current_user,
+                action="evidence.parsed",
+                resource=f"evidence:{evidence.id}",
+                request=request,
+                case_id=evidence.case_id,
+                timestamp=parsed_at,
+                details={
+                    **build_evidence_audit_details(
+                        filename=evidence.filename,
+                        file_size=evidence.file_size,
+                        file_type=evidence.file_type,
+                        sha256_hash=evidence.sha256_hash,
+                        parser=parser.__class__.__name__,
+                        events_extracted=len(normalized),
+                    ),
+                    "received_at": received_iso,
+                    "parsed_at": parsed_at.isoformat(),
+                },
+            )
             try:
                 from app.api.v1.detections import _execute_case_detections
                 _execute_case_detections(evidence.case_id, db)
@@ -596,7 +742,14 @@ def delete_evidence(
         resource=f"evidence:{evidence.id}",
         request=request,
         case_id=case.id,
-        details={"filename": evidence.filename, "sha256": evidence.sha256_hash},
+        details=build_evidence_audit_details(
+            filename=evidence.filename,
+            file_size=evidence.file_size,
+            file_type=evidence.file_type,
+            sha256_hash=evidence.sha256_hash,
+            parser=evidence.parser_used,
+            events_extracted=0,
+        ),
     )
 
     db.delete(evidence)
@@ -638,11 +791,14 @@ def download_evidence(
         resource=f"evidence:{evidence.id}",
         request=request,
         case_id=case.id,
-        details={
-            "filename": evidence.filename,
-            "sha256_hash": evidence.sha256_hash,
-            "file_size": evidence.file_size,
-        },
+        details=build_evidence_audit_details(
+            filename=evidence.filename,
+            file_size=evidence.file_size,
+            file_type=evidence.file_type,
+            sha256_hash=evidence.sha256_hash,
+            parser=evidence.parser_used,
+            events_extracted=None,
+        ),
     )
     db.commit()
 

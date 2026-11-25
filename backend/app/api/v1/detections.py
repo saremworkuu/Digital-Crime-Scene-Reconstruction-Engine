@@ -22,6 +22,7 @@ from app.services.detection import (
     detect_privilege_escalation,
     detect_lateral_movement,
     detect_web_sql_injection,
+    detect_web_scanner_recon,
     detect_data_exfiltration,
     detect_dns_tunneling,
     detect_macro_attachment_delivery,
@@ -30,7 +31,7 @@ from app.services.detection import (
 )
 from app.services.rule_loader import load_all_rules
 from app.services.audit import log_audit_event
-from app.services.report_fixes import canonical_title, unique_users
+from app.services.report_fixes import canonical_title, tactic_for, unique_users
 from app.core.permissions import get_authorized_case
 
 router = APIRouter()
@@ -62,12 +63,48 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
     if event_time and event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
     ts_str = event_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if event_time else None
-    observed_hosts = set(rule_info.get("hosts") or [])
-    observed_hosts.update(value for value in (rule_info.get("host"), rule_info.get("target_host")) if value)
-    observed_hosts.update(
-        fields["host"] for fields in (extract_event_fields(event) for event in matched_events)
-        if fields.get("host") and fields["host"].casefold() not in {"unknown", "unknown_host", "-"}
-    )
+    observed_source_ips: list[str] = []
+    seen_src_ips: set[str] = set()
+    for val in (
+        *(rule_info.get("source_ips") or []),
+        *(rule_info.get("src_ips") or []),
+        rule_info.get("src_ip"),
+        rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None,
+    ):
+        sval = str(val).strip() if val else ""
+        if sval and sval.casefold() not in {"unknown", "unknown_host", "-"} and sval not in seen_src_ips:
+            seen_src_ips.add(sval)
+            observed_source_ips.append(sval)
+    for event in matched_events:
+        det = event.details if isinstance(event.details, dict) else {}
+        sval = str(det.get("src_ip") or det.get("source_ip") or "").strip()
+        if sval and sval != "-" and sval not in seen_src_ips:
+            seen_src_ips.add(sval)
+            observed_source_ips.append(sval)
+
+    # Deduplicate victim hosts case-insensitively (preferring non-lowercased/canonical form)
+    # while never treating an attacker/client source IP as a victim host.
+    host_by_cf: dict[str, str] = {}
+    for value in (
+        rule_info.get("target_host"),
+        rule_info.get("host"),
+        *(rule_info.get("hosts") or []),
+        *(
+            fields["host"]
+            for fields in (extract_event_fields(event) for event in matched_events)
+            if fields.get("host")
+        ),
+    ):
+        if not value:
+            continue
+        h_str = str(value).strip()
+        if h_str.casefold() in {"unknown", "unknown_host", "-"} or h_str in seen_src_ips:
+            continue
+        cf = h_str.casefold()
+        if cf not in host_by_cf or (host_by_cf[cf].islower() and not h_str.islower()):
+            host_by_cf[cf] = h_str
+    victim_hosts = sorted(host_by_cf.values())
+
     existing_entities = rule_info.get("entities") or {}
     observed_users = unique_users([
         *(existing_entities.get("users") or []),
@@ -75,6 +112,7 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
     ])
     observed_ips = list(dict.fromkeys([
         *(existing_entities.get("ips") or []),
+        *observed_source_ips,
         *[value for value in (rule_info.get("src_ip"), rule_info.get("dst_ip"), rule_info.get("actor") if rule_info.get("actor_role") == "adversary_infrastructure" else None) if value],
     ]))
 
@@ -87,7 +125,7 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         description=detection.description,
         mitre_technique=detection.mitre_technique or "T1110",
         mitre_techniques_all=(rule_info.get("mitre_techniques_all") or [detection.mitre_technique] if detection.mitre_technique else []),
-        mitre_tactic=rule_info.get("tactic") or ("Exfiltration" if detection.mitre_technique == "T1041" else "Execution"),
+        mitre_tactic=rule_info.get("tactic") or tactic_for(detection.mitre_technique, "Execution"),
         rule_information=rule_info,
         is_false_positive=detection.is_false_positive,
         false_positive=detection.is_false_positive,
@@ -96,7 +134,9 @@ def build_detection_response(db: Session, detection: Detection) -> DetectionResp
         timestamp=ts_str,
         event_ids=event_ids,
         matched_event_ids=[str(eid) for eid in event_ids],
-        entities_involved={**existing_entities, "hosts": sorted(observed_hosts), "users": observed_users, "ips": observed_ips},
+        hosts=victim_hosts,
+        source_ips=observed_source_ips,
+        entities_involved={**existing_entities, "hosts": victim_hosts, "users": observed_users, "ips": observed_ips},
     )
 
 
@@ -106,6 +146,7 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
 
     def context(finding: dict):
         hosts = set()
+        src_ips = set()
         timestamps = []
         info = finding.get("rule_information") or {}
         for value in (
@@ -114,6 +155,12 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
         ):
             if value and str(value).casefold() not in {"unknown", "unknown_host", "-"}:
                 hosts.add(str(value).strip().casefold())
+        for value in (
+            finding.get("src_ip"), *(finding.get("source_ips") or []),
+            info.get("src_ip"), *(info.get("source_ips") or []), *(info.get("src_ips") or []),
+        ):
+            if value and str(value).casefold() not in {"unknown", "unknown_host", "-"}:
+                src_ips.add(str(value).strip().casefold())
         event_ids = {str(value) for value in (finding.get("matching_event_ids") or [])}
         for event_id in event_ids:
             event = events_by_id.get(event_id)
@@ -123,6 +170,8 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
             host = fields.get("host") or fields.get("workstation")
             if host and host.casefold() not in {"unknown", "unknown_host", "-"}:
                 hosts.add(host.strip().casefold())
+            if fields.get("src_ip"):
+                src_ips.add(str(fields["src_ip"]).strip().casefold())
             if event.timestamp:
                 timestamp = event.timestamp
                 if timestamp.tzinfo is None:
@@ -132,17 +181,17 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
             word for word in re.findall(r"[a-z0-9]+", str(finding.get("rule_name") or "").casefold())
             if word not in {"the", "via", "with", "or", "and", "of", "by", "from", "to", "a", "an"}
         }
-        return hosts, timestamps, words, event_ids
+        return hosts, src_ips, timestamps, words, event_ids
 
     merged: List[dict] = []
     for finding in findings:
-        hosts, times, words, event_ids = context(finding)
+        hosts, src_ips, times, words, event_ids = context(finding)
         technique = str(finding.get("mitre_technique") or "")
-        tactic = str(finding.get("mitre_tactic") or (finding.get("rule_information") or {}).get("tactic") or "")
+        tactic = str(finding.get("mitre_tactic") or (finding.get("rule_information") or {}).get("tactic") or tactic_for(technique, ""))
         title = canonical_title(finding.get("rule_name") or finding.get("rule_id")).casefold()
 
         def is_same_behavior(existing: dict) -> bool:
-            old_hosts, old_times, old_words, old_ids = context(existing)
+            old_hosts, old_srcs, old_times, old_words, old_ids = context(existing)
             if not hosts or hosts != old_hosts:
                 return False
             if title == canonical_title(existing.get("rule_name") or existing.get("rule_id")).casefold():
@@ -151,29 +200,70 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
                 if times and old_times:
                     return min(abs((left - right).total_seconds()) for left in times for right in old_times) <= 60
             old_technique = str(existing.get("mitre_technique") or "")
-            old_tactic = str(existing.get("mitre_tactic") or (existing.get("rule_information") or {}).get("tactic") or "")
-            if not technique or technique != old_technique or tactic != old_tactic:
-                return False
-            if event_ids & old_ids:
-                return True
-            return bool(
-                times and old_times
-                and min(abs((left - right).total_seconds()) for left in times for right in old_times) <= 60
-                and len(words & old_words) >= 2
+            old_tactic = str(existing.get("mitre_tactic") or (existing.get("rule_information") or {}).get("tactic") or tactic_for(old_technique, ""))
+            same_technique_family = (
+                bool(technique and old_technique)
+                and (technique == old_technique or technique.split(".")[0] == old_technique.split(".")[0])
             )
+            if not same_technique_family or tactic != old_tactic:
+                return False
+            if event_ids & old_ids and (technique == old_technique or len(words & old_words) >= 2):
+                return True
+            if technique != old_technique:
+                return False
+            within_window = bool(
+                times and old_times
+                and min(abs((left - right).total_seconds()) for left in times for right in old_times) <= 600
+            )
+            shared_src_ip = bool(src_ips and old_srcs and (src_ips & old_srcs))
+            return bool(within_window and (shared_src_ip and ("sql" in words and "sql" in old_words) or (
+                min(abs((left - right).total_seconds()) for left in times for right in old_times) <= 60
+                and len(words & old_words) >= 2
+            )))
 
         duplicate = next((item for item in merged if is_same_behavior(item)), None)
+        incoming_src_ips = []
+        for s_val in (
+            *(finding.get("source_ips") or []),
+            *((finding.get("rule_information") or {}).get("source_ips") or []),
+            *((finding.get("rule_information") or {}).get("src_ips") or []),
+            finding.get("src_ip"),
+        ):
+            if s_val and str(s_val) not in incoming_src_ips:
+                incoming_src_ips.append(str(s_val))
         if duplicate is None:
             finding["rule_information"] = dict(finding.get("rule_information") or {})
-            if hosts:
+            if hosts and not finding["rule_information"].get("hosts"):
                 finding["rule_information"]["hosts"] = sorted(hosts)
+            if incoming_src_ips:
+                finding["rule_information"]["source_ips"] = incoming_src_ips
+                finding["source_ips"] = incoming_src_ips
+            if times:
+                earliest = min(times).strftime("%Y-%m-%dT%H:%M:%SZ")
+                latest = max(times).strftime("%Y-%m-%dT%H:%M:%SZ")
+                finding["first_seen"] = earliest
+                finding["last_seen"] = latest
             merged.append(finding)
             continue
 
         duplicate_ids = set(map(str, duplicate.get("matching_event_ids") or [])) | event_ids
         duplicate["matching_event_ids"] = sorted(duplicate_ids)
+        merged_times = []
+        for eid in duplicate_ids:
+            ev_obj = events_by_id.get(eid)
+            if ev_obj and ev_obj.timestamp:
+                ts_val = ev_obj.timestamp if ev_obj.timestamp.tzinfo else ev_obj.timestamp.replace(tzinfo=timezone.utc)
+                merged_times.append(ts_val.astimezone(timezone.utc))
+        if merged_times:
+            duplicate["first_seen"] = min(merged_times).strftime("%Y-%m-%dT%H:%M:%SZ")
+            duplicate["last_seen"] = max(merged_times).strftime("%Y-%m-%dT%H:%M:%SZ")
         info = duplicate.setdefault("rule_information", {})
-        info["hosts"] = sorted(hosts)
+        if not info.get("hosts"):
+            info["hosts"] = sorted(hosts)
+        if incoming_src_ips:
+            merged_srcs = list(dict.fromkeys([*(info.get("source_ips") or []), *incoming_src_ips]))
+            info["source_ips"] = merged_srcs
+            duplicate["source_ips"] = merged_srcs
         incoming = finding.get("rule_information") or {}
         techniques = info.setdefault("mitre_techniques_all", [duplicate.get("mitre_technique")] if duplicate.get("mitre_technique") else [])
         for technique_id in incoming.get("mitre_techniques_all") or [finding.get("mitre_technique")]:
@@ -213,16 +303,22 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
     # (rule, description, and matched evidence events) is still present.
     old_rows = db.execute(select(Detection).where(Detection.case_id == case_id)).scalars().all()
     old_review = {}
-    for row in old_rows:
-        linked = set(db.execute(
-            select(DetectionEvent.event_id)
-            .join(Event, Event.id == DetectionEvent.event_id)
-            .where(DetectionEvent.detection_id == row.id, Event.case_id == case_id)
-        ).scalars().all()) & valid_ids
-        signature = (row.rule_id, row.description, tuple(sorted(map(str, linked))))
-        old_review[signature] = (row.is_false_positive, dict(row.rule_information or {}))
     if old_rows:
-        db.query(DetectionEvent).filter(DetectionEvent.detection_id.in_([row.id for row in old_rows])).delete(synchronize_session=False)
+        old_ids = [row.id for row in old_rows]
+        linked_rows = db.execute(
+            select(DetectionEvent.detection_id, DetectionEvent.event_id)
+            .join(Event, Event.id == DetectionEvent.event_id)
+            .where(DetectionEvent.detection_id.in_(old_ids), Event.case_id == case_id)
+        ).all()
+        linked_by_det: dict[uuid.UUID, set] = {}
+        for det_id, ev_id in linked_rows:
+            linked_by_det.setdefault(det_id, set()).add(ev_id)
+        for row in old_rows:
+            linked = linked_by_det.get(row.id, set()) & valid_ids
+            signature = (row.rule_id, row.description, tuple(sorted(map(str, linked))))
+            old_review[signature] = (row.is_false_positive, dict(row.rule_information or {}))
+
+        db.query(DetectionEvent).filter(DetectionEvent.detection_id.in_(old_ids)).delete(synchronize_session=False)
         db.query(Detection).filter(Detection.case_id == case_id).delete(synchronize_session=False)
         db.flush()
 
@@ -241,6 +337,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         detect_privilege_escalation,
         detect_lateral_movement,
         detect_web_sql_injection,
+        detect_web_scanner_recon,
         detect_data_exfiltration,
         detect_dns_tunneling,
         detect_macro_attachment_delivery,
@@ -255,6 +352,8 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
     findings = _coalesce_findings_by_host(findings, events)
 
     saved_detections = []
+    pending_links: list[DetectionEvent] = []
+    now_utc = datetime.now(timezone.utc)
     for finding in findings:
         rule_id = finding.get("rule_id", finding.get("rule_name", "detection-rule"))
         description = finding["description"]
@@ -289,7 +388,7 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
             rule_info["source_file"] = finding["source_file"]
         if finding.get("source_record_references"):
             rule_info["source_record_references"] = finding["source_record_references"]
-        for key in ("actor", "actor_role", "target_host", "target_role", "src_ip", "dst_ip"):
+        for key in ("actor", "actor_role", "target_host", "target_role", "src_ip", "dst_ip", "source_ips", "hosts"):
             if finding.get(key) is not None:
                 rule_info[key] = finding[key]
         if finding.get("first_seen"):
@@ -297,16 +396,19 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         if finding.get("last_seen"):
             rule_info["last_seen"] = str(finding["last_seen"])
 
+        det_id = uuid.uuid4()
         detection = Detection(
-                case_id=case_id,
-                rule_id=rule_id,
-                rule_name=finding.get("rule_name") or finding.get("display_name") or "Security Alert",
-                severity=sev_enum,
-                description=description,
-                mitre_technique=finding.get("mitre_technique", "T1059"),
-                rule_information=rule_info,
-                is_false_positive=False,
-            )
+            id=det_id,
+            case_id=case_id,
+            rule_id=rule_id,
+            rule_name=finding.get("rule_name") or finding.get("display_name") or "Security Alert",
+            severity=sev_enum,
+            description=description,
+            mitre_technique=finding.get("mitre_technique", "T1059"),
+            rule_information=rule_info,
+            is_false_positive=False,
+            detected_at=now_utc,
+        )
         signature = (rule_id, description, tuple(sorted(map(str, matching_ids))))
         if signature in old_review:
             was_fp, old_info = old_review[signature]
@@ -315,16 +417,17 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
                 if fp_key in old_info:
                     rule_info[fp_key] = old_info[fp_key]
             detection.rule_information = rule_info
-        db.add(detection)
-        db.flush()
-        for event_id in matching_ids:
-            db.add(DetectionEvent(detection_id=detection.id, event_id=event_id))
-
         saved_detections.append(detection)
+        for event_id in matching_ids:
+            pending_links.append(DetectionEvent(detection_id=det_id, event_id=event_id))
+
+    if saved_detections:
+        db.add_all(saved_detections)
+        db.flush()
+    if pending_links:
+        db.add_all(pending_links)
 
     db.commit()
-    for d in saved_detections:
-        db.refresh(d)
     return saved_detections
 
 
@@ -354,7 +457,15 @@ def get_case_detections(
 ):
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
 
-    detections = _execute_case_detections(case.id, db)
+    detections = db.execute(
+        select(Detection).where(Detection.case_id == case.id)
+    ).scalars().all()
+    if not detections:
+        has_events = db.execute(
+            select(Event.id).where(Event.case_id == case.id).limit(1)
+        ).first()
+        if has_events:
+            detections = _execute_case_detections(case.id, db)
 
     return [build_detection_response(db, d) for d in detections]
 

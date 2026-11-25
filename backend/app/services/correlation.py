@@ -3,7 +3,14 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
-def correlate_attack_chains(events: List[Any], window_minutes: int = 45) -> List[Dict[str, Any]]:
+MIN_CHAIN_CONFIDENCE: float = 0.70
+
+
+def correlate_attack_chains(
+    events: List[Any],
+    window_minutes: int = 45,
+    min_confidence: float = MIN_CHAIN_CONFIDENCE,
+) -> List[Dict[str, Any]]:
     """
     Correlates incident events sharing common entities (hosts, accounts, IP addresses)
     within a rolling time window to reconstruct multi-stage attack trajectories.
@@ -11,11 +18,15 @@ def correlate_attack_chains(events: List[Any], window_minutes: int = 45) -> List
     if not events:
         return []
 
-    # Extract clean normalized objects
+    # Extract clean normalized objects (exclude pre-incident context events such as vuln scans)
     clean_events = []
     for e in events:
         if isinstance(e, dict):
             details = e.get("details", {}) or {}
+            ev_type = str(e.get("event_type") or "")
+            category = e.get("category") or details.get("category")
+            if category == "context" or ev_type == "vuln_scan":
+                continue
             clean_events.append({
                 "id": str(e.get("id", "")),
                 "timestamp": str(e.get("timestamp") or details.get("timestamp") or ""),
@@ -29,6 +40,10 @@ def correlate_attack_chains(events: List[Any], window_minutes: int = 45) -> List
             })
         else:
             details = getattr(e, "details", {}) or {}
+            ev_type = str(getattr(e, "event_type", "") or "")
+            category = getattr(e, "category", None) or details.get("category")
+            if category == "context" or ev_type == "vuln_scan":
+                continue
             ts = getattr(e, "timestamp", "")
             clean_events.append({
                 "id": str(getattr(e, "id", "")),
@@ -98,15 +113,17 @@ def correlate_attack_chains(events: List[Any], window_minutes: int = 45) -> List
                     max_lvl = lvl
                     highest_sev = ce["severity"].lower()
 
-            chains.append({
-                "id": f"chain-{i+1}",
-                "name": f"Correlated Attack Vector #{len(chains)+1}",
-                "events": chain_events,
-                "entities": list(chain_entities),
-                "start_time": chain_events[0]["timestamp"],
-                "end_time": chain_events[-1]["timestamp"],
-                "confidence_score": min(0.98, round(0.5 + (len(chain_events) * 0.08), 2)),
-                "highest_severity": highest_sev,
-            })
+            confidence_score = min(0.98, round(0.5 + (len(chain_events) * 0.08), 2))
+            if confidence_score >= min_confidence:
+                chains.append({
+                    "id": f"chain-{i+1}",
+                    "name": f"Correlated Attack Vector #{len(chains)+1}",
+                    "events": chain_events,
+                    "entities": list(chain_entities),
+                    "start_time": chain_events[0]["timestamp"],
+                    "end_time": chain_events[-1]["timestamp"],
+                    "confidence_score": confidence_score,
+                    "highest_severity": highest_sev,
+                })
 
     return chains

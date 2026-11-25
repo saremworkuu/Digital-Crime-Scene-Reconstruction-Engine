@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 
 import { useApp } from '../store';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
 
 import { FilterBar, FilterState } from '../components/FilterBar';
 
@@ -8,7 +9,16 @@ import { TimelineView } from '../components/TimelineView';
 
 import { EventTable } from '../components/EventTable';
 
-import { correlateAttackChains } from '../services/correlation';
+import { correlateAttackChains, MIN_CHAIN_CONFIDENCE } from '../services/correlation';
+
+const formatChainUtc = (ts: string): string => {
+  if (!ts) return '';
+  const parsed = new Date(ts);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 19).replace('T', ' ');
+  }
+  return ts.slice(0, 19).replace('T', ' ');
+};
 
 import {
 
@@ -92,26 +102,29 @@ export const Timeline: React.FC = () => {
 
 
 
+  const isContextEvent = (evt: { category?: string; source_type?: string; metadata?: Record<string, any> }) =>
+    evt.category === 'context' || evt.source_type === 'vuln_scan' || evt.metadata?.category === 'context';
+
+  const incidentEvents = useMemo(
+    () => activeCaseEvents.filter(e => !isContextEvent(e)),
+    [activeCaseEvents]
+  );
+
+  const contextEvents = useMemo(
+    () => activeCaseEvents.filter(e => isContextEvent(e)),
+    [activeCaseEvents]
+  );
+
   // Filter events according to active filter criteria
-
   const filteredEvents = useMemo(() => {
-
-    return activeCaseEvents.filter(evt => {
-
+    return incidentEvents.filter(evt => {
       if (filters.severity !== 'all' && evt.severity !== filters.severity) return false;
-
       if (filters.host && evt.host !== filters.host) return false;
-
       if (filters.user && evt.user !== filters.user) return false;
-
       if (filters.sourceType && evt.source_type !== filters.sourceType) return false;
-
       if (filters.onlyAttackPath && !evt.is_attack_path) return false;
-
       // Hide metric events by default unless showMetrics is enabled
       if (!filters.showMetrics && evt.event_type === 'metric') return false;
-
-
 
       if (filters.search.trim()) {
         const q = filters.search.toLowerCase();
@@ -127,23 +140,29 @@ export const Timeline: React.FC = () => {
         }
       }
 
-
-
       return true;
-
     });
+  }, [incidentEvents, filters]);
 
-  }, [activeCaseEvents, filters]);
-
-
+  const filteredContextEvents = useMemo(() => {
+    return contextEvents.filter(evt => {
+      if (filters.severity !== 'all' && evt.severity !== filters.severity) return false;
+      if (filters.host && evt.host !== filters.host) return false;
+      if (filters.search.trim()) {
+        const q = filters.search.toLowerCase();
+        const matchesAction = (evt.action || '').toLowerCase().includes(q);
+        const matchesHost = (evt.host || '').toLowerCase().includes(q);
+        const matchesTicket = (evt.ticket || evt.metadata?.ticket || '').toLowerCase().includes(q);
+        if (!matchesAction && !matchesHost && !matchesTicket) return false;
+      }
+      return true;
+    });
+  }, [contextEvents, filters]);
 
   // Compute automated correlated attack chains (FR-CORR-1, FR-CORR-2, FR-CORR-3)
-
   const attackChains = useMemo(() => {
-
-    return correlateAttackChains(activeCaseEvents, 45);
-
-  }, [activeCaseEvents]);
+    return correlateAttackChains(incidentEvents, 45);
+  }, [incidentEvents]);
 
 
 
@@ -169,7 +188,7 @@ export const Timeline: React.FC = () => {
 
           <p className="text-xs text-[#a8a29e] mt-1">
 
-            Normalized UTC timeline across all digital evidence sources for <strong className="text-[#fafaf9]">{activeCase?.name}</strong>
+            Normalized UTC timeline across all digital evidence sources for <strong className="text-[#fafaf9]">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : ''}</strong>
 
           </p>
 
@@ -253,7 +272,7 @@ export const Timeline: React.FC = () => {
 
             <span className="text-[11px] font-mono text-[#a8a29e]">
 
-              Confidence Score ≥ 0.70 (FR-CORR-3)
+              Confidence Score ≥ {MIN_CHAIN_CONFIDENCE.toFixed(2)} (FR-CORR-3)
 
             </span>
 
@@ -297,11 +316,11 @@ export const Timeline: React.FC = () => {
 
 
 
-                <div className="text-[11px] font-mono text-[#a8a29e] flex items-center justify-between">
+                <div className="text-[11px] font-mono text-[#a8a29e] flex items-center justify-between gap-2">
 
                   <span>{chain.events.length} chained forensic events</span>
 
-                  <span>{chain.startTime.slice(11, 19)} → {chain.endTime.slice(11, 19)} UTC</span>
+                  <span>{formatChainUtc(chain.startTime)} → {formatChainUtc(chain.endTime)} UTC</span>
 
                 </div>
 
@@ -317,6 +336,63 @@ export const Timeline: React.FC = () => {
 
 
 
+      {/* Pre-incident exposure lane (context / vuln scan findings, out of main attack chain & range) */}
+      {filteredContextEvents.length > 0 && (
+        <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-5 space-y-3 shadow-xl backdrop-blur-xl">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold text-[#fafaf9] uppercase font-mono tracking-wider">
+              Pre-incident exposure ({filteredContextEvents.length})
+            </h3>
+            <span className="text-[11px] font-mono text-[#a8a29e]">
+              Context baseline · Excluded from incident attack chains &amp; default time range
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredContextEvents.map((evt) => {
+              const statusVal = String(evt.status || evt.metadata?.status || 'open').toLowerCase();
+              const isClosed = statusVal === 'closed';
+              const ticketVal = evt.ticket || evt.metadata?.ticket;
+              const dateLabel = evt.first_detected || evt.metadata?.first_detected || (evt.date_only ? evt.timestamp.slice(0, 10) : evt.timestamp.slice(0, 10));
+              const titleText = evt.metadata?.extra?.title || evt.action;
+
+              return (
+                <div
+                  key={evt.id}
+                  className={`p-3.5 rounded-xl border text-xs space-y-1.5 ${
+                    isClosed
+                      ? 'bg-[#100f0e]/60 border-[#26211f] opacity-75'
+                      : 'bg-[#100f0e] border-[#282321]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <SeverityTag severity={evt.severity} />
+                      <span className="font-semibold text-[#fafaf9] truncate">
+                        {titleText}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border shrink-0 ${
+                        isClosed
+                          ? 'bg-[#1f1c1a] text-[#a8a29e] border-[#3a322e]'
+                          : 'bg-[#2a140d] text-[#fb923c] border-[#ea580c]/40'
+                      }`}
+                    >
+                      {isClosed ? 'closed' : statusVal}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-[#a8a29e] flex flex-wrap items-center gap-3">
+                    <span>First detected: <strong className="text-[#fafaf9]">{dateLabel}</strong></span>
+                    {evt.host && <span>Host: <strong className="text-[#fafaf9]">{evt.host}</strong></span>}
+                    {ticketVal && <span>Ticket: <strong className="text-[#fafaf9]">{ticketVal}</strong></span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Multi-Dimensional Filter Bar (FR-TIME-2) */}
 
       <FilterBar
@@ -331,7 +407,7 @@ export const Timeline: React.FC = () => {
 
         availableSourceTypes={availableSourceTypes}
 
-        totalCount={activeCaseEvents.length}
+        totalCount={incidentEvents.length}
 
         filteredCount={filteredEvents.length}
 

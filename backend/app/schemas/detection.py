@@ -26,6 +26,8 @@ class DetectionResponse(BaseModel):
 
     event_ids: List[uuid.UUID] = Field(default_factory=list)
     matched_event_ids: List[str] = Field(default_factory=list)
+    hosts: Optional[List[str]] = None
+    source_ips: Optional[List[str]] = None
     entities_involved: Optional[dict[str, List[str]]] = Field(
         default_factory=lambda: {"hosts": [], "users": [], "ips": []}
     )

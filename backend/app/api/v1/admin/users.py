@@ -10,6 +10,7 @@ from app.core.security import hash_password
 from app.db.session import get_db
 from app.db.models.user import User, UserRole
 from app.db.models.audit_log import AuditLog
+from app.services.audit import log_audit_event
 from app.schemas.admin import (
     AdminUserResponse,
     AdminUserCreateRequest,
@@ -139,12 +140,13 @@ def create_admin_user(
     db.add(new_user)
 
     # Log audit entry
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="USER_CREATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="user.created",
         resource=f"user:{new_user.id}",
-        details={"name": new_user.username, "email": new_user.email, "role": data.role, "department": data.department}
-    ))
+        details={"name": new_user.username, "email": new_user.email, "role": data.role, "department": data.department},
+    )
 
     db.commit()
     db.refresh(new_user)
@@ -191,12 +193,13 @@ def update_admin_user(
         u.two_factor_enabled = patch.two_factor_enabled
         details["two_factor_enabled"] = patch.two_factor_enabled
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="USER_UPDATE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="user.updated",
         resource=f"user:{u.id}",
-        details=details
-    ))
+        details=details,
+    )
 
     db.commit()
     db.refresh(u)
@@ -224,12 +227,13 @@ def delete_admin_user(
     deleted_info = {"name": u.username, "email": u.email}
     db.delete(u)
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="USER_DELETE",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="user.deleted",
         resource=f"user:{user_id}",
-        details=deleted_info
-    ))
+        details=deleted_info,
+    )
 
     db.commit()
     return {"message": "User deleted successfully", "id": user_id}
@@ -253,12 +257,13 @@ def reset_admin_user_password(
     token = f"TMP-PWD-{uuid.uuid4().hex[:7].upper()}"
     u.hashed_password = hash_password(token)
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="USER_PASSWORD_RESET",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="user.password_reset",
         resource=f"user:{u.id}",
-        details={"reset_initiated_by": "admin", "token_generated": True}
-    ))
+        details={"reset_initiated_by": "admin", "token_generated": True},
+    )
 
     db.commit()
     return {"temporaryToken": token}
@@ -283,12 +288,13 @@ def terminate_user_session(
     current_sessions = getattr(u, "sessions", []) or []
     u.sessions = [s for s in current_sessions if s.get("id") != session_id]
 
-    db.add(AuditLog(
-        user_id=current_admin.id,
-        action="SESSION_TERMINATED",
+    log_audit_event(
+        db=db,
+        user=current_admin,
+        action="session.terminated",
         resource=f"user:{u.id}",
-        details={"terminated_session_id": session_id}
-    ))
+        details={"terminated_session_id": session_id},
+    )
 
     db.commit()
     return {"message": f"Session {session_id} terminated."}

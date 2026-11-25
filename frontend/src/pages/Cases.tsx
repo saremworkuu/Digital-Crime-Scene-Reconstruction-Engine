@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../store';
+import { formatCaseShortId } from '../utils/caseDisplay';
 import { Case, CaseStatus } from '../types';
 import {
   FolderLock,
@@ -25,7 +26,6 @@ export const Cases: React.FC = () => {
     updateCaseDetails,
     deleteCase,
     setCurrentPage,
-    currentUser,
     resetToInitialScenarios
   } = useApp();
 
@@ -95,8 +95,6 @@ export const Cases: React.FC = () => {
     toast.success('Investigation case details updated.');
     setEditingCase(null);
   };
-
-  const isAdmin = currentUser?.role === 'admin';
 
   return (
     <div className="space-y-6">
@@ -234,7 +232,8 @@ export const Cases: React.FC = () => {
                         }}
                         className="text-base font-semibold text-[#fafaf9] hover:text-[#f95721] cursor-pointer transition-colors"
                       >
-                        {c.name}
+                        {c.name}{' '}
+                        <span className="text-xs font-mono text-[#78716c]">({formatCaseShortId(c.id)})</span>
                       </h3>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-[#a8a29e] mt-1 font-mono">
@@ -308,20 +307,17 @@ export const Cases: React.FC = () => {
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
 
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        if (confirm(`Are you sure you want to delete case "${c.name}"?`)) {
-                          deleteCase(c.id);
-                          toast.info(`Investigation case "${c.name}" deleted.`);
-                        }
-                      }}
-                      className="p-1.5 text-[#a8a29e] hover:text-[#ef4444] hover:bg-[#25201e] rounded-lg transition-colors cursor-pointer"
-                      title="Delete Case"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      if (confirm(`Are you sure you want to delete case "${c.name}"?`)) {
+                        deleteCase(c.id);
+                      }
+                    }}
+                    className="p-1.5 text-[#a8a29e] hover:text-[#ef4444] hover:bg-[#25201e] rounded-lg transition-colors cursor-pointer"
+                    title="Delete Case"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
 
                   <button
                     onClick={() => {

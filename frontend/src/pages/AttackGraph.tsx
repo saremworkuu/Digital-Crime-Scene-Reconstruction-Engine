@@ -7,24 +7,17 @@ import { GraphView } from '../components/GraphView';
 import { CyberThreatGlobe } from '../components/CyberThreatGlobe';
 
 import { GitBranch, ShieldAlert, Server, Globe, UserCheck, Layers, Globe2, Network, Sparkles } from 'lucide-react';
-
-
+import { isBenignExternalNode } from '../utils/graphNodes';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
 
 export const AttackGraph: React.FC = () => {
-
-  const { activeCase, activeCaseGraph } = useApp();
-
+  const { activeCase, activeCaseGraph, graphAttackPathOnly, setGraphAttackPathOnly } = useApp();
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
-
   const [globeMode, setGlobeMode] = useState<'default' | 'advanced'>('advanced');
 
-
-
   const compromisedHosts = activeCaseGraph.nodes.filter(n => n.type === 'host' && (n.is_compromised || n.is_attack_path));
-
   const compromisedUsers = activeCaseGraph.nodes.filter(n => n.type === 'user' && (n.is_compromised || n.is_attack_path));
-
-  const threatIps = activeCaseGraph.nodes.filter(n => n.type === 'ip' && (n.role === 'external_ip' || n.role === 'adversary_infrastructure'));
+  const threatIps = activeCaseGraph.nodes.filter(n => n.type === 'ip' && !isBenignExternalNode(n) && (n.role === 'adversary_infrastructure' || n.is_compromised || n.is_attack_path));
 
 
 
@@ -58,7 +51,7 @@ export const AttackGraph: React.FC = () => {
 
           <p className="text-xs text-[#a8a29e] mt-0.5">
 
-            Case: <strong className="text-[#fafaf9]">{activeCase?.name}</strong> · Interactive topology depicting lateral movement, privilege escalation, and external C2
+            Case: <strong className="text-[#fafaf9]">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : ''}</strong> · Interactive topology depicting lateral movement, privilege escalation, and external C2
 
           </p>
 
@@ -198,7 +191,11 @@ export const AttackGraph: React.FC = () => {
 
         /* Main Interactive 2D Graph Viewport */
 
-        <GraphView graphData={activeCaseGraph} />
+        <GraphView
+          graphData={activeCaseGraph}
+          onlyAttackPath={graphAttackPathOnly}
+          onToggleAttackPath={setGraphAttackPathOnly}
+        />
 
       )}
 

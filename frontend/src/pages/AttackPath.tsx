@@ -20,12 +20,45 @@ import {
 import { MitreBadge } from '../components/MitreBadge';
 import { SeverityTag } from '../components/SeverityTag';
 import { DetectionResult, NormalizedEvent } from '../types';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
+
+const MITRE_TACTIC_ORDER = [
+  'reconnaissance',
+  'resource development',
+  'initial access',
+  'execution',
+  'persistence',
+  'privilege escalation',
+  'defense evasion',
+  'credential access',
+  'discovery',
+  'lateral movement',
+  'collection',
+  'command and control',
+  'exfiltration',
+  'impact',
+];
+
+function getFirstSeenTimestamp(finding: DetectionResult): string {
+  return String(finding.rule_information?.first_seen || finding.timestamp || '');
+}
+
+function getTacticRank(tactic?: string): number {
+  const idx = MITRE_TACTIC_ORDER.indexOf(String(tactic || '').trim().toLowerCase());
+  return idx === -1 ? MITRE_TACTIC_ORDER.length : idx;
+}
+
+function getMergedRules(finding: DetectionResult): string[] {
+  const raw = finding.rule_information?.corroborating_rules;
+  return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+}
 
 export const AttackPath: React.FC = () => {
   const { activeCase, activeCaseDetections, activeCaseEvents, theme } = useApp();
   const isLight = theme === 'light';
 
   const [activeTab, setActiveTab] = useState<'timeline' | 'topology'>('timeline');
+  const [orderMode, setOrderMode] = useState<'chronological' | 'tactic'>('chronological');
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [inspectingEvent, setInspectingEvent] = useState<NormalizedEvent | null>(null);
 
@@ -34,12 +67,22 @@ export const AttackPath: React.FC = () => {
     return activeCaseDetections.filter(d => !d.false_positive && (d.matched_event_ids?.length ?? 0) > 0);
   }, [activeCaseDetections]);
 
-  // Findings represent observed time; preserve event chronology across tactics.
+  // Order findings either chronologically (first_seen) or by standard MITRE ATT&CK tactic sequence.
   const orderedFindings = useMemo(() => {
     return [...validFindings].sort((a, b) => {
-      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      const timeDiff =
+        new Date(getFirstSeenTimestamp(a)).getTime() -
+        new Date(getFirstSeenTimestamp(b)).getTime();
+      if (orderMode === 'tactic') {
+        const tacticDiff = getTacticRank(a.mitre_tactic) - getTacticRank(b.mitre_tactic);
+        if (tacticDiff !== 0) return tacticDiff;
+        if (timeDiff !== 0) return timeDiff;
+        return String(a.rule_name || '').localeCompare(String(b.rule_name || ''));
+      }
+      if (timeDiff !== 0) return timeDiff;
+      return getTacticRank(a.mitre_tactic) - getTacticRank(b.mitre_tactic);
     });
-  }, [validFindings]);
+  }, [validFindings, orderMode]);
 
   // Selected finding for detailed inspection
   const selectedFinding = useMemo(() => {
@@ -146,12 +189,41 @@ export const AttackPath: React.FC = () => {
             <span>Deterministic Attack Path Trajectory</span>
           </h1>
           <p className="text-xs text-[#a8a29e] mt-0.5">
-            Case: <strong className="text-[#fafaf9]">{activeCase?.name}</strong> · Standard MITRE ATT&CK tactic order based strictly on stored verified findings
+            Case: <strong className="text-[#fafaf9]">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : ''}</strong> ·{' '}
+            {orderMode === 'chronological'
+              ? 'Chronological order (first seen) based strictly on stored verified findings'
+              : 'Standard MITRE ATT&CK tactic order based strictly on stored verified findings'}
           </p>
         </div>
 
-        {/* View Mode Toggle */}
-        <div className="flex items-center gap-3">
+        {/* View Mode & Order Toggles */}
+        <div className="flex flex-wrap items-center gap-3">
+          {activeTab === 'timeline' && (
+            <div className="inline-flex items-center p-1 bg-[#191716] border border-[#2c2724] rounded-lg text-xs font-mono">
+              <button
+                type="button"
+                onClick={() => setOrderMode('chronological')}
+                className={`px-2.5 py-1.5 rounded-md transition-all font-medium cursor-pointer ${
+                  orderMode === 'chronological'
+                    ? 'bg-[#2a140d] text-[#f95721] border border-[#ea580c]/50'
+                    : 'text-[#a8a29e] hover:text-[#d6d3d1]'
+                }`}
+              >
+                Chronological order (first seen)
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderMode('tactic')}
+                className={`px-2.5 py-1.5 rounded-md transition-all font-medium cursor-pointer ${
+                  orderMode === 'tactic'
+                    ? 'bg-[#2a140d] text-[#f95721] border border-[#ea580c]/50'
+                    : 'text-[#a8a29e] hover:text-[#d6d3d1]'
+                }`}
+              >
+                By ATT&amp;CK tactic
+              </button>
+            </div>
+          )}
           <div className="inline-flex items-center p-1 bg-[#191716] border border-[#2c2724] rounded-lg text-xs font-mono">
             <button
               onClick={() => setActiveTab('timeline')}
@@ -162,7 +234,7 @@ export const AttackPath: React.FC = () => {
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
-              <span>Tactic Sequence ({orderedFindings.length})</span>
+              <span>{orderMode === 'chronological' ? 'Chronological Sequence' : 'Tactic Sequence'} ({orderedFindings.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('topology')}
@@ -210,6 +282,11 @@ export const AttackPath: React.FC = () => {
               const isSelected = selectedFinding?.id === finding.id;
               const stepNum = idx + 1;
               const sourceLabel = finding.source || (finding.rule_id.startsWith('edr-') ? 'EDR' : 'Rule');
+              const mergedRules = getMergedRules(finding);
+              const firstSeenTs = getFirstSeenTimestamp(finding);
+              const lastSeenTs = finding.rule_information?.last_seen
+                ? String(finding.rule_information.last_seen)
+                : undefined;
 
               return (
                 <div
@@ -244,14 +321,40 @@ export const AttackPath: React.FC = () => {
                           }`}>
                             {sourceLabel}
                           </span>
+                          {mergedRules.length > 0 && (
+                            <span
+                              title={`Merged with: ${mergedRules.join(', ')}`}
+                              className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-emerald-950/70 text-emerald-300 border-emerald-700/50"
+                            >
+                              Merged (+{mergedRules.length})
+                            </span>
+                          )}
                         </div>
 
                         {/* Tactic & Host/User Context */}
                         <div className="text-[11px] font-mono text-[#a8a29e] flex flex-wrap items-center gap-2">
                           <span className="text-[#f95721] font-medium">{finding.mitre_tactic}</span>
-                          {((finding.entities_involved?.hosts || []).length > 0 || finding.host) && (
-                            <span>Host(s): <strong className="text-[#fafaf9]">{[...new Set([...(finding.entities_involved?.hosts || []), ...(finding.host ? [finding.host] : [])])].join(', ')}</strong></span>
-                          )}
+                          {(() => {
+                            const sourceIps = finding.source_ips?.length
+                              ? finding.source_ips
+                              : (finding.rule_information?.source_ips || finding.rule_information?.src_ips || (finding.src_ip ? [finding.src_ip] : []));
+                            const targetHosts = [...new Set([
+                              ...(finding.hosts || []),
+                              ...(finding.entities_involved?.hosts || []),
+                              ...(finding.target_host ? [finding.target_host] : []),
+                              ...(finding.host && finding.host !== 'unknown' && finding.host !== 'unknown_host' ? [finding.host] : []),
+                            ])];
+                            return (
+                              <>
+                                {sourceIps.length > 0 && (
+                                  <span>Source: <strong className="text-[#ff8d60]">{sourceIps.join(', ')}</strong></span>
+                                )}
+                                {targetHosts.length > 0 && (
+                                  <span>Target host: <strong className="text-[#fafaf9]">{targetHosts.join(', ')}</strong></span>
+                                )}
+                              </>
+                            );
+                          })()}
                           {finding.user && finding.user !== 'unknown' && (
                             <span>User: <strong className="text-[#fafaf9]">{finding.user}</strong></span>
                           )}
@@ -271,7 +374,10 @@ export const AttackPath: React.FC = () => {
                   </div>
 
                   <div className="mt-2 pt-2 border-t border-[#241e1c] flex items-center justify-between text-[10px] font-mono text-[#78716c]">
-                    <span>TIME: {new Date(finding.timestamp).toUTCString()}</span>
+                    <span>
+                      FIRST SEEN: {new Date(firstSeenTs).toUTCString()}
+                      {lastSeenTs && lastSeenTs !== firstSeenTs ? ` -> ${new Date(lastSeenTs).toUTCString()}` : ''}
+                    </span>
                     <span className="text-[#f95721] group-hover:underline flex items-center gap-0.5">
                       {finding.matched_event_ids?.length || 1} Event(s) <ChevronRight className="w-3 h-3" />
                     </span>
@@ -306,7 +412,13 @@ export const AttackPath: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#25201e] text-[11px] font-mono">
                     <div>
                       <span className="text-[#78716c] block">TARGET HOST:</span>
-                      <strong className="text-[#fafaf9]">{selectedFinding.host || 'N/A'}</strong>
+                      <strong className="text-[#fafaf9]">
+                        {selectedFinding.target_host
+                          || (selectedFinding.host && selectedFinding.host !== 'unknown' ? selectedFinding.host : undefined)
+                          || selectedFinding.hosts?.[0]
+                          || selectedFinding.entities_involved?.hosts?.[0]
+                          || 'N/A'}
+                      </strong>
                     </div>
                     <div>
                       <span className="text-[#78716c] block">USER ACCOUNT:</span>
@@ -314,7 +426,12 @@ export const AttackPath: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-[#78716c] block">SOURCE:</span>
-                      <strong className="text-[#ff8d60]">{selectedFinding.source || 'Rule Match'}</strong>
+                      <strong className="text-[#ff8d60]">
+                        {(selectedFinding.source_ips?.length
+                          ? selectedFinding.source_ips
+                          : (selectedFinding.rule_information?.source_ips || selectedFinding.rule_information?.src_ips || []))
+                          .join(', ') || selectedFinding.source || 'Rule Match'}
+                      </strong>
                     </div>
                     <div>
                       <span className="text-[#78716c] block">SOURCE FILE:</span>
@@ -329,11 +446,31 @@ export const AttackPath: React.FC = () => {
                     <span className="text-[#78716c] font-mono">TACTIC & TECHNIQUE:</span>
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono text-[#fb923c] font-medium">{selectedFinding.mitre_tactic}</span>
-                      {selectedFinding.mitre_technique && (
-                        <MitreBadge techniqueId={selectedFinding.mitre_technique} />
-                      )}
+                      {(selectedFinding.mitre_techniques_all?.length
+                        ? selectedFinding.mitre_techniques_all
+                        : [selectedFinding.mitre_technique]
+                      ).filter(Boolean).map(tech => (
+                        <MitreBadge key={tech} techniqueId={tech} />
+                      ))}
                     </div>
                   </div>
+
+                  {/* Prompt 6 Merged Finding / Corroboration Metadata */}
+                  {getMergedRules(selectedFinding).length > 0 && (
+                    <div className="pt-2 border-t border-[#25201e] space-y-1 text-[11px] font-mono">
+                      <span className="text-[#78716c] block">MERGED / CORROBORATING RULES:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {getMergedRules(selectedFinding).map(rule => (
+                          <span
+                            key={rule}
+                            className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-700/40"
+                          >
+                            {rule}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Associated Events List per Stage 6 */}
                   <div className="pt-2 border-t border-[#25201e] space-y-2">

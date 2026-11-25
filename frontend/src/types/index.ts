@@ -25,7 +25,13 @@ export interface NormalizedEvent {
   src_port?: number;
   dst_port?: number;
   protocol?: string;
+  packets?: number;
   bytes?: number;
+  flags?: string;
+  http_request?: string;
+  http_status?: string;
+  payload_preview?: string;
+  payload_untrusted?: boolean;
   process?: string;
   parent_process?: string;
   command_line?: string;
@@ -43,6 +49,11 @@ export interface NormalizedEvent {
   mitre_tactic?: string;
   is_attack_path?: boolean;
   attack_phase?: string;
+  category?: string;
+  status?: string;
+  ticket?: string;
+  first_detected?: string;
+  date_only?: boolean;
   metadata?: Record<string, any>;
   extra?: Record<string, any>;
 
@@ -101,6 +112,10 @@ export interface DetectionResult {
   false_positive_reason?: string;
   false_positive_marked_by?: string;
   host?: string;
+  target_host?: string;
+  hosts?: string[];
+  source_ips?: string[];
+  src_ip?: string;
   user?: string;
   source?: string;
   source_file?: string;

@@ -3,6 +3,7 @@ import { NormalizedEvent } from '../types';
 import { SeverityTag } from './SeverityTag';
 import { MitreBadge } from './MitreBadge';
 import { X, Copy, Check, Terminal, FileCode } from 'lucide-react';
+import { formatSafePayloadText } from '../utils/payloadText';
 
 interface RawEventModalProps {
   event: NormalizedEvent | null;
@@ -147,9 +148,23 @@ export const RawEventModal: React.FC<RawEventModalProps> = ({ event, onClose }) 
               </button>
             </div>
             <pre className="p-3.5 bg-[#0d0c0c] border border-[#282321] rounded-xl font-mono text-xs text-[#e7e5e4] overflow-x-auto whitespace-pre-wrap break-all selection:bg-[#f95721]/30">
-              {event.raw}
+              {formatSafePayloadText(event.raw)}
             </pre>
           </div>
+
+          {(event.payload_preview || event.metadata?.payload_preview) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-mono text-[#fbbf24]">
+                <span>Untrusted Network Payload Preview (Escaped Plain Text)</span>
+                <span className="px-2 py-0.5 rounded bg-[#451a03] border border-[#b45309] text-[10px] uppercase text-[#fde68a]">
+                  Untrusted Data
+                </span>
+              </div>
+              <pre className="p-3.5 bg-[#0d0c0c] border border-[#b45309]/50 rounded-xl font-mono text-xs text-[#fde68a] overflow-x-auto whitespace-pre-wrap break-all">
+                {formatSafePayloadText(event.payload_preview || event.metadata?.payload_preview)}
+              </pre>
+            </div>
+          )}
 
           {/* Normalized JSON Representation */}
           <div className="space-y-1.5">

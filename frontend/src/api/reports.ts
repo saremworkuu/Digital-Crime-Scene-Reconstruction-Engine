@@ -24,6 +24,17 @@ export interface BackendReport extends ForensicReport {
   classification: string;
   executive_summary: string;
   report_hash: string;
+  stale?: boolean;
+  analysis_not_run?: boolean;
+  case_snapshot?: {
+    evidence_count: number;
+    event_count: number;
+    detection_count: number;
+    latest_event_id?: string | null;
+    latest_event_timestamp?: string | null;
+    latest_detection_id?: string | null;
+    latest_detection_timestamp?: string | null;
+  };
 
   evidence_manifest: Array<{
     filename: string;

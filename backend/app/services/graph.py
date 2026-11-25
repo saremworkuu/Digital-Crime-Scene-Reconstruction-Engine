@@ -5,10 +5,15 @@
 # - Adversary styling only on *adversary_infrastructure* entities from findings.
 # - Victim/compromised highlight only on target hosts confirmed by findings.
 # - One node per entity; no duplicate HOST and EXT for the same address.
+import os
 import re
 import ipaddress
 from typing import Any, Dict, List, Set, Tuple
-from app.services.entity_classification import is_internal_ip
+from app.services.entity_classification import (
+    is_internal_ip,
+    is_process_or_command_name,
+    is_valid_host_name,
+)
 from app.services.report_fixes import norm_user, format_user
 
 
@@ -40,18 +45,44 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
         or details.get("WorkstationName")
         or details.get("hostname")
     )
-    if str(host or "").casefold() in {"unknown", "unknown_host", "-"}:
+    if not is_valid_host_name(host):
         host = None
     workstation = details.get("WorkstationName")
+    if workstation and not is_valid_host_name(workstation):
+        workstation = None
 
     raw_extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
     raw_msg = str(details.get("raw_message") or details.get("raw") or raw_extra.get("raw_message") or "")
-    if not host:
+    ev_type = (event.get("event_type") if is_dict else getattr(event, "event_type", "")) or ""
+    if not host and details.get("thread_id") is None and ev_type not in {"db_query", "db_connect"}:
         iso_log_match = re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+([A-Za-z0-9_.-]+)", raw_msg)
         syslog_match = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+([a-zA-Z0-9_\-\.]+)", raw_msg)
         host_match = iso_log_match or syslog_match
-        if host_match:
+        if host_match and is_valid_host_name(host_match.group(1)):
             host = host_match.group(1)
+
+    raw_proc = (
+        (event.get("process") if is_dict else getattr(event, "process", None))
+        or details.get("process_name")
+        or details.get("process")
+        or details.get("comm")
+        or details.get("exe")
+        or details.get("Image")
+        or raw_extra.get("process_name")
+        or raw_extra.get("comm")
+        or raw_extra.get("exe")
+    )
+    process_name = (
+        os.path.basename(str(raw_proc).strip().strip('"\'').replace("\\", "/"))
+        if raw_proc
+        else None
+    )
+    command_line = (
+        (event.get("command_line") if is_dict else getattr(event, "command_line", None))
+        or details.get("command_line")
+        or details.get("CommandLine")
+        or raw_extra.get("command_line")
+    )
 
     user = (
         (event.get("user") if is_dict else getattr(event, "user", None))
@@ -68,6 +99,8 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
             recipient_match = re.search(r"\bto=<([^>]+)>", raw_msg, re.IGNORECASE)
             if recipient_match:
                 user = recipient_match.group(1)
+    if user and is_process_or_command_name(user, process_name=process_name, command_line=command_line):
+        user = None
     extra = details.get("extra") if isinstance(details.get("extra"), dict) else {}
     domain = details.get("TargetDomainName") or details.get("domain") or extra.get("TargetDomainName") or extra.get("domain")
     if user and domain and "\\" not in str(user) and "@" not in str(user) and str(user).casefold() not in {"system", "localsystem", "-"}:
@@ -118,9 +151,11 @@ def extract_event_fields(event: Any) -> Dict[str, Any]:
 
     return {
         "id": str(event.get("id") if is_dict else getattr(event, "id", "")),
-        "host": str(host) if host and host != "unknown_host" else None,
-        "workstation": str(workstation) if workstation and workstation != "-" else None,
+        "host": str(host) if host and is_valid_host_name(host) else None,
+        "workstation": str(workstation) if workstation and is_valid_host_name(workstation) else None,
         "user": str(user) if user else None,
+        "process": str(process_name) if process_name else None,
+        "command_line": str(command_line) if command_line else None,
         "action": str(action),
         "src_ip": str(src_ip) if src_ip else None,
         "dst_ip": str(dst_ip) if dst_ip else None,
@@ -172,7 +207,7 @@ def build_attack_graph(
     for evt in extracted_events:
         h = evt["workstation"] or evt["host"]
         ip = evt["src_ip"]
-        if h and not _is_ip_address(h) and ip and is_private_ip(ip):
+        if h and is_valid_host_name(h) and not _is_ip_address(h) and ip and is_private_ip(ip):
             candidates = ip_host_candidates.setdefault(ip, {})
             candidates[h] = candidates.get(h, 0) + (4 if evt["workstation"] else 1)
     for ip, candidates in ip_host_candidates.items():
@@ -195,11 +230,26 @@ def build_attack_graph(
             if target_role == "compromised_host" and target:
                 compromised_hosts.add(target)
 
-    # Pass 2: Create nodes and aggregate edges
+    def _attach_process_attrs(node: Dict[str, Any], proc: str | None, cmd: str | None) -> None:
+        if not proc and not cmd:
+            return
+        node_details = node.setdefault("details", {})
+        if proc:
+            procs = node_details.setdefault("processes", [])
+            if proc not in procs:
+                procs.append(proc)
+        if cmd:
+            cmds = node_details.setdefault("commands", [])
+            if cmd not in cmds:
+                cmds.append(cmd)
+
+    # Pass 2: Create nodes and aggregate edges (only host, ip, and user nodes)
     for evt in extracted_events:
         is_attack = evt["is_attack_path"]
         ts = evt["timestamp"]
         evt_id = evt["id"]
+        proc = evt.get("process")
+        cmdline = evt.get("command_line")
 
         # Resolve host (merge private IP into host if evidence-derived mapping exists)
         effective_host = evt["host"]
@@ -209,6 +259,8 @@ def build_attack_graph(
             effective_host = evt["workstation"]
         if not effective_host and evt["src_ip"] and evt["src_ip"] in ip_to_host:
             effective_host = ip_to_host[evt["src_ip"]]
+        if effective_host and not is_valid_host_name(effective_host):
+            effective_host = None
 
         # 1. Host Node — only mark compromised if findings confirm it (B3)
         if effective_host:
@@ -237,6 +289,7 @@ def build_attack_graph(
                 if is_attack:
                     nodes_map[h_id]["is_attack_path"] = True
                 nodes_map[h_id]["last_seen"] = ts
+            _attach_process_attrs(nodes_map[h_id], proc, cmdline)
 
         # 2. User Node
         if evt["user"]:
@@ -267,6 +320,7 @@ def build_attack_graph(
                 if is_attack:
                     nodes_map[u_id]["is_compromised"] = True
                     nodes_map[u_id]["is_attack_path"] = True
+            _attach_process_attrs(nodes_map[u_id], proc, cmdline)
 
             if effective_host:
                 h_id = f"host-{effective_host}"

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 
 import { useApp } from '../store';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
 
 import { EvidenceFile, ParserType } from '../types';
 
@@ -62,9 +63,13 @@ export const Evidence: React.FC = () => {
 
   const {
 
+    cases,
+
     activeCase,
 
     activeCaseId,
+
+    setActiveCaseId,
 
     activeCaseEvidence,
 
@@ -196,7 +201,14 @@ export const Evidence: React.FC = () => {
 
 
 
-    logAuditAction('EVIDENCE_DOWNLOADED', 'evidence', ev.id, { filename: ev.filename, sha256: ev.sha256_hash });
+    logAuditAction('evidence.downloaded', 'evidence', ev.id, {
+      filename: ev.filename,
+      file_size: ev.size_bytes ?? null,
+      file_type: ev.file_type ?? null,
+      sha256_hash: ev.sha256_hash,
+      parser: ev.parser_used ?? null,
+      events_extracted: ev.event_count ?? null,
+    });
 
   };
 
@@ -210,7 +222,7 @@ export const Evidence: React.FC = () => {
 
     <div className="space-y-6">
 
-      
+
 
       {/* Header */}
 
@@ -236,7 +248,7 @@ export const Evidence: React.FC = () => {
 
           <p className="text-xs text-[#a8a29e] mt-0.5">
 
-            Case: <strong className="text-[#fafaf9] font-semibold">{activeCase?.name}</strong> · Forensic verification with SHA-256 integrity checks
+            Case: <strong className="text-[#fafaf9] font-semibold">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : ''}</strong> · Forensic verification with SHA-256 integrity checks
 
           </p>
 
@@ -244,9 +256,35 @@ export const Evidence: React.FC = () => {
 
 
 
-        <div className="font-mono text-xs text-[#a8a29e] tabular-nums">
+        <div className="flex flex-wrap items-center gap-3">
 
-          Total evidence items: <span className="text-[#f95721] font-semibold">{activeCaseEvidence.length}</span>
+          {cases.length > 0 && (
+            <div className={`relative flex items-center ${isLight ? 'bg-white border-slate-300 text-[#0f172a]' : 'bg-[#0d0c0c] border-[#2b2523] text-[#fafaf9]'} border rounded-lg px-2.5 py-1.5 text-xs font-mono`}>
+              <span className={`${isLight ? 'text-[#64748b]' : 'text-[#78716c]'} text-[11px] mr-1.5`}>Case:</span>
+              <select
+                value={activeCase?.id || ''}
+                onChange={(e) => setActiveCaseId(e.target.value)}
+                aria-label="Select active investigation case"
+                className={`bg-transparent ${isLight ? 'text-[#0f172a]' : 'text-[#fafaf9]'} focus:outline-none cursor-pointer pr-5 font-semibold text-xs appearance-none max-w-[240px]`}
+              >
+                <option value="" className={isLight ? 'bg-white text-[#64748b]' : 'bg-[#161413] text-[#a8a29e]'}>
+                  -- New Case on Upload --
+                </option>
+                {cases.map((c) => (
+                  <option key={c.id} value={c.id} className={isLight ? 'bg-white text-[#0f172a]' : 'bg-[#161413] text-[#e7e5e4]'}>
+                    {formatCaseNameWithId(c.name, c.id)} ({c.evidence_count} files)
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className={`w-3 h-3 ${isLight ? 'text-[#94a3b8]' : 'text-[#78716c]'} absolute right-2 pointer-events-none`} />
+            </div>
+          )}
+
+          <div className="font-mono text-xs text-[#a8a29e] tabular-nums">
+
+            Total evidence items: <span className="text-[#f95721] font-semibold">{activeCaseEvidence.length}</span>
+
+          </div>
 
         </div>
 
@@ -621,19 +659,17 @@ export const Evidence: React.FC = () => {
 
                     <td className="py-3 px-4 text-center">
 
-                      <span className={`inline-block font-mono text-[11px] font-semibold uppercase px-2 py-0.5 rounded ${
+                      <span className={`inline-block font-mono text-[11px] font-semibold uppercase px-2 py-0.5 rounded ${ev.status === 'Parsed'
 
-                        ev.status === 'Parsed'
+                        ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/60'
 
-                          ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/60'
-
-                          : ev.status === 'Failed'
+                        : ev.status === 'Failed'
 
                           ? 'bg-red-950/70 text-red-400 border border-red-800/60'
 
                           : 'bg-[#221f1d] text-[#a8a29e]'
 
-                      }`}>
+                        }`}>
 
                         {ev.status}
 

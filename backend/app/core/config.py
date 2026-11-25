@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     MAX_UPLOADS_SIZE:int=104857600
 
     UPLOAD_DIR:str="uploads"
+    PCAP_PACKET_EVENTS: bool = False
 
     model_config=SettingsConfigDict(
         env_file=".env",

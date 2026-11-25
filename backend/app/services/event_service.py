@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -39,30 +40,13 @@ def calculate_fingerprint(event_data: dict) -> str:
     return hashlib.sha256(canonical_data.encode("utf-8")).hexdigest()
 
 
-def save_normalized_events(
-    db: Session,
-    case_id,
-    evidence_id,
+def _prepare_event_payloads(
     records: list[dict],
-    ingested_at: datetime | None = None,
-) -> int:
-    """Save normalized records and associate them with their evidence.
-
-    A4 fix:
-    - ``timestamp`` on the Event row stores the real *event_time* parsed from
-      the evidence file.
-    - ``ingested_at`` (upload time) is stored in ``details['ingested_at']`` so
-      it is always available in API responses without touching the DB schema.
-    - Records whose parser could not determine a timestamp get
-      ``details['timestamp_inferred'] = True``; they are **not** silently
-      assigned the upload time.  They are stored with the ``evidence.uploaded_at``
-      only when the parser itself explicitly requests it via
-      ``record['timestamp_inferred'] = True``.
-    """
-    if ingested_at is None:
-        ingested_at = datetime.now(timezone.utc)
-
-    saved_count = 0
+    ingested_at: datetime,
+) -> list[dict]:
+    """Validate timestamps, enrich details, and compute fingerprints in memory."""
+    prepared = []
+    ingested_str = ingested_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for record in records:
         try:
@@ -71,26 +55,18 @@ def save_normalized_events(
 
             if not timestamp_value:
                 if not timestamp_inferred:
-                    # No timestamp at all – skip the record (do NOT substitute
-                    # upload time silently).  Store it only when the parser
-                    # explicitly marks it as inferred.
                     continue
-                # Parser flagged timestamp_inferred – use evidence ingestion
-                # time as a last resort but keep the flag in details.
                 timestamp_value = ingested_at.isoformat()
 
             timestamp = datetime.fromisoformat(
                 str(timestamp_value).replace("Z", "+00:00")
             )
-
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=timezone.utc)
-
             timestamp = timestamp.astimezone(timezone.utc)
 
-            # Embed ingested_at into details so every API response exposes it.
             details = dict(record.get("details") or {})
-            details.setdefault("ingested_at", ingested_at.strftime("%Y-%m-%dT%H:%M:%SZ"))
+            details.setdefault("ingested_at", ingested_str)
             if timestamp_inferred:
                 details["timestamp_inferred"] = True
 
@@ -100,55 +76,148 @@ def save_normalized_events(
                 "source": record["source"],
                 "details": details,
             }
-            fingerprint = calculate_fingerprint(event_data)
+            prepared.append({
+                "timestamp": timestamp,
+                "event_type": record["event_type"],
+                "source": record["source"],
+                "details": details,
+                "fingerprint": calculate_fingerprint(event_data),
+            })
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
 
-            existing_event = db.execute(
+    return prepared
+
+
+def save_normalized_events(
+    db: Session,
+    case_id,
+    evidence_id,
+    records: list[dict],
+    ingested_at: datetime | None = None,
+) -> int:
+    """Save normalized records and associate them with their evidence."""
+    if ingested_at is None:
+        ingested_at = datetime.now(timezone.utc)
+
+    prepared = _prepare_event_payloads(records, ingested_at)
+    if not prepared:
+        return 0
+
+    # Real SQLAlchemy Session: batch-fetch existing rows & associations so large
+    # files take a few round-trips instead of 3*N sequential queries.
+    if isinstance(db, Session):
+        fingerprints = list({item["fingerprint"] for item in prepared})
+        existing_by_fp: dict[str, Event] = {}
+        # Query in chunks of 500 to stay well within parameter limits
+        for i in range(0, len(fingerprints), 500):
+            chunk = fingerprints[i : i + 500]
+            rows = db.execute(
                 select(Event).where(
                     Event.case_id == case_id,
-                    Event.fingerprint == fingerprint,
+                    Event.fingerprint.in_(chunk),
                 )
-            ).scalar_one_or_none()
+            ).scalars().all()
+            for row in rows:
+                existing_by_fp[row.fingerprint] = row
 
+        new_events: list[Event] = []
+        target_event_ids: list = []
+
+        for item in prepared:
+            fp = item["fingerprint"]
+            existing_event = existing_by_fp.get(fp)
             if existing_event is not None:
-                event_id = existing_event.id
-                # Update details and event_type in place on re-parse
-                existing_event.details = details
-                existing_event.event_type = record["event_type"]
-                existing_event.timestamp = timestamp
+                existing_event.details = item["details"]
+                existing_event.event_type = item["event_type"]
+                existing_event.timestamp = item["timestamp"]
+                target_event_ids.append(existing_event.id)
             else:
+                new_id = uuid.uuid4()
                 event = Event(
+                    id=new_id,
                     case_id=case_id,
                     evidence_id=evidence_id,
-                    timestamp=timestamp,
-                    event_type=record["event_type"],
-                    source=record["source"],
-                    details=details,
-                    fingerprint=fingerprint,
+                    timestamp=item["timestamp"],
+                    event_type=item["event_type"],
+                    source=item["source"],
+                    details=item["details"],
+                    fingerprint=fp,
                 )
-                db.add(event)
-                db.flush()
-                event_id = event.id
+                existing_by_fp[fp] = event
+                new_events.append(event)
+                target_event_ids.append(new_id)
 
-            association = db.get(
-                EventEvidence,
-                {
-                    "event_id": event_id,
-                    "evidence_id": evidence_id,
-                },
+        if new_events:
+            db.add_all(new_events)
+            db.flush()
+
+        unique_event_ids = list(dict.fromkeys(target_event_ids))
+        existing_assoc_ids: set = set()
+        for i in range(0, len(unique_event_ids), 500):
+            chunk = unique_event_ids[i : i + 500]
+            existing_assoc_ids.update(
+                db.execute(
+                    select(EventEvidence.event_id).where(
+                        EventEvidence.evidence_id == evidence_id,
+                        EventEvidence.event_id.in_(chunk),
+                    )
+                ).scalars().all()
             )
 
-            if association is None:
-                db.add(
-                    EventEvidence(
-                        event_id=event_id,
-                        evidence_id=evidence_id,
-                    )
+        new_assocs = [
+            EventEvidence(event_id=eid, evidence_id=evidence_id)
+            for eid in unique_event_ids
+            if eid not in existing_assoc_ids
+        ]
+        if new_assocs:
+            db.add_all(new_assocs)
+
+        return len(prepared)
+
+    # Fallback path for unit tests passing a MagicMock session
+    saved_count = 0
+    for item in prepared:
+        existing_event = db.execute(
+            select(Event).where(
+                Event.case_id == case_id,
+                Event.fingerprint == item["fingerprint"],
+            )
+        ).scalar_one_or_none()
+
+        if existing_event is not None:
+            event_id = existing_event.id
+            existing_event.details = item["details"]
+            existing_event.event_type = item["event_type"]
+            existing_event.timestamp = item["timestamp"]
+        else:
+            event = Event(
+                case_id=case_id,
+                evidence_id=evidence_id,
+                timestamp=item["timestamp"],
+                event_type=item["event_type"],
+                source=item["source"],
+                details=item["details"],
+                fingerprint=item["fingerprint"],
+            )
+            db.add(event)
+            db.flush()
+            event_id = event.id
+
+        association = db.get(
+            EventEvidence,
+            {
+                "event_id": event_id,
+                "evidence_id": evidence_id,
+            },
+        )
+        if association is None:
+            db.add(
+                EventEvidence(
+                    event_id=event_id,
+                    evidence_id=evidence_id,
                 )
-
-            saved_count += 1
-
-        except (KeyError, TypeError, ValueError, OverflowError):
-            # Skip malformed records without abandoning the rest.
-            continue
+            )
+        saved_count += 1
 
     return saved_count

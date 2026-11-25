@@ -1,6 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useApp } from '../store';
 import { reportsApi, BackendReport, ReportHistoryItem } from '../api/reports';
+import { formatCaseNameWithId, formatCaseShortId } from '../utils/caseDisplay';
 import {
   FileText,
   Download,
@@ -37,10 +38,126 @@ function fmtUser(u: string): string {
 function severityColor(s: string) {
   switch ((s || '').toLowerCase()) {
     case 'critical': return 'text-[#fca5a5]';
-    case 'high':     return 'text-[#fdba74]';
-    case 'medium':   return 'text-[#fde68a]';
-    default:         return 'text-[#a8a29e]';
+    case 'high': return 'text-[#fdba74]';
+    case 'medium': return 'text-[#fde68a]';
+    default: return 'text-[#a8a29e]';
   }
+}
+
+// Module-level + sessionStorage caches and in-flight deduplication so StrictMode, tab switches, and F5 reloads are instant
+const latestReportCache = new Map<string, BackendReport>();
+const reportHistoryCache = new Map<string, ReportHistoryItem[]>();
+const inFlightLatest = new Map<string, Promise<BackendReport | null>>();
+const inFlightHistory = new Map<string, Promise<ReportHistoryItem[] | null>>();
+
+function getCachedReport(caseId: string): BackendReport | null {
+  const mem = latestReportCache.get(caseId);
+  if (mem) return mem;
+  try {
+    const raw = sessionStorage.getItem(`dcsre_report_cache_${caseId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw) as BackendReport;
+      latestReportCache.set(caseId, parsed);
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function setCachedReport(caseId: string, data: BackendReport) {
+  latestReportCache.set(caseId, data);
+  try {
+    sessionStorage.setItem(`dcsre_report_cache_${caseId}`, JSON.stringify(data));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function deleteCachedReport(caseId: string) {
+  latestReportCache.delete(caseId);
+  try {
+    sessionStorage.removeItem(`dcsre_report_cache_${caseId}`);
+  } catch {
+    // ignore
+  }
+}
+
+function getCachedHistory(caseId: string): ReportHistoryItem[] | null {
+  const mem = reportHistoryCache.get(caseId);
+  if (mem) return mem;
+  try {
+    const raw = sessionStorage.getItem(`dcsre_history_cache_${caseId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw) as ReportHistoryItem[];
+      if (Array.isArray(parsed)) {
+        reportHistoryCache.set(caseId, parsed);
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function setCachedHistory(caseId: string, list: ReportHistoryItem[]) {
+  reportHistoryCache.set(caseId, list);
+  try {
+    sessionStorage.setItem(`dcsre_history_cache_${caseId}`, JSON.stringify(list));
+  } catch {
+    // ignore
+  }
+}
+
+function deleteCachedHistory(caseId: string) {
+  reportHistoryCache.delete(caseId);
+  try {
+    sessionStorage.removeItem(`dcsre_history_cache_${caseId}`);
+  } catch {
+    // ignore
+  }
+}
+
+function fetchLatestReportDeduped(caseId: string): Promise<BackendReport | null> {
+  const existing = inFlightLatest.get(caseId);
+  if (existing) return existing;
+  const promise = reportsApi.latest(caseId)
+    .then((res) => {
+      const data = (res?.data as BackendReport) || null;
+      if (data) setCachedReport(caseId, data);
+      return data;
+    })
+    .catch((err) => {
+      console.warn('Could not load report from backend:', err);
+      return null;
+    })
+    .finally(() => {
+      inFlightLatest.delete(caseId);
+    });
+  inFlightLatest.set(caseId, promise);
+  return promise;
+}
+
+function fetchReportHistoryDeduped(caseId: string): Promise<ReportHistoryItem[] | null> {
+  const existing = inFlightHistory.get(caseId);
+  if (existing) return existing;
+  const promise = reportsApi.list(caseId)
+    .then((res) => {
+      const list = Array.isArray(res?.data) ? res.data : null;
+      if (list) setCachedHistory(caseId, list);
+      return list;
+    })
+    .catch((err) => {
+      console.warn('Could not load report history:', err);
+      return null;
+    })
+    .finally(() => {
+      inFlightHistory.delete(caseId);
+    });
+  inFlightHistory.set(caseId, promise);
+  return promise;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,25 +182,26 @@ export const Reports: React.FC = () => {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [viewingHistory, setViewingHistory] = useState<{ item: ReportHistoryItem; html: string } | null>(null);
   const [loadingHistoryReport, setLoadingHistoryReport] = useState(false);
-  const [loadingReport, setLoadingReport] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoadingReport, setIsLoadingReport] = useState(false);
+  const [reportLoadError, setReportLoadError] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Load saved report history
   // ---------------------------------------------------------------------------
   const loadReportHistory = useCallback(async () => {
-    if (!activeCase?.id) return;
-    setLoadingHistory(true);
+    const caseId = activeCase?.id;
+    if (!caseId) return;
+    const cached = getCachedHistory(caseId);
+    if (!cached) setLoadingHistory(true);
     try {
-      const res = await reportsApi.list(activeCase.id);
-      if (res?.data && Array.isArray(res.data)) {
-        setReportHistory(res.data);
+      const list = await fetchReportHistoryDeduped(caseId);
+      if (list && activeCaseIdRef.current === caseId) {
+        setReportHistory(list);
       }
-    } catch (err) {
-      console.warn('Could not load report history:', err);
     } finally {
       setLoadingHistory(false);
     }
@@ -92,32 +210,52 @@ export const Reports: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Load latest saved report for on-screen rendering
   // ---------------------------------------------------------------------------
-  const loadLatestReport = useCallback(async () => {
-    if (!activeCase?.id) return;
-    setLoadingReport(true);
-    try {
-      // Load the saved version; opening the page must not create a new version.
-      const res = await reportsApi.latest(activeCase.id);
-      if (res?.data) {
-        setReportData(res.data as BackendReport);
-        setSelectedHistoryId(null);
-      }
-    } catch (err) {
-      console.warn('Could not load report from backend:', err);
-    } finally {
-      setLoadingReport(false);
+  const activeCaseIdRef = useRef<string | null>(activeCase?.id ?? null);
+  activeCaseIdRef.current = activeCase?.id ?? null;
+
+  const loadLatestReport = useCallback(async (): Promise<boolean> => {
+    const caseId = activeCase?.id;
+    if (!caseId) return false;
+    const data = await fetchLatestReportDeduped(caseId);
+    if (data && activeCaseIdRef.current === caseId) {
+      setReportData(data);
+      setReportLoadError(null);
+      setSelectedHistoryId(null);
+      return true;
     }
+    return false;
   }, [activeCase?.id]);
 
   useEffect(() => {
-    setReportData(null);
-    setReportHistory([]);
+    let cancelled = false;
+    const caseId = activeCase?.id;
+
     setSelectedHistoryId(null);
     setViewingHistory(null);
-    if (activeCase?.id) {
-      loadLatestReport();
-      loadReportHistory();
+    setReportData(null);
+    setReportLoadError(null);
+    setIsLoadingReport(false);
+
+    if (!caseId) {
+      setReportHistory([]);
+      return;
     }
+
+    // Load only the saved Report History on open; keep the report view blank
+    // until the user selects a history item or generates a new version.
+    const cachedHistory = getCachedHistory(caseId) || [];
+    setReportHistory(cachedHistory);
+
+    const loadHistoryOnly = async () => {
+      await loadReportHistory();
+      if (cancelled) return;
+    };
+
+    void loadHistoryOnly();
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeCase?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------------------
@@ -126,16 +264,22 @@ export const Reports: React.FC = () => {
   const handleRegenerate = async () => {
     if (!activeCase?.id) return;
     setIsGenerating(true);
+    setReportLoadError(null);
     try {
       const res = await reportsApi.generate(activeCase.id);
       if (res?.data) {
-        setReportData(res.data as BackendReport);
-        setSelectedHistoryId(null);
-        logAuditAction('REPORT_GENERATED', 'case', activeCase.id, {
-          version: (res.data as BackendReport).version,
+        const nextReport = res.data as BackendReport;
+        setCachedReport(activeCase.id, nextReport);
+        setReportData(nextReport);
+        deleteCachedHistory(activeCase.id);
+        await loadReportHistory();
+        const latestList = await fetchReportHistoryDeduped(activeCase.id);
+        const matchingItem = latestList?.find((h) => h.version === nextReport.version);
+        setSelectedHistoryId(matchingItem?.id ?? null);
+        logAuditAction('report.generated', 'case', activeCase.id, {
+          version: nextReport.version,
         });
       }
-      await loadReportHistory();
     } catch (err) {
       console.warn('Could not generate report via backend:', err);
     } finally {
@@ -146,16 +290,19 @@ export const Reports: React.FC = () => {
   const handleViewSavedReport = async (item: ReportHistoryItem) => {
     if (!activeCase?.id) return;
     setLoadingHistoryReport(true);
+    setReportLoadError(null);
     try {
-      const res = await reportsApi.downloadSavedHtml(activeCase.id, item.id);
+      const res = await reportsApi.getSaved(activeCase.id, item.id);
       if (res.data) {
-        setViewingHistory({ item, html: res.data });
+        setReportData(res.data as BackendReport);
         setSelectedHistoryId(item.id);
+        setViewingHistory(null);
       } else {
-        throw new Error(res.error || 'Could not load saved report HTML');
+        throw new Error(res.error || 'Could not load saved report');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Could not open saved report:', err);
+      setReportLoadError(err?.message || 'Could not load saved report.');
     } finally {
       setLoadingHistoryReport(false);
     }
@@ -171,19 +318,18 @@ export const Reports: React.FC = () => {
       if (res.error) throw new Error(res.error);
 
       const nextHistory = reportHistory.filter((saved) => saved.id !== item.id);
+      setCachedHistory(activeCase.id, nextHistory);
       setReportHistory(nextHistory);
       if (viewingHistory?.item.id === item.id) setViewingHistory(null);
       const deletingDisplayedReport =
         selectedHistoryId === item.id ||
         (!selectedHistoryId && reportData?.version === item.version);
       if (deletingDisplayedReport) {
+        deleteCachedReport(activeCase.id);
         setSelectedHistoryId(null);
-        if (nextHistory.length > 0) {
-          await loadLatestReport();
-        } else {
-          setReportData(null);
-        }
+        setReportData(null);
       }
+      deleteCachedHistory(activeCase.id);
       await loadReportHistory();
     } catch (err) {
       console.error('Could not delete saved report:', err);
@@ -214,7 +360,7 @@ export const Reports: React.FC = () => {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          logAuditAction('SAVED_REPORT_DOWNLOADED', 'case', activeCase.id, {
+          logAuditAction('report.downloaded', 'case', activeCase.id, {
             report_id: item.id, version: item.version, format: 'pdf',
           });
         }
@@ -230,7 +376,7 @@ export const Reports: React.FC = () => {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          logAuditAction('SAVED_REPORT_DOWNLOADED', 'case', activeCase.id, {
+          logAuditAction('report.downloaded', 'case', activeCase.id, {
             report_id: item.id, version: item.version, format: 'html',
           });
         }
@@ -259,7 +405,12 @@ export const Reports: React.FC = () => {
         a.download = `dcsre_${activeCase.id}_report_v${reportData?.version || '1.0'}.html`;
         a.click();
         URL.revokeObjectURL(url);
-        logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, { format: 'html' });
+        logAuditAction('report.exported', 'case', activeCase.id, {
+          report_id: reportData?.id || selectedHistoryId || null,
+          version: reportData?.version || '1.0',
+          report_hash: reportData?.report_hash || null,
+          format: 'html',
+        });
       }
     } catch (err) {
       console.error('Could not export the backend report as HTML:', err);
@@ -282,8 +433,11 @@ export const Reports: React.FC = () => {
     a.download = `dcsre_${activeCase.id}_report_v${reportData?.version || '1.0'}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, {
-      format: 'json', version: reportData?.version || '1.0',
+    logAuditAction('report.exported', 'case', activeCase.id, {
+      report_id: reportData?.id || selectedHistoryId || null,
+      version: reportData?.version || '1.0',
+      report_hash: reportData?.report_hash || null,
+      format: 'json',
     });
   };
 
@@ -307,8 +461,11 @@ export const Reports: React.FC = () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        logAuditAction('REPORT_EXPORTED', 'case', activeCase.id, {
-          format: 'pdf', version: reportData?.version || '1.0',
+        logAuditAction('report.exported', 'case', activeCase.id, {
+          report_id: reportData?.id || selectedHistoryId || null,
+          version: reportData?.version || '1.0',
+          report_hash: reportData?.report_hash || null,
+          format: 'pdf',
         });
         return;
       }
@@ -318,54 +475,6 @@ export const Reports: React.FC = () => {
       setIsDownloadingPdf(false);
     }
   };
-
-  // ---------------------------------------------------------------------------
-  // No case selected
-  // ---------------------------------------------------------------------------
-  if (!activeCase) {
-    return (
-      <div className="space-y-6">
-        <div className="p-6 bg-[#161413]/90 border border-[#2b2523] rounded-2xl backdrop-blur-xl text-center max-w-xl mx-auto space-y-4 my-12">
-          <div className="w-12 h-12 rounded-xl bg-[#2a140d] border border-[#ea580c]/30 flex items-center justify-center mx-auto text-[#f95721]">
-            <FolderLock className="w-6 h-6" />
-          </div>
-          <h2 className="text-lg font-bold text-[#fafaf9]">Select Investigation for Report Generation</h2>
-          <p className="text-xs text-[#a8a29e] leading-relaxed">
-            Choose an active investigation to compile its forensic reconstruction report.
-          </p>
-          {cases.length > 0 ? (
-            <div className="space-y-2 pt-2 text-left">
-              {cases.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setActiveCaseId(c.id)}
-                  className="w-full flex items-center justify-between p-3 rounded-xl bg-[#241e1b] hover:bg-[#342a26] border border-[#38312d] transition-colors group cursor-pointer text-xs"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="font-semibold text-[#fafaf9] group-hover:text-[#f95721] transition-colors">
-                      {c.name}
-                    </span>
-                    <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-[#100f0e] text-[#a8a29e] border border-[#282321]">
-                      {c.status}
-                    </span>
-                  </div>
-                  <span className="text-[#f95721] font-mono font-medium text-[11px]">Compile &rarr;</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <button
-              onClick={() => setCurrentPage('cases')}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#f95721] hover:bg-[#ea580c] text-white text-xs font-semibold transition-all shadow-[0_0_12px_rgba(249,87,33,0.3)] cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create First Investigation</span>
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   if (viewingHistory) {
     return (
@@ -386,44 +495,30 @@ export const Reports: React.FC = () => {
     );
   }
 
-  if (loadingHistoryReport) {
-    return <div className="p-10 text-center text-sm text-[#a8a29e]">Opening saved report…</div>;
-  }
-
-  if (!reportData) {
-    return (
-      <div className="max-w-xl mx-auto my-12 p-6 rounded-2xl border border-[#38312d] bg-[#161413]/90 text-center space-y-3">
-        {loadingReport ? <Loader2 className="w-5 h-5 animate-spin text-[#f95721] mx-auto" /> : null}
-        <p className="text-sm font-semibold text-[#fafaf9]">
-          {loadingReport ? 'Loading the saved report from the backend…' : 'Saved report data is unavailable.'}
-        </p>
-        {!loadingReport && (
-          <button onClick={loadLatestReport} className="px-3 py-1.5 rounded-lg bg-[#f95721] text-white text-xs font-semibold">
-            Retry
-          </button>
-        )}
-      </div>
-    );
-  }
-
   const rd = reportData;
-  const isDraft = rd.status === 'DRAFT';
-  const reportVersion = rd.version;
-  const lastGenerated = rd.generated_at;
-  const reportHash = rd.report_hash;
+  const isDraft = rd ? rd.status === 'DRAFT' : true;
+  const isStale = Boolean(rd?.stale);
+  const analysisNotRun = rd ? Boolean(rd.analysis_not_run) : true;
+  const emptySectionMsg = analysisNotRun
+    ? 'Analysis not run / no normalized events'
+    : 'None identified';
+  const reportVersion = rd?.version || '—';
+  const lastGenerated = rd?.generated_at || '';
+  const reportHash = rd?.report_hash;
 
-  const hosts = rd.compromised_assets?.hosts || [];
-  const users = rd.compromised_assets?.users || [];
-  const advIps = rd.compromised_assets?.adversary_infrastructure || [];
-  const observedIps = rd.compromised_assets?.observed_ips || [];
-  const entityGroups = rd.entity_groups;
-  const timeline = rd.attack_timeline_summary || [];
-  const detections = rd.mitre_coverage || [];
-  const evidenceRows = rd.chain_of_custody?.length ? rd.chain_of_custody : rd.evidence_manifest?.map((e: any) => ({
+  const hosts = rd?.compromised_assets?.hosts || [];
+  const users = rd?.compromised_assets?.users || [];
+  const advIps = rd?.compromised_assets?.adversary_infrastructure || [];
+  const observedIps = rd?.compromised_assets?.observed_ips || [];
+  const entityGroups = rd?.entity_groups;
+  const timeline = rd?.attack_timeline_summary || [];
+  const detections = rd?.mitre_coverage || [];
+  const evidenceRows = rd?.chain_of_custody?.length ? rd.chain_of_custody : rd?.evidence_manifest?.map((e: any) => ({
     ...e,
     hash_status: e.sha256_hash ? 'recorded (not re-verified)' : 'not recorded',
     uploaded_by: e.uploader || e.uploaded_by || 'Unattributed',
   })) || [];
+  const hasUploadedEvidence = evidenceRows.length > 0 || (activeCase?.evidence_count ?? 0) > 0;
 
   return (
     <div className="space-y-6">
@@ -437,27 +532,40 @@ export const Reports: React.FC = () => {
               <span>Forensic Incident Reconstruction Report</span>
             </h1>
             <p className="text-xs text-[#a8a29e] mt-0.5">
-              Edition: <span className="font-mono text-[#f95721] font-semibold">v{reportVersion}</span>
-              {' · '}Generated:{' '}
-              <span className="font-mono text-[#d6d3d1]">{lastGenerated.slice(0, 19).replace('T', ' ')} UTC</span>
-              {isDraft && (
-                <span className="ml-2 px-1.5 py-0.5 rounded bg-[#fef3c7]/20 text-[#fbbf24] border border-[#fbbf24]/30 text-[10px] font-bold font-mono">
-                  DRAFT
+              {rd ? (
+                <>
+                  Edition: <span className="font-mono text-[#f95721] font-semibold">v{reportVersion}</span>
+                  {' · '}Generated:{' '}
+                  <span className="font-mono text-[#d6d3d1]">{lastGenerated ? `${lastGenerated.slice(0, 19).replace('T', ' ')} UTC` : '—'}</span>
+                  {isDraft && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-[#fef3c7]/20 text-[#fbbf24] border border-[#fbbf24]/30 text-[10px] font-bold font-mono">
+                      DRAFT
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="font-mono text-[#a8a29e]">
+                  {!activeCase
+                    ? 'No investigation selected'
+                    : isLoadingReport
+                      ? 'Loading report summary…'
+                      : 'No report generated yet'}
                 </span>
               )}
             </p>
           </div>
 
-          {cases.length > 1 && (
+          {cases.length > 0 && (
             <div className="flex items-center gap-2 pl-4 border-l border-[#282321]">
               <span className="text-xs text-[#a8a29e] font-mono">Case:</span>
               <select
-                value={activeCase.id}
+                value={activeCase?.id || ''}
                 onChange={(e) => setActiveCaseId(e.target.value)}
                 className="bg-[#241e1b] border border-[#38312d] text-[#fafaf9] text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#f95721] font-mono cursor-pointer"
               >
+                {!activeCase && <option value="">-- Select Investigation --</option>}
                 {cases.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>{formatCaseNameWithId(c.name, c.id)}</option>
                 ))}
               </select>
             </div>
@@ -467,9 +575,9 @@ export const Reports: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={handleRegenerate}
-            disabled={isGenerating}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer disabled:opacity-60"
-            title="Compile current findings into a new saved report version"
+            disabled={!activeCase || isGenerating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title={activeCase ? 'Compile current findings into a new saved report version' : 'Select or create an investigation first'}
           >
             {isGenerating ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin text-[#f95721]" />
@@ -481,7 +589,8 @@ export const Reports: React.FC = () => {
 
           <button
             onClick={handleExportJson}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer"
+            disabled={!activeCase || !rd}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileCode className="w-3.5 h-3.5 text-[#f95721]" />
             <span>Export JSON</span>
@@ -489,7 +598,8 @@ export const Reports: React.FC = () => {
 
           <button
             onClick={handleExportHtml}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer"
+            disabled={!activeCase || !rd}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] border border-[#38312d] transition-colors font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download className="w-3.5 h-3.5 text-[#f95721]" />
             <span>Export HTML</span>
@@ -497,8 +607,8 @@ export const Reports: React.FC = () => {
 
           <button
             onClick={handleDownloadPdf}
-            disabled={isDownloadingPdf}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#f95721] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold transition-all shadow-[0_0_12px_rgba(249,87,33,0.3)] cursor-pointer"
+            disabled={!activeCase || !rd || isDownloadingPdf}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#f95721] hover:bg-[#ea580c] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-all shadow-[0_0_12px_rgba(249,87,33,0.3)] cursor-pointer"
           >
             {isDownloadingPdf ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -539,16 +649,18 @@ export const Reports: React.FC = () => {
         ) : (
           <div className="divide-y divide-[#26201e] border border-[#2b2523] rounded-xl overflow-hidden">
             {reportHistory.map((item) => {
-              const isCurrent = selectedHistoryId
-                ? item.id === selectedHistoryId
-                : item.version === reportVersion;
+              const isCurrent = Boolean(rd) && (
+                selectedHistoryId
+                  ? item.id === selectedHistoryId
+                  : item.version === reportVersion
+              );
               const isDownloading = downloadingReportId === item.id;
               return (
                 <div
                   key={item.id}
-                  className={`flex flex-wrap items-center justify-between gap-3 p-3 text-xs transition-colors ${
-                    isCurrent ? 'bg-[#241a15]/60' : 'bg-[#1a1715]/40 hover:bg-[#201c19]'
-                  }`}
+                  onClick={() => handleViewSavedReport(item)}
+                  className={`flex flex-wrap items-center justify-between gap-3 p-3 text-xs transition-colors cursor-pointer ${isCurrent ? 'bg-[#241a15]/60' : 'bg-[#1a1715]/40 hover:bg-[#201c19]'
+                    }`}
                 >
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-[#f95721] font-bold px-2 py-0.5 rounded bg-[#2b1810] border border-[#ea580c]/30 text-[11px]">
@@ -559,7 +671,7 @@ export const Reports: React.FC = () => {
                         <span>{item.title}</span>
                         {isCurrent && (
                           <span className="text-[10px] font-mono px-1.5 rounded bg-[#10b981]/20 text-[#34d399] border border-[#10b981]/30">
-                            Current
+                            Viewing
                           </span>
                         )}
                       </div>
@@ -571,7 +683,10 @@ export const Reports: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2 font-mono text-[11px]">
                     <button
-                      onClick={() => handleViewSavedReport(item)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewSavedReport(item);
+                      }}
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer"
                       title="View this saved report version"
                     >
@@ -579,7 +694,10 @@ export const Reports: React.FC = () => {
                       <span>View</span>
                     </button>
                     <button
-                      onClick={() => handleDownloadSavedVersion(item, 'pdf')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownloadSavedVersion(item, 'pdf');
+                      }}
                       disabled={isDownloading}
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer disabled:opacity-50"
                     >
@@ -591,14 +709,20 @@ export const Reports: React.FC = () => {
                       <span>PDF</span>
                     </button>
                     <button
-                      onClick={() => handleDownloadSavedVersion(item, 'html')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownloadSavedVersion(item, 'html');
+                      }}
                       disabled={isDownloading}
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#241e1b] hover:bg-[#342a26] text-[#a8a29e] hover:text-[#fafaf9] border border-[#38312d] transition-colors cursor-pointer disabled:opacity-50"
                     >
                       <span>HTML</span>
                     </button>
                     <button
-                      onClick={() => handleDeleteSavedReport(item)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSavedReport(item);
+                      }}
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#2a1513] hover:bg-[#471c18] text-[#fca5a5] border border-[#7f1d1d]/50 transition-colors cursor-pointer"
                       title="Delete this saved report version"
                     >
@@ -614,13 +738,62 @@ export const Reports: React.FC = () => {
       </div>
 
       {/* ── Forensic Report Document Body ─────────────────────────────────── */}
+      {loadingHistoryReport ? (
+        <div
+          id="forensic-report-container"
+          className="bg-[#161413]/95 border border-[#2b2523] rounded-2xl p-8 md:p-12 text-[#a8a29e] max-w-4xl mx-auto shadow-2xl backdrop-blur-xl text-center text-xs font-mono"
+        >
+          <Loader2 className="w-5 h-5 animate-spin text-[#f95721] mx-auto mb-2" />
+          Opening saved report…
+        </div>
+      ) : !rd ? (
+        <div
+          id="forensic-report-container"
+          className="bg-[#161413]/95 border border-dashed border-[#2b2523] rounded-2xl p-8 md:p-16 text-[#a8a29e] max-w-4xl mx-auto shadow-2xl backdrop-blur-xl min-h-[320px] flex flex-col items-center justify-center text-center space-y-3"
+        >
+          {reportLoadError && (
+            <p className="text-xs text-[#fca5a5] font-mono">{reportLoadError}</p>
+          )}
+          <p className="text-xs font-mono text-[#78716c]">
+            {!activeCase
+              ? 'Select an investigation above to view its report history or generate a new report.'
+              : reportHistory.length > 0
+                ? 'Select a saved report in Report History above to view it, or click "Generate New Version" to create a new report.'
+                : 'No report opened yet. Click "Generate New Version" above to compile a report.'}
+          </p>
+        </div>
+      ) : (
       <div
         id="forensic-report-container"
         className="bg-[#161413]/95 border border-[#2b2523] rounded-2xl p-4 sm:p-8 md:p-12 text-[#fafaf9] space-y-8 max-w-4xl mx-auto shadow-2xl backdrop-blur-xl print:bg-white print:text-black print:p-0 print:border-none print:shadow-none"
       >
 
+        {/* STALE banner */}
+        {isStale && (
+          <div className="no-print flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-[#dc2626]/15 border-2 border-[#dc2626]/60 text-[#fca5a5]">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[#f87171]" />
+              <p className="text-xs font-semibold font-mono leading-relaxed">
+                STALE: case changed after this report was generated - regenerate
+              </p>
+            </div>
+            <button
+              onClick={handleRegenerate}
+              disabled={isGenerating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#dc2626] hover:bg-[#b91c1c] text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60"
+            >
+              {isGenerating ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="w-3.5 h-3.5" />
+              )}
+              <span>{isGenerating ? 'Regenerating...' : 'Regenerate'}</span>
+            </button>
+          </div>
+        )}
+
         {/* DRAFT banner */}
-        {isDraft && (
+        {rd && isDraft && (
           <div className="flex items-start gap-3 p-4 rounded-xl bg-[#fef3c7]/10 border-2 border-[#d97706]/50 text-[#fbbf24] print:bg-yellow-50 print:border-yellow-400 print:text-yellow-800">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
             <p className="text-xs font-semibold font-mono leading-relaxed">
@@ -630,46 +803,84 @@ export const Reports: React.FC = () => {
           </div>
         )}
 
-        {/* Loading overlay */}
-        {loadingReport && (
-          <div className="flex items-center justify-center gap-3 py-8 text-[#a8a29e]">
-            <Loader2 className="w-5 h-5 animate-spin text-[#f95721]" />
-            <span className="text-sm font-mono">Loading report from backend…</span>
+        {/* Empty / No-evidence / No-report notice banner inside report layout */}
+        {(!activeCase || !rd || !hasUploadedEvidence) && (
+          <div className="no-print flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-[#100f0e] border border-[#38312d] text-[#d6d3d1]">
+            <div className="flex items-start gap-3">
+              <FolderLock className="w-4 h-4 mt-0.5 shrink-0 text-[#f95721]" />
+              <div className="space-y-1">
+                <p className="text-xs font-semibold font-mono text-[#fafaf9]">
+                  {!activeCase
+                    ? 'No investigation selected'
+                    : isLoadingReport && !rd
+                      ? 'Loading forensic report…'
+                      : !rd
+                        ? (reportLoadError || 'No report generated yet for this investigation')
+                        : 'No evidence files uploaded for this investigation yet'}
+                </p>
+                <p className="text-xs text-[#a8a29e]">
+                  {!activeCase
+                    ? (cases.length > 0
+                      ? 'Select an existing investigation from the Case dropdown above or upload evidence to start a new one.'
+                      : 'Create an investigation or upload evidence files to populate the report sections below.')
+                    : 'Upload forensic evidence files and generate a report version to populate findings, timeline steps, and indicators.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {!activeCase && cases.length === 0 && (
+                <button
+                  onClick={() => setCurrentPage('cases')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] border border-[#38312d] text-[#fafaf9] text-xs font-mono cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#f95721]" />
+                  <span>Create Investigation</span>
+                </button>
+              )}
+              <button
+                onClick={() => setCurrentPage('evidence')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#f95721] hover:bg-[#ea580c] text-white text-xs font-semibold cursor-pointer"
+              >
+                <span>Upload Evidence</span>
+              </button>
+            </div>
           </div>
         )}
+
+
 
         {/* Document Header */}
         <div className="border-b-2 border-[#282321] print:border-black pb-6 space-y-3">
           <div className="flex flex-wrap items-center justify-between text-xs font-mono text-[#a8a29e] print:text-gray-600 gap-2">
             <span>DCSRE FORENSIC EXAMINATION REPORT</span>
             <span className="uppercase text-[#f95721] print:text-black font-semibold">
-                            {rd?.classification || 'CONFIDENTIAL // TLP:AMBER - DFIR EVIDENTIARY'}
+              {rd?.classification || 'CONFIDENTIAL // TLP:AMBER - DFIR EVIDENTIARY'}
             </span>
           </div>
 
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#fafaf9] print:text-black">
-            {activeCase.name}
+            {activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : 'No Investigation Selected'}
           </h1>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono pt-2 text-[#a8a29e] print:text-gray-700">
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Case ID:</span>
-              <strong className="text-[#fafaf9] print:text-black">{activeCase.id}</strong>
+              <strong className="text-[#fafaf9] print:text-black">{activeCase?.id || '—'}</strong>
             </div>
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Lead Examiner:</span>
               <strong className="text-[#fafaf9] print:text-black">
-                {rd?.generator_name || activeCase.owner_name}
+                {rd?.generator_name || activeCase?.owner_name || currentUser?.name || '—'}
               </strong>
             </div>
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Report Date:</span>
-              <strong className="text-[#fafaf9] print:text-black">{lastGenerated.slice(0, 10)}</strong>
+              <strong className="text-[#fafaf9] print:text-black">{lastGenerated ? lastGenerated.slice(0, 10) : '—'}</strong>
             </div>
             <div>
               <span className="block text-[#78716c] print:text-gray-500">Status:</span>
               <strong className={`${isDraft ? 'text-[#fbbf24]' : 'text-[#86efac]'} print:text-black`}>
-                {rd?.status || 'DRAFT'}
+                {rd?.status || 'NO REPORT'}
               </strong>
             </div>
           </div>
@@ -688,7 +899,7 @@ export const Reports: React.FC = () => {
             <>
               <p className="text-xs text-[#d6d3d1] print:text-gray-800 leading-relaxed text-justify">
                 A digital forensic investigation was conducted for security incident:{' '}
-                <strong>{activeCase.name}</strong>. Analysis was performed using the Digital Crime
+                <strong>{activeCase?.name || 'Pending Case Selection'}</strong>. Analysis was performed using the Digital Crime
                 Scene Reconstruction Engine (DCSRE), using multi-format event normalization, Sigma
                 detection rules, and MITRE ATT&amp;CK framework mapping.
               </p>
@@ -763,7 +974,7 @@ export const Reports: React.FC = () => {
           <div className="space-y-3 font-mono text-xs">
             {timeline.length === 0 ? (
               <div className="p-4 bg-[#100f0e] border border-[#282321] rounded-xl text-center text-[#78716c] font-sans">
-                No attack timeline events recorded.
+                {analysisNotRun ? emptySectionMsg : 'No attack timeline events recorded.'}
               </div>
             ) : (
               timeline.map((evt: any, idx: number) => (
@@ -823,7 +1034,7 @@ export const Reports: React.FC = () => {
                 {detections.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="p-4 text-center text-[#78716c] font-sans">
-                      No detections recorded for this case.
+                      {analysisNotRun ? emptySectionMsg : 'No detections recorded for this case.'}
                     </td>
                   </tr>
                 ) : (
@@ -862,10 +1073,10 @@ export const Reports: React.FC = () => {
                 Hosts in Matching Findings:
               </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fafaf9] print:text-black">
-                {hosts.length > 0 ? (
-                  hosts.map(h => <li key={h}>{h}</li>)
+                {hosts.filter((h: string) => h !== 'None identified' && h !== 'Analysis not run / no normalized events').length > 0 ? (
+                  hosts.filter((h: string) => h !== 'None identified' && h !== 'Analysis not run / no normalized events').map(h => <li key={h}>{h}</li>)
                 ) : (
-                  <li className="text-[#78716c] list-none">None identified</li>
+                  <li className="text-[#78716c] list-none">{emptySectionMsg}</li>
                 )}
               </ul>
             </div>
@@ -876,10 +1087,10 @@ export const Reports: React.FC = () => {
                 Accounts in Matching Findings/Events:
               </span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#fafaf9] print:text-black">
-                {users.length > 0 ? (
-                  users.map(u => <li key={u}>{u}</li>)
+                {users.filter((u: string) => u !== 'None identified' && u !== 'Analysis not run / no normalized events').length > 0 ? (
+                  users.filter((u: string) => u !== 'None identified' && u !== 'Analysis not run / no normalized events').map(u => <li key={u}>{u}</li>)
                 ) : (
-                  <li className="text-[#78716c] list-none">None identified</li>
+                  <li className="text-[#78716c] list-none">{emptySectionMsg}</li>
                 )}
               </ul>
             </div>
@@ -892,15 +1103,15 @@ export const Reports: React.FC = () => {
               <ul className="list-disc pl-4 space-y-0.5 text-[#fca5a5] print:text-black">
                 {entityGroups?.adversary_infrastructure?.length ? (
                   entityGroups.adversary_infrastructure.map((item, index) => <li key={`${item.address}-${index}`}>{item.address} ({item.roles.join(', ') || 'Other Observed Addresses'})</li>)
-                ) : advIps.filter((ip: string) => ip !== 'None identified').length ? (
-                  advIps.filter((ip: string) => ip !== 'None identified').map((ip: string) => <li key={ip}>{ip}</li>)
+                ) : advIps.filter((ip: string) => ip !== 'None identified' && ip !== 'Analysis not run / no normalized events').length ? (
+                  advIps.filter((ip: string) => ip !== 'None identified' && ip !== 'Analysis not run / no normalized events').map((ip: string) => <li key={ip}>{ip}</li>)
                 ) : (
-                  <li className="text-[#78716c] list-none">None detected</li>
+                  <li className="text-[#78716c] list-none">{analysisNotRun ? emptySectionMsg : 'None detected'}</li>
                 )}
               </ul>
               <span className="text-[#a8a29e] print:text-gray-600 block text-[11px] font-semibold pt-2">Other Observed Addresses:</span>
               <ul className="list-disc pl-4 space-y-0.5 text-[#d6d3d1] print:text-gray-700">
-                {(entityGroups?.other_observed_addresses || observedIps.filter((ip: string) => !advIps.includes(ip))).filter((ip: string) => ip !== 'None identified').length ? (entityGroups?.other_observed_addresses || observedIps.filter((ip: string) => !advIps.includes(ip))).filter((ip: string) => ip !== 'None identified').map((ip: string) => <li key={ip}>{ip}</li>) : <li className="list-none text-[#78716c]">None identified</li>}
+                {(entityGroups?.other_observed_addresses || observedIps.filter((ip: string) => !advIps.includes(ip))).filter((ip: string) => ip !== 'None identified' && ip !== 'Analysis not run / no normalized events').length ? (entityGroups?.other_observed_addresses || observedIps.filter((ip: string) => !advIps.includes(ip))).filter((ip: string) => ip !== 'None identified' && ip !== 'Analysis not run / no normalized events').map((ip: string) => <li key={ip}>{ip}</li>) : <li className="list-none text-[#78716c]">{emptySectionMsg}</li>}
               </ul>
               <p className="text-[10px] text-[#78716c]">Observed network addresses are not classified as adversary infrastructure unless linked to a finding role.</p>
             </div>
@@ -918,16 +1129,16 @@ export const Reports: React.FC = () => {
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             6. Indicators
           </h2>
-          {(rd.indicators || []).length ? (
+          {(rd?.indicators || []).length ? (
             <div className="overflow-x-auto w-full">
               <table className="w-full text-left text-xs border border-[#282321] print:border-gray-400 font-mono min-w-[500px]">
                 <thead><tr className="bg-[#100f0e] print:bg-gray-100 text-[#a8a29e] print:text-gray-800"><th className="p-2">Type</th><th className="p-2">Indicator</th><th className="p-2">Role</th><th className="p-2">Source finding</th></tr></thead>
                 <tbody className="divide-y divide-[#282321] print:divide-gray-300">
-                  {rd.indicators!.map((indicator, index) => <tr key={`${indicator.type}-${indicator.value}-${index}`}><td className="p-2">{indicator.type}</td><td className="p-2 font-mono break-all">{indicator.value}</td><td className="p-2">{indicator.role || 'Observed'}</td><td className="p-2">{indicator.source_finding || 'Observed event'}</td></tr>)}
+                  {rd!.indicators!.map((indicator, index) => <tr key={`${indicator.type}-${indicator.value}-${index}`}><td className="p-2">{indicator.type}</td><td className="p-2 font-mono break-all">{indicator.value}</td><td className="p-2">{indicator.role || 'Observed'}</td><td className="p-2">{indicator.source_finding || 'Observed event'}</td></tr>)}
                 </tbody>
               </table>
             </div>
-          ) : <p className="text-xs text-[#78716c]">No indicators identified.</p>}
+          ) : <p className="text-xs text-[#78716c]">{analysisNotRun ? emptySectionMsg : 'No indicators identified.'}</p>}
         </section>
 
         {/* 7. Remediation Directives */}
@@ -935,7 +1146,7 @@ export const Reports: React.FC = () => {
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             7. Containment &amp; Remediation Directives
           </h2>
-          {rd.remediation && rd.remediation.length > 0 ? (
+          {rd?.remediation && rd.remediation.length > 0 ? (
             <ol className="list-decimal pl-5 space-y-2 text-xs text-[#d6d3d1] print:text-gray-800 font-sans leading-relaxed">
               {rd.remediation.map((r: any, i: number) => {
                 const action = typeof r === 'string' ? r : r.action;
@@ -952,7 +1163,7 @@ export const Reports: React.FC = () => {
                 );
               })}
             </ol>
-          ) : <p className="text-xs text-[#78716c]">No remediation directives recorded.</p>}
+          ) : <p className="text-xs text-[#78716c]">{analysisNotRun ? emptySectionMsg : 'No remediation directives recorded.'}</p>}
         </section>
 
         {/* 8. Chain of Custody & Attestation */}
@@ -981,7 +1192,7 @@ export const Reports: React.FC = () => {
             <div className="space-y-1">
               <div className="w-48 border-b border-[#38312d] print:border-black" />
               <div className="text-[#fafaf9] print:text-black font-semibold">
-                {rd?.generator_name || activeCase.owner_name}
+                {rd?.generator_name || activeCase?.owner_name || currentUser?.name || '—'}
               </div>
               <div className="text-[#78716c] print:text-gray-600 text-[11px]">
                 {rd?.generator_role || 'Senior Digital Forensics Examiner'}
@@ -997,7 +1208,7 @@ export const Reports: React.FC = () => {
                 </span>
               </div>
               <div className="text-[10px]">Generated via DCSRE Forensics Engine v{rd?.rule_set_version || '—'}</div>
-              {isDraft && (
+              {rd && isDraft && (
                 <div className="text-[#fbbf24] font-bold text-[10px]">STATUS: DRAFT</div>
               )}
             </div>
@@ -1005,6 +1216,7 @@ export const Reports: React.FC = () => {
         </section>
 
       </div>
+      )}
     </div>
   );
 };

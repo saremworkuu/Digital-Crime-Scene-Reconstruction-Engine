@@ -1,7 +1,0 @@
-timestamp,event_type,source,username,source_ip,destination_ip,destination_host,host,status,method,url,path,query_string,request,status_code,user_agent,message
-2026-10-18T09:14:02Z,login,sshd,analyst,10.20.0.17,10.20.0.22,fileserver-02,workstation-07,success,publickey,,,,,,,Accepted publickey for analyst from 10.20.0.17
-2026-10-18T09:18:44Z,privilege_use,sudo,svc_backup,10.20.0.17,10.20.0.22,fileserver-02,fileserver-02,success,,,,,,,,sudo command executed by svc_backup
-2026-10-18T09:21:03Z,login,sshd,svc_backup,10.20.0.22,10.20.0.31,db-01,fileserver-02,success,password,,,,,,,Accepted password for svc_backup from 10.20.0.22
-2026-10-18T09:22:17Z,remote_login,winrm,svc_backup,10.20.0.31,10.20.0.44,admin-workstation-01,db-01,success,ntlm,,,,,,,Remote session established for svc_backup
-2026-10-18T09:30:05Z,login,sshd,analyst,10.20.0.17,10.20.0.22,fileserver-02,workstation-07,success,publickey,,,,,,,Accepted publickey for analyst from 10.20.0.17
-2026-10-18T09:31:14Z,login,sshd,analyst,10.20.0.17,10.20.0.31,db-01,workstation-07,failed,password,,,,,,,Failed password for analyst from 10.20.0.17
