@@ -10,6 +10,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.events import EventResponse
 from app.core.permissions import get_authorized_case
+from app.services.event_ordering import sort_events
 
 router = APIRouter()
 
@@ -59,11 +60,12 @@ def _get_events_core(
             Event.details["severity"].astext.ilike(pattern)
         )
 
-    events = db.execute(
-        query.order_by(Event.timestamp.asc(), Event.id.asc())
-        .limit(limit)
-        .offset(offset)
-    ).scalars().all()
+    all_events = sort_events(
+        db.execute(
+            query.order_by(Event.timestamp.asc(), Event.id.asc())
+        ).scalars().all()
+    )
+    events = all_events[offset : offset + limit]
 
     return [EventResponse.model_validate(e) for e in events]
 

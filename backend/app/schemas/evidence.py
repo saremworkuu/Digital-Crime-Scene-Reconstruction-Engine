@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.db.models.evidence import ParsingStatus
 
 
+class EvidenceUploadResult(BaseModel):
+    filename: str
+    status: str
+    evidence: Optional["EvidenceResponse"] = None
+    error: Optional[str] = None
+
+
 class EvidenceResponse(BaseModel):
     id: uuid.UUID
     case_id: uuid.UUID
@@ -29,15 +36,15 @@ class EvidenceResponse(BaseModel):
     uploader_id: Optional[str] = None
     event_count: int = 0
     raw_sample: Optional[str] = None
+    duplicate: bool = False
+    duplicate_of: Optional[uuid.UUID] = None
+    extracted_results: Optional[List[EvidenceUploadResult]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class EvidenceUploadResult(BaseModel):
-    filename: str
-    status: str
-    evidence: Optional[EvidenceResponse] = None
-    error: Optional[str] = None
+EvidenceUploadResult.model_rebuild()
+EvidenceResponse.model_rebuild()
 
 
 class EvidenceBatchResponse(BaseModel):
@@ -45,6 +52,17 @@ class EvidenceBatchResponse(BaseModel):
     successful: int
     failed: int
     results: List[EvidenceUploadResult]
+
+
+class ZipExtractionStatusResponse(BaseModel):
+    evidence_id: uuid.UUID
+    case_id: uuid.UUID
+    status: str
+    parsing_status: ParsingStatus
+    total: int = 0
+    completed: int = 0
+    failed: int = 0
+    extracted_results: List[EvidenceUploadResult] = []
 
 
 class ReparseRequest(BaseModel):

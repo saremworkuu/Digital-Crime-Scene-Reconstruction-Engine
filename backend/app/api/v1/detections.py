@@ -63,12 +63,14 @@ def build_detection_response(
     ).scalars().all()
 
     rule_info = detection.rule_information or {}
-    matched_events = db.execute(
-        select(Event).where(
-            Event.case_id == detection.case_id,
-            Event.id.in_(event_ids),
-        ).order_by(Event.timestamp.asc())
-    ).scalars().all() if event_ids else []
+    matched_events = sort_events(
+        db.execute(
+            select(Event).where(
+                Event.case_id == detection.case_id,
+                Event.id.in_(event_ids),
+            ).order_by(Event.timestamp.asc())
+        ).scalars().all()
+    ) if event_ids else []
     if alias_map is None:
         case_events = db.execute(
             select(Event).where(Event.case_id == detection.case_id)
@@ -323,14 +325,17 @@ from app.services.detection_engine import (
     get_rule_coverage_matrix,
     BUILTIN_SIGMA_RULES,
 )
+from app.services.event_ordering import sort_events
 
 
 def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]:
-    events = db.execute(
-        select(Event)
-        .where(Event.case_id == case_id)
-        .order_by(Event.timestamp.asc(), Event.id.asc())
-    ).scalars().all()
+    events = sort_events(
+        db.execute(
+            select(Event)
+            .where(Event.case_id == case_id)
+            .order_by(Event.timestamp.asc(), Event.id.asc())
+        ).scalars().all()
+    )
     valid_ids = {event.id for event in events}
 
     # Preserve examiner false-positive decisions only when the exact finding
@@ -587,11 +592,13 @@ def get_case_rule_coverage(
     db: Session = Depends(get_db),
 ):
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=True)
-    events = db.execute(
-        select(Event)
-        .where(Event.case_id == case.id)
-        .order_by(Event.timestamp.asc(), Event.id.asc())
-    ).scalars().all()
+    events = sort_events(
+        db.execute(
+            select(Event)
+            .where(Event.case_id == case.id)
+            .order_by(Event.timestamp.asc(), Event.id.asc())
+        ).scalars().all()
+    )
     findings = execute_detections_on_events(events, case.id)
     for detector in (detect_macro_attachment_delivery, detect_smb_lateral_movement, detect_periodic_beaconing):
         findings.extend(detector(events))

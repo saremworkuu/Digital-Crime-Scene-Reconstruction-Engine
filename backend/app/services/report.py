@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 from .entity_classification import is_internal_ip, infrastructure_role
+from .event_ordering import sort_events
 
 from .report_fixes import (
     dedupe_detections,
@@ -108,6 +109,23 @@ def _looks_like_ip(value: Any) -> bool:
 # Main report builder
 # ---------------------------------------------------------------------------
 
+def is_container_evidence(ev: Any, event_count: Optional[int] = None) -> bool:
+    """Return True for archive container records (.zip) whose members are stored separately."""
+    if isinstance(ev, dict):
+        if ev.get("is_container") is not None:
+            return bool(ev.get("is_container"))
+        parser_used = str(ev.get("parser_used") or "").strip()
+        filename = str(ev.get("filename") or "").strip().lower()
+        count = ev.get("event_count", 0) if event_count is None else event_count
+    else:
+        parser_used = str(getattr(ev, "parser_used", "") or "").strip()
+        filename = str(getattr(ev, "filename", "") or "").strip().lower()
+        count = 0 if event_count is None else event_count
+    if parser_used == "ZipArchive":
+        return True
+    return filename.endswith(".zip") and int(count or 0) == 0
+
+
 def generate_forensic_report_data(
     case_dict: Dict[str, Any],
     evidence_list: List[Dict[str, Any]],
@@ -125,8 +143,10 @@ def generate_forensic_report_data(
     """
     case_id = str(case_dict.get("id", ""))
     case_name = case_dict.get("name", "Untitled Incident")
+    artifact_evidence = [ev for ev in evidence_list if not is_container_evidence(ev)]
+    events = sort_events(events)
     now_iso = _now_iso()
-    no_events_with_evidence = len(events) == 0 and len(evidence_list) > 0
+    no_events_with_evidence = len(events) == 0 and len(artifact_evidence) > 0
     analysis_not_run = bool(no_events_with_evidence or (analysis_ran is False))
     empty_section_text = (
         "Analysis not run / no normalized events"
@@ -136,10 +156,7 @@ def generate_forensic_report_data(
     if case_snapshot is not None:
         snapshot_data = dict(case_snapshot)
     else:
-        sorted_events = sorted(
-            events,
-            key=lambda ev: (str(ev.get("timestamp") or ""), str(ev.get("id") or ev.get("event_id") or "")),
-        )
+        sorted_events = events
         last_ev = sorted_events[-1] if sorted_events else None
         sorted_dets = sorted(
             detections,
@@ -147,7 +164,7 @@ def generate_forensic_report_data(
         )
         last_det = sorted_dets[-1] if sorted_dets else None
         snapshot_data = {
-            "evidence_count": len(evidence_list),
+            "evidence_count": len(artifact_evidence),
             "event_count": len(events),
             "detection_count": len(detections),
             "latest_event_id": str(last_ev.get("id") or last_ev.get("event_id") or "") if last_ev else None,
@@ -300,6 +317,17 @@ def generate_forensic_report_data(
                     infrastructure_roles.setdefault(str(destination), set()).add(support_role)
                     adversary_infra.add(str(destination))
 
+    detections = sorted(
+        detections,
+        key=lambda d: (
+            str(d.get("first_seen") or ""),
+            str(d.get("rule_name") or "").casefold(),
+            str(d.get("rule_id") or "").casefold(),
+            str(d.get("mitre_technique") or ""),
+            str(d.get("mitre_tactic") or ""),
+        ),
+    )
+
     # Include every event explicitly associated with a finding, as well as
     # separately marked attack-path events. Severity alone does not prove an
     # event is attack activity.
@@ -324,7 +352,7 @@ def generate_forensic_report_data(
         selected["mitre_technique"] = ", ".join(sorted({str(f.get("mitre_technique")) for f in linked_findings if f.get("mitre_technique")}))
         selected["source_record_references"] = [str((selected.get("details") or {}).get(k)) for k in ("source_record_id", "record_id", "event_record_id") if (selected.get("details") or {}).get(k)]
     attack_events = merge_timeline(
-        selected_events,
+        sort_events(selected_events),
         ip_map=ip_map,
     )
 
@@ -374,7 +402,7 @@ def generate_forensic_report_data(
                 if kind != "ip" or not _is_private(str(value)):
                     role = infrastructure_role(tactic=str(finding.get("mitre_tactic") or ""), field_role=str((finding.get("rule_information") or {}).get("infrastructure_role") or "")) if kind == "ip" else None
                     indicators.append({"type": kind, "value": str(value), "role": role, "source_finding": ref})
-    for evidence in evidence_list:
+    for evidence in artifact_evidence:
         evidence_name = str(evidence.get("filename") or "")
         if evidence_name:
             indicators.append({"type": "file", "value": evidence_name, "source_finding": "Evidence inventory"})
@@ -430,8 +458,8 @@ def generate_forensic_report_data(
             "ingested_at": ev.get("ingested_at"),
             "event_count": ev.get("event_count", 0),
             "size_bytes": ev.get("size_bytes", 0),
-            "hash_verified_at": ev.get("hash_verified_at"),
-            "document_artifact": (ev.get("event_count", 0) == 0 and str(ev.get("filename", "")).lower().endswith((".txt", ".pdf", ".docx", ".doc", ".eml", ".msg", ".md", ".rtf"))),
+            "is_container": is_container_evidence(ev),
+            "document_artifact": (ev.get("event_count", 0) == 0 and not is_container_evidence(ev) and str(ev.get("filename", "")).lower().endswith((".txt", ".pdf", ".docx", ".doc", ".eml", ".msg", ".md", ".rtf"))),
         })
 
     audit_count = len(audit_entries) if audit_entries else None
@@ -555,8 +583,8 @@ def generate_forensic_report_data(
     first_seen = timed_attack_events[0].get("timestamp") if timed_attack_events else None
     last_seen = timed_attack_events[-1].get("timestamp") if timed_attack_events else None
 
-    # Compute summary facts from evidence and detections
-    total_bytes = sum(ev.get("size_bytes") or ev.get("file_size") or 0 for ev in evidence_list)
+    # Compute summary facts from non-container evidence and detections
+    total_bytes = sum(ev.get("size_bytes") or ev.get("file_size") or 0 for ev in artifact_evidence)
     exfil_gib = None
     for f in detections:
         ri = f.get("rule_information") or {}
@@ -590,7 +618,7 @@ def generate_forensic_report_data(
 
     exec_summary = build_executive_summary(
         case_name=case_name,
-        n_evidence=len(evidence_list),
+        n_evidence=len(artifact_evidence),
         n_events=len(events),
         detections=detections,
         hosts=sorted(compromised_hosts),
@@ -602,7 +630,7 @@ def generate_forensic_report_data(
     )
 
     # ------------------------------------------------------------------
-    # Evidence manifest (all hashes)
+    # Evidence manifest (all non-container artifact hashes)
     # ------------------------------------------------------------------
     evidence_manifest = [
         {
@@ -618,7 +646,7 @@ def generate_forensic_report_data(
             "parsed_at": ev.get("parsed_at"),
             "uploader": ev.get("uploader_name", "Unknown"),
         }
-        for ev in evidence_list
+        for ev in artifact_evidence
     ]
 
     # ------------------------------------------------------------------

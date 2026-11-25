@@ -31,11 +31,15 @@ def get_attack_graph(
         allow_viewer=True,
     )
 
-    events = db.execute(
-        select(Event)
-        .where(Event.case_id == case.id)
-        .order_by(Event.timestamp.asc(), Event.id.asc())
-    ).scalars().all()
+    from app.services.event_ordering import sort_events
+
+    events = sort_events(
+        db.execute(
+            select(Event)
+            .where(Event.case_id == case.id)
+            .order_by(Event.timestamp.asc(), Event.id.asc())
+        ).scalars().all()
+    )
 
     detections = db.execute(select(Detection).where(Detection.case_id == case.id)).scalars().all()
     if not detections and events:

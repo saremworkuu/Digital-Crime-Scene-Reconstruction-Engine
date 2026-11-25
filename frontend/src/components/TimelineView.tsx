@@ -12,6 +12,8 @@ import { Download, Clock } from 'lucide-react';
 
 import { useApp } from '../store';
 
+import { compareEventsDeterministically } from '../utils/eventOrdering';
+
 
 
 interface TimelineViewProps {
@@ -36,15 +38,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ events }) => {
 
 
 
-  // Sort chronological ascending (FR-TIME-1)
+  // Sort chronological ascending with deterministic tie-breaking (FR-TIME-1)
 
   const sortedEvents = useMemo(() => {
 
-    return [...events].sort(
-
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-
-    );
+    return [...events].sort(compareEventsDeterministically);
 
   }, [events]);
 

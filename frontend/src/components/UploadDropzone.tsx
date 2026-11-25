@@ -52,8 +52,35 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
           name: result.filename,
           hash: result.sha256_hash,
           events: result.event_count,
-          status: result.status
+          status: result.duplicate ? 'Duplicate (already ingested)' : result.status
         });
+        if (result.duplicate && (!Array.isArray(result.extracted_results) || result.extracted_results.length === 0)) {
+          setErrorMessage(`Duplicate evidence skipped (already ingested in this case): ${result.filename}`);
+        }
+        if (Array.isArray(result.extracted_results) && result.extracted_results.length > 0) {
+          const failedMembers: string[] = [];
+          for (const member of result.extracted_results) {
+            uploadsSummary.push({
+              name: member.filename,
+              hash: member.evidence?.sha256_hash || '-',
+              events: member.evidence?.event_count ?? 0,
+              status:
+                member.status === 'duplicate'
+                  ? 'Duplicate (already ingested)'
+                  : member.status === 'success'
+                  ? (member.evidence?.status || 'Parsed')
+                  : 'Failed',
+            });
+            if (member.status === 'failed') {
+              failedMembers.push(`${member.filename}: ${member.error || 'Failed to parse'}`);
+            }
+          }
+          if (failedMembers.length > 0) {
+            setErrorMessage(`Some files inside ${file.name} failed: ${failedMembers.join('; ')}`);
+          } else if (result.duplicate) {
+            setErrorMessage(`Archive ${result.filename} was already ingested in this case; existing artifacts were reused.`);
+          }
+        }
       } catch (err: any) {
         setErrorMessage(`Failed to process ${file.name}: ${err.message}`);
       }
@@ -77,13 +104,13 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
     <div className="space-y-4">
       {/* Configuration & Dropzone Card */}
       <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-6 shadow-xl space-y-5">
-        
+
         {/* Top Controls */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#2b2523]">
           <div>
             <h3 className="text-sm font-semibold text-[#fafaf9]">Evidence Ingestion & Integrity Validator</h3>
             <p className="text-xs text-[#a8a29e] mt-0.5">
-              Supports Linux syslog, Windows EVTX/Sysmon, Web server logs, PCAP network captures, XML, JSON, CSV & TXT manifests.
+              Supports Linux syslog, Windows EVTX/Sysmon, Web server logs, PCAP network captures, XML, JSON, CSV, TXT & ZIP archives.
             </p>
           </div>
 
@@ -118,18 +145,17 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
             }
             fileInputRef.current?.click();
           }}
-          className={`w-full relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[180px] ${
-            isDragging
+          className={`w-full relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[180px] ${isDragging
               ? 'border-[#f95721] bg-[#2a140d]/40 shadow-[0_0_15px_rgba(249,87,33,0.3)]'
               : 'border-[#332c28] hover:border-[#f95721]/60 bg-[#110f0e]/80 hover:bg-[#141210]'
-          }`}
+            }`}
         >
           <input
             ref={fileInputRef}
             type="file"
             multiple
             className="hidden"
-            accept=".log,.txt,.evtx,.pcap,.pcapng,.csv,.json,.pdf,.xml"
+            accept=".log,.txt,.evtx,.pcap,.pcapng,.csv,.json,.pdf,.xml,.zip"
             onChange={(e) => handleFiles(e.target.files)}
           />
 
@@ -149,7 +175,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
                 )}
               </p>
               <p className="text-[11px] text-[#78716c] mt-1 font-mono">
-                Supported formats: PCAP, EVTX, LOG, TXT, CSV, JSON, XML, PDF (Max 100 MB per file)
+                Supported formats: PCAP, EVTX, LOG, TXT, CSV, JSON, XML, PDF, ZIP (Max 100 MB per file)
               </p>
             </div>
 

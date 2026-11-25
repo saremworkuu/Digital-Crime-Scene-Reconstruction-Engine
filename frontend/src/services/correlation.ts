@@ -1,5 +1,6 @@
 import { DetectionResult, NormalizedEvent } from '../types';
 import { isPrivateIpAddress } from '../utils/graphNodes';
+import { compareEventsDeterministically } from '../utils/eventOrdering';
 
 export const MIN_CHAIN_CONFIDENCE = 0.70;
 
@@ -98,7 +99,7 @@ export function correlateAttackChains(
 
     const linkedEvents = Array.from(grp.linkedIds)
       .map(id => eventsById.get(id)!)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort(compareEventsDeterministically);
 
     const startTimeMs = new Date(linkedEvents[0].timestamp).getTime();
     const endTimeMs = new Date(linkedEvents[linkedEvents.length - 1].timestamp).getTime();
@@ -133,7 +134,7 @@ export function correlateAttackChains(
       chainEvents.push(ev);
     }
 
-    chainEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    chainEvents.sort(compareEventsDeterministically);
 
     const chainEntities = new Set<string>();
     if (host && !UNKNOWN_HOSTS.has(host.toLowerCase())) chainEntities.add(`host:${host}`);

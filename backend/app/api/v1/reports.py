@@ -22,7 +22,13 @@ from app.db.models.report import Report
 from app.db.models.user import User
 from app.schemas.report import ForensicReportResponse
 from app.schemas.events import EventResponse
-from app.services.report import generate_forensic_report_data, render_report_html, render_report_pdf
+from app.services.report import (
+    generate_forensic_report_data,
+    is_container_evidence,
+    render_report_html,
+    render_report_pdf,
+)
+from app.services.event_ordering import sort_events
 from app.services.audit import log_audit_event
 from app.services.detection_engine import execute_detections_on_events
 from app.services.detection import (
@@ -48,21 +54,16 @@ def _iso_utc(val: Any) -> str | None:
 
 
 def _get_case_snapshot(case_id: uuid.UUID, db: Session) -> dict[str, Any]:
-    ev_count = int(
-        db.execute(select(func.count(Evidence.id)).where(Evidence.case_id == case_id)).scalar() or 0
+    ev_rows = db.execute(select(Evidence).where(Evidence.case_id == case_id)).scalars().all()
+    ev_count = sum(1 for row in ev_rows if not is_container_evidence(row))
+    case_events = sort_events(
+        db.execute(select(Event).where(Event.case_id == case_id)).scalars().all()
     )
-    evt_count = int(
-        db.execute(select(func.count(Event.id)).where(Event.case_id == case_id)).scalar() or 0
-    )
+    evt_count = len(case_events)
     det_count = int(
         db.execute(select(func.count(Detection.id)).where(Detection.case_id == case_id)).scalar() or 0
     )
-    last_ev = db.execute(
-        select(Event.id, Event.timestamp)
-        .where(Event.case_id == case_id)
-        .order_by(Event.timestamp.desc(), Event.id.desc())
-        .limit(1)
-    ).first()
+    last_ev = case_events[-1] if case_events else None
     last_det = db.execute(
         select(Detection.id, Detection.detected_at)
         .where(Detection.case_id == case_id)
@@ -148,9 +149,11 @@ def _compile_case_report(
         select(Evidence).where(Evidence.case_id == case.id)
     ).scalars().all()
 
-    events = db.execute(
-        select(Event).where(Event.case_id == case.id).order_by(Event.timestamp.asc(), Event.id.asc())
-    ).scalars().all()
+    events = sort_events(
+        db.execute(
+            select(Event).where(Event.case_id == case.id).order_by(Event.timestamp.asc(), Event.id.asc())
+        ).scalars().all()
+    )
     valid_event_ids = {str(event.id) for event in events}
 
     detections = db.execute(
@@ -260,17 +263,20 @@ def _compile_case_report(
             or getattr(e, "uploader_name", None)
             or (str(e.uploaded_by) if e.uploaded_by else "Unattributed")
         )
+        event_count_for_item = event_count_by_evidence.get(e.id, 0)
         evidence_list.append({
             "filename": e.filename,
             "sha256_hash": e.sha256_hash,
             "size_bytes": e.file_size,
             "hash_status": hash_status,
             "hash_verified_at": verification_time,
-            "event_count": event_count_by_evidence.get(e.id, 0),
+            "event_count": event_count_for_item,
             "uploaded_at": received_iso,
             "received_at": received_iso,
             "parsed_at": parsed_time_by_ev.get(ev_key),
             "uploader_name": uploader_name,
+            "parser_used": getattr(e, "parser_used", None),
+            "is_container": is_container_evidence(e, event_count_for_item),
         })
 
     event_dicts = []
@@ -292,6 +298,7 @@ def _compile_case_report(
             "src_ip": canonical.src_ip,
             "dst_ip": canonical.dst_ip,
             "evidence_id": str(ev.evidence_id) if ev.evidence_id else None,
+            "fingerprint": getattr(ev, "fingerprint", None),
             "source_record_id": (ev.details or {}).get("source_record_id") or (ev.details or {}).get("record_id") or (ev.details or {}).get("event_record_id"),
             "details": ev.details or {},
         })
@@ -348,7 +355,7 @@ def _compile_case_report(
     last_ev = events[-1] if events else None
     last_det = detections[-1] if detections else None
     snapshot = {
-        "evidence_count": len(evidence_records),
+        "evidence_count": sum(1 for item in evidence_list if not item.get("is_container")),
         "event_count": len(events),
         "detection_count": len(detections),
         "latest_event_id": str(last_ev.id) if last_ev else None,

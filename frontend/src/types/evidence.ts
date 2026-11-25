@@ -1,6 +1,13 @@
 export type EvidenceType = 'linux_auth' | 'web_server' | 'windows_evtx' | 'pcap_summary' | 'generic' | 'generic_json_csv';
 export type EvidenceStatus = 'Pending' | 'Hashing' | 'Parsing' | 'Parsed' | 'Failed';
 
+export interface ExtractedEvidenceResult {
+  filename: string;
+  status: string;
+  evidence?: EvidenceFile | null;
+  error?: string | null;
+}
+
 export interface EvidenceFile {
   id: string;
   caseId?: string;
@@ -25,4 +32,7 @@ export interface EvidenceFile {
   eventCount?: number;
   event_count: number;
   raw_sample?: string;
+  duplicate?: boolean;
+  duplicate_of?: string;
+  extracted_results?: ExtractedEvidenceResult[];
 }

@@ -17,6 +17,10 @@ export const evidenceApi = {
     return response.data;
   },
 
+  getZipStatus: async (caseId: string, evidenceId: string) => {
+    return apiClient.get<any>(`/evidence/cases/${caseId}/evidence/${evidenceId}/status`);
+  },
+
   reparse: async (evidenceId: string, parserType: ParserType) => {
     return apiClient.post<EvidenceFile>(`/evidence/${evidenceId}/reparse`, { parser_type: parserType });
   },

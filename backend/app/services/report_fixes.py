@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Set
 from .entity_classification import is_internal_ip
+from .event_ordering import sort_events
 
 # ---------------------------------------------------------------------------
 # 1. Tactic is derived from the technique ID, never trusted from rule defaults.
@@ -507,7 +508,16 @@ def dedupe_detections(
             fallback=m.get("mitre_tactic", "Unknown"),
             warnings=warnings,
         )
-    return sorted(out, key=lambda x: str(x.get("first_seen", "")))
+    return sorted(
+        out,
+        key=lambda x: (
+            str(x.get("first_seen") or ""),
+            str(x.get("rule_name") or "").casefold(),
+            str(x.get("rule_id") or "").casefold(),
+            str(x.get("mitre_technique") or ""),
+            str(x.get("mitre_tactic") or ""),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +612,7 @@ def resolve_hosts(hosts: Iterable[str], ip_map: Dict[str, str]) -> List[str]:
 def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]] = None,
                    max_rows: Optional[int] = None) -> List[Dict[str, Any]]:
     ip_map = ip_map or {}
+    events = sort_events(events)
     known_user_candidates: Dict[tuple, set] = {}
     for ev in events:
         timestamp = str(ev.get("timestamp", ""))[:19]
@@ -689,7 +700,7 @@ def merge_timeline(events: List[Dict[str, Any]], ip_map: Optional[Dict[str, str]
         else:
             e["corroborated_by"] = [src] if src else []
             merged[key] = e
-    rows = sorted(merged.values(), key=lambda x: str(x.get("timestamp", "")))
+    rows = sort_events(merged.values())
     return rows[:max_rows] if max_rows else rows
 
 

@@ -10,6 +10,8 @@ import { RawEventModal } from './RawEventModal';
 
 import { Eye, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 
+import { compareEventsDeterministically } from '../utils/eventOrdering';
+
 
 
 interface EventTableProps {
@@ -46,9 +48,9 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
 
       if (sortField === 'timestamp') {
 
-        valA = new Date(valA).getTime();
+        const cmp = compareEventsDeterministically(a, b);
 
-        valB = new Date(valB).getTime();
+        return sortAsc ? cmp : -cmp;
 
       }
 

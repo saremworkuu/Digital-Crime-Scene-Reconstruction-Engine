@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import ipaddress
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from .event_ordering import event_sort_key, sort_events
+
 
 MIN_CHAIN_CONFIDENCE: float = 0.70
 
@@ -61,6 +63,10 @@ def _normalize_event(e: Any) -> Dict[str, Any]:
             "event_type": ev_type,
             "category": category,
             "is_attack_path": bool(e.get("is_attack_path") or details.get("is_attack_path")),
+            "source_file": str(e.get("source_file") or details.get("source_file") or e.get("source") or ""),
+            "source_record_id": e.get("source_record_id") or details.get("source_record_id") or details.get("record_id") or details.get("event_record_id"),
+            "fingerprint": e.get("fingerprint") or "",
+            "details": details,
         }
 
     details = getattr(e, "details", {}) or {}
@@ -81,6 +87,10 @@ def _normalize_event(e: Any) -> Dict[str, Any]:
         "event_type": ev_type,
         "category": category,
         "is_attack_path": bool(details.get("is_attack_path", False)),
+        "source_file": str(details.get("source_file") or getattr(e, "source", "") or ""),
+        "source_record_id": details.get("source_record_id") or details.get("record_id") or details.get("event_record_id"),
+        "fingerprint": getattr(e, "fingerprint", "") or "",
+        "details": details,
     }
 
 
@@ -160,7 +170,7 @@ def correlate_attack_chains(
     if not events or not detections:
         return []
 
-    norm_events = [_normalize_event(e) for e in events]
+    norm_events = sort_events(_normalize_event(e) for e in events)
     events_by_id = {ev["id"]: ev for ev in norm_events if ev["id"]}
     if not events_by_id:
         return []
@@ -209,7 +219,7 @@ def correlate_attack_chains(
     for host, grp in groups.items():
         ordered_dets: List[Tuple[str, str]] = sorted(
             [(ts, tac) for ts, tac in grp["detections"] if tac],
-            key=lambda item: item[0],
+            key=lambda item: (item[0], item[1]),
         )
         distinct_tactics = {tac for _, tac in ordered_dets}
         if len(distinct_tactics) < 3:
@@ -219,8 +229,10 @@ def correlate_attack_chains(
         if confidence_score < min_confidence:
             continue
 
-        linked_events = [events_by_id[eid] for eid in grp["linked_ids"]]
-        linked_events.sort(key=lambda x: x["timestamp"])
+        linked_events = sorted(
+            (events_by_id[eid] for eid in grp["linked_ids"]),
+            key=lambda ev: (ev["timestamp"], event_sort_key(ev)[1:]),
+        )
         start_time = linked_events[0]["timestamp"]
         end_time = linked_events[-1]["timestamp"]
         start_sec = _parse_ts(start_time)
@@ -260,7 +272,10 @@ def correlate_attack_chains(
             chain_event_ids.add(ev["id"])
             chain_events.append(ev)
 
-        chain_events.sort(key=lambda x: x["timestamp"])
+        chain_events = sorted(
+            chain_events,
+            key=lambda ev: (ev["timestamp"], event_sort_key(ev)[1:]),
+        )
 
         chain_entities: Set[str] = set()
         if host and host.casefold() not in _UNKNOWN_HOSTS:

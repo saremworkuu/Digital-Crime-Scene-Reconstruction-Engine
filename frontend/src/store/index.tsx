@@ -15,6 +15,7 @@ import {
 import { INITIAL_SIGMA_RULES } from '../sample-data/sigma-rules';
 import { computeSHA256 } from '../services/hasher';
 import { parseEvidenceContent } from '../services/parsers';
+import { compareEventsDeterministically } from '../utils/eventOrdering';
 import {
   casesApi,
   evidenceApi,
@@ -1131,6 +1132,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             };
           });
 
+          loadedEvents.sort(compareEventsDeterministically);
           safeSetStorage(`dcsre_events_cache_${targetCaseId}`, JSON.stringify(loadedEvents));
           setEvents(prev => [
             ...prev.filter(e => e.case_id !== targetCaseId),
@@ -1441,10 +1443,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // Auto-detect parser if not explicitly overridden (FR-PARSE-9)
-    let detectedParser: ParserType = parserTypeOverride || 'generic_json_csv';
+    let detectedParser: ParserType | 'zip' = parserTypeOverride || 'generic_json_csv';
     const lowerName = file.name.toLowerCase();
+    const isZipUpload = lowerName.endsWith('.zip');
     if (!parserTypeOverride) {
-      if (lowerName.endsWith('.pcap') || lowerName.endsWith('.pcapng')) {
+      if (isZipUpload) {
+        detectedParser = 'zip';
+      } else if (lowerName.endsWith('.pcap') || lowerName.endsWith('.pcapng')) {
         detectedParser = 'pcap_summary';
       } else if (lowerName.endsWith('.evtx') || lowerName.endsWith('.xml')) {
         detectedParser = 'windows_evtx';
@@ -1468,7 +1473,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const fileHash = await computeSHA256(file);
     const formData = new FormData();
     formData.append('file', file);
-    if (parserTypeOverride) {
+    if (parserTypeOverride && !isZipUpload) {
       formData.append('parser_type', parserTypeOverride);
     }
     formData.append('file_type', detectedParser);
@@ -1481,6 +1486,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     loadedArtifactCasesRef.current.add(resolvedCaseId);
     effectiveCaseIdRef.current = resolvedCaseId;
     setActiveCaseId(resolvedCaseId);
+    let extractedResults = Array.isArray(backendEvid.extracted_results)
+      ? backendEvid.extracted_results
+      : undefined;
+    let resolvedStatus = backendEvid.status || (backendEvid.parsing_status === 'parsed' ? 'Parsed' : backendEvid.parsing_status === 'pending' ? 'Pending' : 'Failed');
+    let resolvedEventCount = backendEvid.event_count ?? 0;
+
+    if (isZipUpload && (backendEvid.parsing_status === 'pending' || resolvedStatus === 'Pending')) {
+      const deadline = Date.now() + 300000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        const statusRes = await evidenceApi.getZipStatus(resolvedCaseId, String(backendEvid.id));
+        const stData = statusRes?.data;
+        if (!stData) continue;
+        if (Array.isArray(stData.extracted_results)) {
+          extractedResults = stData.extracted_results;
+        }
+        if (stData.status !== 'pending' && stData.parsing_status !== 'pending') {
+          resolvedStatus = stData.status === 'failed' ? 'Failed' : 'Parsed';
+          resolvedEventCount = (extractedResults || []).reduce(
+            (sum: number, item: any) => sum + Number(item?.evidence?.event_count || 0),
+            0
+          );
+          break;
+        }
+      }
+    }
+
     const savedEvidence: EvidenceFile = {
       id: String(backendEvid.id),
       case_id: resolvedCaseId,
@@ -1491,10 +1523,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       uploaded_at: backendEvid.uploaded_at || new Date().toISOString(),
       uploader_name: backendEvid.uploader_name || currentUser?.name || 'Forensics Examiner',
       uploader_id: String(backendEvid.uploaded_by || backendEvid.uploader_id || currentUser?.id || ''),
-      status: backendEvid.status || (backendEvid.parsing_status === 'parsed' ? 'Parsed' : 'Failed'),
+      status: resolvedStatus,
       parser_used: backendEvid.parser_used || detectedParser,
-      event_count: backendEvid.event_count ?? 0,
-      raw_sample: backendEvid.raw_sample || ''
+      event_count: resolvedEventCount,
+      raw_sample: backendEvid.raw_sample || '',
+      duplicate: Boolean(backendEvid.duplicate),
+      duplicate_of: backendEvid.duplicate_of ? String(backendEvid.duplicate_of) : undefined,
+      extracted_results: extractedResults,
     };
     setEvidenceList(prev => {
       const next = [savedEvidence, ...prev.filter(ev => ev.id !== savedEvidence.id)];
@@ -1523,11 +1558,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     try {
-      // Sync database normalized events and detections
-      const [evtsRes, detsRes] = await Promise.all([
+      // Sync database evidence (for archives producing child records), normalized events, and detections
+      const [evidListRes, evtsRes, detsRes] = await Promise.all([
+        extractedResults ? evidenceApi.listByCase(resolvedCaseId) : Promise.resolve(null),
         eventsApi.listByCase(resolvedCaseId),
         detectionsApi.listByCase(resolvedCaseId)
       ]);
+      if (Array.isArray(evidListRes?.data)) {
+        const backendEvidence: EvidenceFile[] = evidListRes.data.map((be: any) => ({
+          id: String(be.id),
+          case_id: String(be.case_id || resolvedCaseId),
+          filename: be.filename,
+          file_type: be.file_type || 'generic_json_csv',
+          size_bytes: be.size_bytes ?? be.file_size ?? 0,
+          sha256_hash: be.sha256_hash || '',
+          uploaded_at: be.uploaded_at || new Date().toISOString(),
+          uploader_name: be.uploader_name || currentUser?.name || 'Unattributed',
+          uploader_id: String(be.uploaded_by || 'usr-admin'),
+          status: be.status || (be.parsing_status === 'parsed' ? 'Parsed' : be.parsing_status === 'failed' ? 'Failed' : 'Parsed'),
+          parser_used: be.parser_used || be.file_type,
+          event_count: be.event_count || 0,
+          raw_sample: be.raw_sample || ''
+        }));
+        safeSetStorage(`dcsre_evidence_cache_${resolvedCaseId}`, JSON.stringify(backendEvidence));
+        setEvidenceList(prev => [
+          ...prev.filter(e => e.case_id !== resolvedCaseId),
+          ...backendEvidence
+        ]);
+      }
       if (Array.isArray(evtsRes.data)) {
         const loadedEvents: NormalizedEvent[] = evtsRes.data.map((be: any) => {
           const rawMsg = be.raw || be.details?.raw_message || be.details?.raw || '';
@@ -1604,6 +1662,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           };
         });
 
+        loadedEvents.sort(compareEventsDeterministically);
         safeSetStorage(`dcsre_events_cache_${resolvedCaseId}`, JSON.stringify(loadedEvents));
         setEvents(prev => [...loadedEvents, ...prev.filter(e => e.case_id !== resolvedCaseId)]);
       }

@@ -1,12 +1,19 @@
 import hashlib
+import io
+import stat
+import tempfile
+import threading
 import uuid
 import logging
+import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from typing import Optional, List
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -18,7 +25,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from sqlalchemy import select, func, delete
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.dependencies import get_current_user
 from app.core.config import settings
@@ -40,6 +47,7 @@ from app.schemas.evidence import (
     EvidenceResponse,
     EvidenceUploadResult,
     EvidenceBatchResponse,
+    ZipExtractionStatusResponse,
     ReparseRequest,
 )
 from app.services.normalizer import normalize_records
@@ -55,7 +63,12 @@ from app.core.permissions import get_authorized_case
 router = APIRouter()
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+MAX_ZIP_FILES = 100
+MAX_ZIP_TOTAL_SIZE = 250 * 1024 * 1024  # 250 MB total extracted bytes across archive
 CHUNK_SIZE = 1024 * 1024  # 1 MB
+_ZIP_JUNK_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
+_ZIP_JOB_LOCK = threading.Lock()
+_ZIP_JOB_STATUS: dict[str, dict] = {}
 
 ALLOWED_EXTENSIONS = {
     "",
@@ -103,7 +116,13 @@ def _normalize_parser_slug(pname: Optional[str]) -> Optional[str]:
     return pname
 
 
-def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
+def to_evidence_response(
+    evidence: Evidence,
+    db: Session,
+    *,
+    duplicate: bool = False,
+    duplicate_of: Optional[uuid.UUID] = None,
+) -> EvidenceResponse:
     """Enriches Evidence with event counts and display labels matching frontend."""
     evt_count = db.execute(
         select(func.count(EventEvidence.event_id)).where(EventEvidence.evidence_id == evidence.id)
@@ -180,6 +199,8 @@ def to_evidence_response(evidence: Evidence, db: Session) -> EvidenceResponse:
         uploader_id=str(up_by),
         event_count=evt_count,
         raw_sample=raw_sample,
+        duplicate=duplicate,
+        duplicate_of=duplicate_of,
     )
 
 
@@ -346,15 +367,17 @@ def resolve_parser(file_path: Path, filename: str, parser_type: Optional[str] = 
     return get_parser(file_path, original_filename=filename)
 
 
-def _create_single_evidence(
+def _store_uploaded_file_and_record(
     request: Request,
     case_id: uuid.UUID | str,
     file: UploadFile,
     description: str,
     current_user: User,
     db: Session,
-    parser_type: Optional[str] = None,
-) -> Evidence:
+    *,
+    parser_name_for_audit: Optional[str] = None,
+) -> tuple[Evidence, Path, str, datetime, bool]:
+    """Validate, hash (SHA-256), deduplicate by (case_id, sha256), store bytes, create Evidence & audit entry."""
     case = get_authorized_case(
         case_id=case_id,
         current_user=current_user,
@@ -397,6 +420,11 @@ def _create_single_evidence(
     database_committed = False
 
     try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    try:
         with file_path.open("xb") as destination:
             while True:
                 chunk = file.file.read(CHUNK_SIZE)
@@ -417,6 +445,50 @@ def _create_single_evidence(
                 detail="Empty files are not allowed.",
             )
 
+        sha256_hex = sha256.hexdigest()
+
+        # Idempotency guard: never create a duplicate Evidence row or re-parse when
+        # the exact same byte content (SHA-256) is already stored in this case.
+        existing_ev = None
+        if isinstance(db, Session):
+            existing_ev = db.execute(
+                select(Evidence)
+                .where(
+                    Evidence.case_id == case.id,
+                    Evidence.sha256_hash == sha256_hex,
+                    Evidence.parsing_status.in_([ParsingStatus.PARSED, ParsingStatus.PENDING]),
+                )
+                .order_by(Evidence.uploaded_at.asc())
+            ).scalars().first()
+
+        if isinstance(existing_ev, Evidence):
+            if file_path.exists():
+                file_path.unlink()
+            log_audit_event(
+                db=db,
+                user=current_user,
+                action="evidence.duplicate_skipped",
+                resource=f"evidence:{existing_ev.id}",
+                request=request,
+                case_id=existing_ev.case_id,
+                timestamp=utc_now(),
+                details={
+                    **build_evidence_audit_details(
+                        filename=filename,
+                        file_size=file_size,
+                        file_type=file.content_type or "application/octet-stream",
+                        sha256_hash=sha256_hex,
+                        parser=parser_name_for_audit or getattr(existing_ev, "parser_used", None),
+                        events_extracted=0,
+                    ),
+                    "existing_evidence_id": str(existing_ev.id),
+                    "existing_filename": existing_ev.filename,
+                    "duplicate": True,
+                },
+            )
+            db.commit()
+            return existing_ev, Path(existing_ev.file_path), filename, existing_ev.uploaded_at, True
+
         received_at = utc_now()
         evidence = Evidence(
             case_id=case.id,
@@ -425,16 +497,14 @@ def _create_single_evidence(
             description=description or "",
             file_type=file.content_type or "application/octet-stream",
             file_path=str(file_path),
-            sha256_hash=sha256.hexdigest(),
+            sha256_hash=sha256_hex,
             file_size=file_size,
             uploaded_at=received_at,
             parsing_status=ParsingStatus.PENDING,
+            parser_used=parser_name_for_audit,
         )
         db.add(evidence)
         db.flush()
-
-        parser = resolve_parser(file_path, filename, parser_type)
-        canonical_parser = canonical_parser_name(parser.__class__.__name__) if parser is not None else None
 
         log_audit_event(
             db=db,
@@ -450,7 +520,7 @@ def _create_single_evidence(
                     file_size=evidence.file_size,
                     file_type=evidence.file_type,
                     sha256_hash=evidence.sha256_hash,
-                    parser=canonical_parser,
+                    parser=parser_name_for_audit,
                     events_extracted=0,
                 ),
                 "received_at": received_at.isoformat(),
@@ -459,6 +529,509 @@ def _create_single_evidence(
         db.commit()
         database_committed = True
         db.refresh(evidence)
+        return evidence, file_path, filename, received_at, False
+
+    except Exception:
+        db.rollback()
+        if not database_committed and file_path.exists():
+            file_path.unlink()
+        raise
+
+
+def _validate_zip_member_path(raw_name: str) -> tuple[bool, Optional[str]]:
+    """Return (should_skip, leaf_filename) or raise HTTPException on unsafe traversal/symlink path."""
+    if "\x00" in raw_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsafe zip member path rejected: {raw_name!r}",
+        )
+    normalized = raw_name.replace("\\", "/")
+    if normalized.startswith("/") or (len(normalized) >= 2 and normalized[1] == ":"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Absolute path inside zip archive is not allowed: {raw_name}",
+        )
+    parts = PurePosixPath(normalized).parts
+    if any(part == ".." for part in parts):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Zip-slip path traversal detected in archive member: {raw_name}",
+        )
+    if any(part == "__MACOSX" for part in parts):
+        return True, None
+    leaf = PurePosixPath(normalized).name
+    if not leaf or leaf.lower() in _ZIP_JUNK_NAMES or leaf.startswith("._"):
+        return True, None
+    return False, leaf
+
+
+def _collect_safe_zip_members(zip_path: Path) -> List[tuple[zipfile.ZipInfo, str]]:
+    """Validate zip archive structure, block zip-slip/symlinks/zip-bombs, and return safe member list."""
+    try:
+        zf_ctx = zipfile.ZipFile(zip_path, "r")
+    except zipfile.BadZipFile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded .zip file is invalid or corrupted.",
+        )
+
+    members: List[tuple[zipfile.ZipInfo, str]] = []
+    total_streamed = 0
+
+    with zf_ctx as zf:
+        for info in zf.infolist():
+            mode = (info.external_attr >> 16) & 0o170000
+            if stat.S_ISLNK(mode):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Symbolic link inside zip archive is not allowed: {info.filename}",
+                )
+
+            if info.is_dir() or info.filename.endswith(("/", "\\")):
+                # Validate directory names for traversal too
+                _validate_zip_member_path(info.filename)
+                continue
+
+            should_skip, leaf_name = _validate_zip_member_path(info.filename)
+            if should_skip or not leaf_name:
+                continue
+
+            if len(members) >= MAX_ZIP_FILES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Zip archive exceeds maximum allowed limit of {MAX_ZIP_FILES} files.",
+                )
+
+            # Stream member to verify real uncompressed byte sizes (do not trust header metadata alone)
+            member_bytes = 0
+            try:
+                with zf.open(info, "r") as zmember:
+                    while True:
+                        chunk = zmember.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        member_bytes += len(chunk)
+                        total_streamed += len(chunk)
+                        if member_bytes > MAX_FILE_SIZE:
+                            raise HTTPException(
+                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                detail=f"Extracted member '{leaf_name}' exceeds the 100 MB limit.",
+                            )
+                        if total_streamed > MAX_ZIP_TOTAL_SIZE:
+                            raise HTTPException(
+                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                detail="Zip archive total uncompressed size exceeds the 250 MB safety limit.",
+                            )
+            except HTTPException:
+                raise
+            except Exception as ex:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Could not read zip member '{info.filename}': {ex}",
+                )
+
+            members.append((info, leaf_name))
+
+    return members
+
+
+def _process_zip_members_bg(
+    db_bind,
+    zip_evidence_id: uuid.UUID,
+    zip_case_id: uuid.UUID,
+    zip_filename: str,
+    zip_path: Path,
+    description: str,
+    user_id: uuid.UUID,
+    received_at: datetime,
+    safe_members: List[tuple[zipfile.ZipInfo, str]],
+    client_ip: str,
+    user_agent: str,
+) -> None:
+    """Extract and ingest zip archive members one by one in a background session."""
+    zip_key = str(zip_evidence_id)
+    audit_req = SimpleNamespace(
+        client=SimpleNamespace(host=client_ip),
+        headers={"user-agent": user_agent} if user_agent else {},
+    )
+    SessionFactory = sessionmaker(bind=db_bind, autoflush=False, autocommit=False)
+    bg_db = SessionFactory()
+    extracted_results: List[EvidenceUploadResult] = []
+    any_parsed = False
+
+    try:
+        bg_user = bg_db.get(User, user_id)
+        if bg_user is None:
+            raise RuntimeError(f"User {user_id} no longer available for zip extraction.")
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for info, leaf_name in safe_members:
+                spool = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024)
+                try:
+                    with zf.open(info, "r") as zmember:
+                        while True:
+                            chunk = zmember.read(CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            spool.write(chunk)
+                    spool.seek(0)
+
+                    member_upload = UploadFile(file=spool, filename=leaf_name)
+                    member_desc = (
+                        f"{description} (extracted from {zip_filename}: {info.filename})".strip()
+                        if description
+                        else f"Extracted from {zip_filename}: {info.filename}"
+                    )
+                    child_ev, member_is_dup = _create_single_evidence(
+                        request=audit_req,
+                        case_id=zip_case_id,
+                        file=member_upload,
+                        description=member_desc,
+                        current_user=bg_user,
+                        db=bg_db,
+                        parser_type=None,
+                        run_detections=False,
+                    )
+                    child_resp = to_evidence_response(
+                        child_ev,
+                        bg_db,
+                        duplicate=member_is_dup,
+                        duplicate_of=child_ev.id if member_is_dup else None,
+                    )
+                    if member_is_dup:
+                        extracted_results.append(
+                            EvidenceUploadResult(
+                                filename=leaf_name,
+                                status="duplicate",
+                                evidence=child_resp,
+                            )
+                        )
+                    elif child_ev.parsing_status == ParsingStatus.FAILED:
+                        extracted_results.append(
+                            EvidenceUploadResult(
+                                filename=leaf_name,
+                                status="failed",
+                                evidence=child_resp,
+                                error=child_ev.parsing_error or "Parsing failed.",
+                            )
+                        )
+                    else:
+                        any_parsed = True
+                        extracted_results.append(
+                            EvidenceUploadResult(
+                                filename=leaf_name,
+                                status="success",
+                                evidence=child_resp,
+                            )
+                        )
+                except Exception as ex:
+                    logging.warning("Zip member ingestion failed for %s: %s", leaf_name, ex)
+                    extracted_results.append(
+                        EvidenceUploadResult(
+                            filename=leaf_name,
+                            status="failed",
+                            evidence=None,
+                            error=str(getattr(ex, "detail", str(ex))),
+                        )
+                    )
+                finally:
+                    spool.close()
+
+                with _ZIP_JOB_LOCK:
+                    job = _ZIP_JOB_STATUS.get(zip_key)
+                    if job is not None:
+                        job["completed"] = len(extracted_results)
+                        job["failed"] = sum(1 for r in extracted_results if r.status == "failed")
+                        job["extracted_results"] = list(extracted_results)
+
+        if any_parsed:
+            try:
+                from app.api.v1.detections import _execute_case_detections
+                _execute_case_detections(zip_case_id, bg_db)
+            except Exception as de:
+                logging.warning("Error running detections after zip extraction: %s", de)
+
+        zip_ev = bg_db.get(Evidence, zip_evidence_id)
+        if zip_ev is not None:
+            parsed_at = utc_now()
+            success_count = sum(1 for r in extracted_results if r.status == "success")
+            dup_count = sum(1 for r in extracted_results if r.status == "duplicate")
+            failed_count = sum(1 for r in extracted_results if r.status == "failed")
+            zip_ev.parser_used = "ZipArchive"
+            zip_ev.parsing_status = (
+                ParsingStatus.PARSED
+                if (success_count + dup_count) > 0 or not extracted_results
+                else ParsingStatus.FAILED
+            )
+            zip_ev.parsing_error = (
+                f"{failed_count} member(s) failed inside archive."
+                if failed_count > 0 and (success_count + dup_count) == 0
+                else None
+            )
+            total_events_from_members = sum(
+                (r.evidence.event_count if r.evidence else 0) for r in extracted_results
+            )
+            log_audit_event(
+                db=bg_db,
+                user=bg_user,
+                action="evidence.parsed",
+                resource=f"evidence:{zip_ev.id}",
+                request=audit_req,
+                case_id=zip_ev.case_id,
+                timestamp=parsed_at,
+                details={
+                    **build_evidence_audit_details(
+                        filename=zip_ev.filename,
+                        file_size=zip_ev.file_size,
+                        file_type=zip_ev.file_type,
+                        sha256_hash=zip_ev.sha256_hash,
+                        parser="ZipArchive",
+                        events_extracted=total_events_from_members,
+                    ),
+                    "received_at": received_at.isoformat(),
+                    "parsed_at": parsed_at.isoformat(),
+                    "extracted_total": len(extracted_results),
+                    "extracted_succeeded": success_count,
+                    "extracted_duplicates": dup_count,
+                    "extracted_failed": failed_count,
+                },
+            )
+            bg_db.commit()
+
+        final_status = "parsed" if any_parsed or not extracted_results or any(r.status == "duplicate" for r in extracted_results) else "failed"
+        with _ZIP_JOB_LOCK:
+            _ZIP_JOB_STATUS[zip_key] = {
+                "status": final_status,
+                "total": len(safe_members),
+                "completed": len(extracted_results),
+                "failed": sum(1 for r in extracted_results if r.status == "failed"),
+                "extracted_results": list(extracted_results),
+            }
+    except Exception as exc:
+        logging.exception("Background zip extraction failed for %s", zip_filename)
+        try:
+            bg_db.rollback()
+            zip_ev = bg_db.get(Evidence, zip_evidence_id)
+            if zip_ev is not None:
+                zip_ev.parsing_status = ParsingStatus.FAILED
+                zip_ev.parsing_error = f"Archive extraction failed: {exc}"
+                bg_db.commit()
+        except Exception:
+            bg_db.rollback()
+        with _ZIP_JOB_LOCK:
+            _ZIP_JOB_STATUS[zip_key] = {
+                "status": "failed",
+                "total": len(safe_members),
+                "completed": len(extracted_results),
+                "failed": max(1, sum(1 for r in extracted_results if r.status != "success")),
+                "extracted_results": list(extracted_results),
+            }
+    finally:
+        bg_db.close()
+
+
+def _get_zip_status_payload(ev: Evidence, db: Session) -> dict:
+    """Return current archive extraction progress dict from memory or reconstruct from DB."""
+    with _ZIP_JOB_LOCK:
+        job = _ZIP_JOB_STATUS.get(str(ev.id))
+        if job is not None:
+            return {
+                "status": job["status"],
+                "total": job["total"],
+                "completed": job["completed"],
+                "failed": job["failed"],
+                "extracted_results": list(job["extracted_results"]),
+            }
+
+    marker = f"extracted from {ev.filename}:"
+    case_items = db.execute(
+        select(Evidence).where(Evidence.case_id == ev.case_id, Evidence.id != ev.id)
+    ).scalars().all()
+    results = []
+    for child in case_items:
+        if marker.lower() in str(child.description or "").lower():
+            resp = to_evidence_response(child, db)
+            results.append(
+                EvidenceUploadResult(
+                    filename=child.filename,
+                    status="failed" if child.parsing_status == ParsingStatus.FAILED else "success",
+                    evidence=resp,
+                    error=child.parsing_error,
+                )
+            )
+    status_str = "pending" if ev.parsing_status == ParsingStatus.PENDING else (
+        "failed" if ev.parsing_status == ParsingStatus.FAILED else "parsed"
+    )
+    return {
+        "status": status_str,
+        "total": len(results),
+        "completed": len(results),
+        "failed": sum(1 for r in results if r.status == "failed"),
+        "extracted_results": results,
+    }
+
+
+def _ingest_zip_evidence(
+    request: Request,
+    case_id: uuid.UUID | str,
+    file: UploadFile,
+    description: str,
+    current_user: User,
+    db: Session,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> tuple[Evidence, List[EvidenceUploadResult], bool]:
+    """Store and hash original .zip archive, validate safety limits, then schedule/run member ingestion."""
+    # Pre-validate zip archive in a temporary file before storing archive record so malicious zips
+    # (zip-slip / zip-bomb / corrupt) never leave partial records or extracted artifacts behind.
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    tmp_check = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024)
+    try:
+        total_zip_bytes = 0
+        while True:
+            chunk = file.file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            total_zip_bytes += len(chunk)
+            if total_zip_bytes > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="File exceeds the 100 MB limit.",
+                )
+            tmp_check.write(chunk)
+        if total_zip_bytes == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Empty files are not allowed.",
+            )
+        tmp_check.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as named_tmp:
+            named_tmp_path = Path(named_tmp.name)
+            while True:
+                buf = tmp_check.read(CHUNK_SIZE)
+                if not buf:
+                    break
+                named_tmp.write(buf)
+        try:
+            safe_members = _collect_safe_zip_members(named_tmp_path)
+        finally:
+            if named_tmp_path.exists():
+                named_tmp_path.unlink()
+    finally:
+        tmp_check.close()
+
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    zip_evidence, zip_path, _zip_filename, received_at, is_duplicate = _store_uploaded_file_and_record(
+        request=request,
+        case_id=case_id,
+        file=file,
+        description=description,
+        current_user=current_user,
+        db=db,
+        parser_name_for_audit="ZipArchive",
+    )
+
+    if is_duplicate:
+        existing_payload = _get_zip_status_payload(zip_evidence, db)
+        dup_results = [
+            EvidenceUploadResult(
+                filename=item.filename,
+                status="duplicate" if item.status == "success" else item.status,
+                evidence=(
+                    item.evidence.model_copy(
+                        update={"duplicate": True, "duplicate_of": item.evidence.id}
+                    )
+                    if item.evidence is not None
+                    else None
+                ),
+                error=item.error,
+            )
+            for item in existing_payload["extracted_results"]
+        ]
+        return zip_evidence, dup_results, True
+
+    zip_key = str(zip_evidence.id)
+    with _ZIP_JOB_LOCK:
+        _ZIP_JOB_STATUS[zip_key] = {
+            "status": "pending",
+            "total": len(safe_members),
+            "completed": 0,
+            "failed": 0,
+            "extracted_results": [],
+        }
+
+    client_ip = request.client.host if getattr(request, "client", None) else "0.0.0.0"
+    user_agent = request.headers.get("user-agent", "") if getattr(request, "headers", None) else ""
+    db_bind = db.get_bind()
+
+    if background_tasks is not None:
+        background_tasks.add_task(
+            _process_zip_members_bg,
+            db_bind,
+            zip_evidence.id,
+            zip_evidence.case_id,
+            zip_evidence.filename,
+            zip_path,
+            description,
+            current_user.id,
+            received_at,
+            safe_members,
+            client_ip,
+            user_agent,
+        )
+        return zip_evidence, [], False
+
+    _process_zip_members_bg(
+        db_bind,
+        zip_evidence.id,
+        zip_evidence.case_id,
+        zip_evidence.filename,
+        zip_path,
+        description,
+        current_user.id,
+        received_at,
+        safe_members,
+        client_ip,
+        user_agent,
+    )
+    db.refresh(zip_evidence)
+    with _ZIP_JOB_LOCK:
+        results = list((_ZIP_JOB_STATUS.get(zip_key) or {}).get("extracted_results") or [])
+    return zip_evidence, results, False
+
+
+def _create_single_evidence(
+    request: Request,
+    case_id: uuid.UUID | str,
+    file: UploadFile,
+    description: str,
+    current_user: User,
+    db: Session,
+    parser_type: Optional[str] = None,
+    run_detections: bool = True,
+) -> tuple[Evidence, bool]:
+    evidence, file_path, filename, received_at, is_duplicate = _store_uploaded_file_and_record(
+        request=request,
+        case_id=case_id,
+        file=file,
+        description=description,
+        current_user=current_user,
+        db=db,
+        parser_name_for_audit=None,
+    )
+    if is_duplicate:
+        return evidence, True
+
+    try:
+        parser = resolve_parser(file_path, filename, parser_type)
+        canonical_parser = canonical_parser_name(parser.__class__.__name__) if parser is not None else None
 
         # Parse evidence
         if parser is None:
@@ -503,11 +1076,12 @@ def _create_single_evidence(
                         "parsed_at": parsed_at.isoformat(),
                     },
                 )
-                try:
-                    from app.api.v1.detections import _execute_case_detections
-                    _execute_case_detections(evidence.case_id, db)
-                except Exception as de:
-                    logging.warning("Error running detections post-upload: %s", de)
+                if run_detections:
+                    try:
+                        from app.api.v1.detections import _execute_case_detections
+                        _execute_case_detections(evidence.case_id, db)
+                    except Exception as de:
+                        logging.warning("Error running detections post-upload: %s", de)
             except Exception as pe:
                 db.rollback()
                 evidence = db.get(Evidence, evidence.id)
@@ -517,12 +1091,10 @@ def _create_single_evidence(
 
         db.commit()
         db.refresh(evidence)
-        return evidence
+        return evidence, False
 
     except Exception:
         db.rollback()
-        if not database_committed and file_path.exists():
-            file_path.unlink()
         raise
 
 
@@ -530,6 +1102,7 @@ def _create_single_evidence(
 @router.post("/")
 def upload_evidence_batch(
     request: Request,
+    background_tasks: BackgroundTasks,
     case_id: uuid.UUID,
     files: Optional[List[UploadFile]] = File(None),
     file: Optional[UploadFile] = File(None),
@@ -553,7 +1126,25 @@ def upload_evidence_batch(
     if file is not None and not files:
         from fastapi.responses import JSONResponse
         from fastapi.encoders import jsonable_encoder
-        ev = _create_single_evidence(
+        if Path((file.filename or "").replace("\\", "/")).suffix.lower() == ".zip":
+            ev, extracted_results, is_dup = _ingest_zip_evidence(
+                request=request,
+                case_id=case_id,
+                file=file,
+                description=description,
+                current_user=current_user,
+                db=db,
+                background_tasks=background_tasks,
+            )
+            resp = to_evidence_response(
+                ev, db, duplicate=is_dup, duplicate_of=ev.id if is_dup else None
+            )
+            resp.extracted_results = extracted_results
+            return JSONResponse(
+                status_code=status.HTTP_201_CREATED,
+                content=jsonable_encoder(resp),
+            )
+        ev, is_dup = _create_single_evidence(
             request=request,
             case_id=case_id,
             file=file,
@@ -563,14 +1154,39 @@ def upload_evidence_batch(
         )
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
-            content=jsonable_encoder(to_evidence_response(ev, db)),
+            content=jsonable_encoder(
+                to_evidence_response(ev, db, duplicate=is_dup, duplicate_of=ev.id if is_dup else None)
+            ),
         )
 
     results = []
     for uploaded_file in upload_list:
         fname = uploaded_file.filename or "unnamed"
         try:
-            ev = _create_single_evidence(
+            if Path(fname.replace("\\", "/")).suffix.lower() == ".zip":
+                ev, extracted_results, is_dup = _ingest_zip_evidence(
+                    request=request,
+                    case_id=case_id,
+                    file=uploaded_file,
+                    description=description,
+                    current_user=current_user,
+                    db=db,
+                )
+                zip_resp = to_evidence_response(
+                    ev, db, duplicate=is_dup, duplicate_of=ev.id if is_dup else None
+                )
+                zip_resp.extracted_results = extracted_results
+                results.append(
+                    EvidenceUploadResult(
+                        filename=fname,
+                        status="duplicate" if is_dup else "success",
+                        evidence=zip_resp,
+                    )
+                )
+                results.extend(extracted_results)
+                continue
+
+            ev, is_dup = _create_single_evidence(
                 request=request,
                 case_id=case_id,
                 file=uploaded_file,
@@ -581,8 +1197,10 @@ def upload_evidence_batch(
             results.append(
                 EvidenceUploadResult(
                     filename=fname,
-                    status="success",
-                    evidence=to_evidence_response(ev, db),
+                    status="duplicate" if is_dup else "success",
+                    evidence=to_evidence_response(
+                        ev, db, duplicate=is_dup, duplicate_of=ev.id if is_dup else None
+                    ),
                 )
             )
         except Exception as ex:
@@ -597,8 +1215,8 @@ def upload_evidence_batch(
 
     return EvidenceBatchResponse(
         total=len(results),
-        successful=sum(r.status == "success" for r in results),
-        failed=sum(r.status != "success" for r in results),
+        successful=sum(r.status in ("success", "duplicate") for r in results),
+        failed=sum(r.status == "failed" for r in results),
         results=results,
     )
 
@@ -608,6 +1226,7 @@ def upload_evidence_batch(
 @router.post("/cases/{case_id}/evidence", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
 def upload_case_evidence(
     request: Request,
+    background_tasks: BackgroundTasks,
     case_id: str,
     file: UploadFile = File(...),
     description: Optional[str] = Form(""),
@@ -616,8 +1235,24 @@ def upload_case_evidence(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if Path((file.filename or "").replace("\\", "/")).suffix.lower() == ".zip":
+        ev, extracted_results, is_dup = _ingest_zip_evidence(
+            request=request,
+            case_id=case_id,
+            file=file,
+            description=description or "",
+            current_user=current_user,
+            db=db,
+            background_tasks=background_tasks,
+        )
+        resp = to_evidence_response(
+            ev, db, duplicate=is_dup, duplicate_of=ev.id if is_dup else None
+        )
+        resp.extracted_results = extracted_results
+        return resp
+
     actual_parser = parser_type or file_type
-    ev = _create_single_evidence(
+    ev, is_dup = _create_single_evidence(
         request=request,
         case_id=case_id,
         file=file,
@@ -626,7 +1261,40 @@ def upload_case_evidence(
         db=db,
         parser_type=actual_parser,
     )
-    return to_evidence_response(ev, db)
+    return to_evidence_response(
+        ev, db, duplicate=is_dup, duplicate_of=ev.id if is_dup else None
+    )
+
+
+@router.get("/cases/{case_id}/evidence/{evidence_id}/status", response_model=ZipExtractionStatusResponse)
+def get_zip_extraction_status(
+    case_id: str,
+    evidence_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return archive extraction progress and per-member ingestion statuses."""
+    case = get_authorized_case(
+        case_id=case_id,
+        current_user=current_user,
+        db=db,
+        allow_viewer=True,
+    )
+    ev = db.get(Evidence, evidence_id)
+    if ev is None or ev.case_id != case.id:
+        raise HTTPException(status_code=404, detail="Evidence not found.")
+
+    payload = _get_zip_status_payload(ev, db)
+    return ZipExtractionStatusResponse(
+        evidence_id=ev.id,
+        case_id=ev.case_id,
+        status=payload["status"],
+        parsing_status=ev.parsing_status,
+        total=payload["total"],
+        completed=payload["completed"],
+        failed=payload["failed"],
+        extracted_results=payload["extracted_results"],
+    )
 
 
 def _list_evidence_core(request: Request, case_id: uuid.UUID | str, current_user: User, db: Session):
