@@ -286,3 +286,144 @@ def test_report_stale_flag_and_banner_on_web_server_compromise_upload(tmp_path, 
             fastapi_app.dependency_overrides.pop(get_current_user, None)
         db.close()
         engine.dispose()
+
+
+def _extract_pdf_pages_text(pdf_bytes: bytes) -> list[str]:
+    """Decode each ReportLab PDF page stream separately in order."""
+    pages: list[str] = []
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream", pdf_bytes, flags=re.S):
+        raw = match.group(1).strip()
+        if raw.endswith(b"~>"):
+            try:
+                raw = base64.a85decode(raw[:-2], adobe=False)
+            except Exception:
+                pass
+        try:
+            raw = zlib.decompress(raw)
+        except Exception:
+            pass
+        text = raw.decode("latin-1", errors="ignore")
+        raw_literals = re.findall(r"\(((?:\\.|[^\\()])*)\)", text)
+        unescaped = [
+            s.replace(r"\(", "(").replace(r"\)", ")").replace(r"\\", "\\")
+            for s in raw_literals
+        ]
+        pages.append(re.sub(r"\s+", " ", " ".join(unescaped)).strip())
+    return pages
+
+
+def test_render_report_pdf_has_no_blank_pages_across_section_breaks():
+    """Dense multi-section reports and oversized cells must not emit header-only blank pages."""
+    case_dict = {"id": str(uuid.uuid4()), "name": "Dense Multi-Page Case"}
+    evidence = [
+        {
+            "filename": f"evidence_{i:02d}.log",
+            "sha256_hash": f"{i:02x}" * 32,
+            "size_bytes": 4096 + i * 17,
+            "event_count": 20,
+            "uploaded_at": f"2026-07-22T01:{i:02d}:00Z",
+            "uploader_name": "investigator",
+        }
+        for i in range(18)
+    ]
+    events = [
+        {
+            "id": f"ev-{i}",
+            "timestamp": f"2026-07-22T01:{i % 60:02d}:00Z",
+            "event_type": "web_access",
+            "source": "access.log",
+            "source_file": f"evidence_{i % 5:02d}.log",
+            "host": "WEB-01",
+            "user": f"user_{i % 6}",
+            "action": f"GET /product.php?id={i}&payload={'A' * 120}",
+            "severity": "high" if i % 2 == 0 else "medium",
+            "tactic": "Initial Access",
+            "technique": "T1190",
+            "source_ip": f"203.0.113.{(i % 40) + 10}",
+            "is_attack_path": True,
+        }
+        for i in range(55)
+    ]
+    detections = [
+        {
+            "rule_name": f"Detection Rule {i:02d}",
+            "mitre_technique": "T1190",
+            "mitre_tactic": "Initial Access",
+            "severity": "high",
+            "host": "WEB-01",
+            "timestamp": f"2026-07-22T01:{i:02d}:00Z",
+            "description": "Long detection description " + ("detail " * 28),
+        }
+        for i in range(12)
+    ]
+    report_data = generate_forensic_report_data(
+        case_dict=case_dict,
+        evidence_list=evidence,
+        events=events,
+        detections=detections,
+        analysis_ran=True,
+    )
+    pdf_bytes = render_report_pdf(report_data)
+    page_texts = _extract_pdf_pages_text(pdf_bytes)
+    assert len(page_texts) >= 4
+    total_pages = len(page_texts)
+    for page_num, txt in enumerate(page_texts, 1):
+        # Strip header/footer boilerplate and ensure substantial body content remains on every page.
+        body_only = re.sub(r"CONFIDENTIAL // TLP:AMBER.*?Page \d+ of \d+", "", txt).strip()
+        assert len(body_only) > 150, f"Blank or sparse page {page_num}/{total_pages}: {txt!r}"
+        assert f"Page {page_num} of {total_pages}" in txt
+
+    # Ensure sections appear in strict numeric order 1..8
+    full_text = "\n".join(page_texts)
+    positions = [
+        full_text.index("1. Executive Summary"),
+        full_text.index("2. Chain-of-Custody Evidence Manifest"),
+        full_text.index("3. Chronological Attack Sequence"),
+        full_text.index("4. Threat Detections"),
+        full_text.index("5. Compromised Scope"),
+        full_text.index("6. Indicators"),
+        full_text.index("7. Remediation Directives"),
+        full_text.index("8. Methodology"),
+    ]
+    assert positions == sorted(positions)
+
+
+def test_render_report_pdf_splits_oversized_cell_without_layout_error_or_blank_pages():
+    """Unbroken strings taller than one page must split across pages cleanly."""
+    report_data = generate_forensic_report_data(
+        case_dict={"id": str(uuid.uuid4()), "name": "Oversized Payload Case"},
+        evidence_list=[
+            {
+                "filename": "payload.log",
+                "sha256_hash": "c" * 64,
+                "size_bytes": 16384,
+                "event_count": 1,
+                "uploaded_at": "2026-07-22T02:00:00Z",
+                "uploader_name": "investigator",
+            }
+        ],
+        events=[
+            {
+                "id": "ev-big",
+                "timestamp": "2026-07-22T02:00:05Z",
+                "event_type": "process_exec",
+                "source": "sysmon",
+                "source_file": "payload.log",
+                "host": "APP-01",
+                "user": "www-data",
+                "action": "powershell -enc " + ("B" * 12000),
+                "severity": "critical",
+                "tactic": "Execution",
+                "technique": "T1059.001",
+                "is_attack_path": True,
+            }
+        ],
+        detections=[],
+        analysis_ran=True,
+    )
+    pdf_bytes = render_report_pdf(report_data)
+    page_texts = _extract_pdf_pages_text(pdf_bytes)
+    assert len(page_texts) >= 2
+    for idx, txt in enumerate(page_texts, 1):
+        body_only = re.sub(r"CONFIDENTIAL // TLP:AMBER.*?Page \d+ of \d+", "", txt).strip()
+        assert len(body_only) > 100, f"Blank page {idx}: {txt!r}"

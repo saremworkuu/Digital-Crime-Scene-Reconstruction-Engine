@@ -1033,7 +1033,7 @@ export const Reports: React.FC = () => {
         </div>
 
         {/* 1. Executive Summary */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             1. Executive Summary
           </h2>
@@ -1060,7 +1060,7 @@ export const Reports: React.FC = () => {
         </section>
 
         {/* 2. Digital Evidence Inventory */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1 flex flex-wrap items-center justify-between gap-2">
             <span>2. Digital Evidence Inventory &amp; Integrity Hashes</span>
             <span className="text-[10px] text-[#a8a29e] print:text-gray-600 font-normal flex items-center gap-1">
@@ -1112,7 +1112,7 @@ export const Reports: React.FC = () => {
         </section>
 
         {/* 3. Chronological Attack Sequence */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             3. Chronological Attack Sequence
           </h2>
@@ -1160,7 +1160,7 @@ export const Reports: React.FC = () => {
         </section>
 
         {/* 4. Threat Detections & MITRE ATT&CK */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             4. Adversary Tactics &amp; MITRE ATT&amp;CK Detections
           </h2>
@@ -1207,7 +1207,7 @@ export const Reports: React.FC = () => {
         </section>
 
         {/* 5. Observed Scope */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             5. Observed Scope &amp; Network Indicators
           </h2>
@@ -1271,7 +1271,7 @@ export const Reports: React.FC = () => {
         </section>
 
         {/* 6. Indicators from findings and evidence */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             6. Indicators
           </h2>
@@ -1288,7 +1288,7 @@ export const Reports: React.FC = () => {
         </section>
 
         {/* 7. Remediation Directives */}
-        <section className="space-y-3 print-break-inside-avoid">
+        <section className="space-y-3">
           <h2 className="text-sm font-bold uppercase tracking-wider text-[#f95721] print:text-black font-mono border-b border-[#282321] print:border-gray-300 pb-1">
             7. Containment &amp; Remediation Directives
           </h2>

@@ -118,19 +118,35 @@ body::-webkit-scrollbar {
 
 /* Print styles for Forensic Reports */
 @media print {
+  html, body, #root, main {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    padding-top: 0 !important;
+    margin: 0 !important;
+  }
   body {
     background-color: white !important;
     background-image: none !important;
     color: black !important;
   }
-  .no-print {
+  header, aside, nav, footer, canvas, .no-print {
     display: none !important;
   }
   .print-only {
     display: block !important;
   }
-  .print-break-inside-avoid {
+  h1, h2, h3, .print-break-after-avoid {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  tr, li, .print-break-inside-avoid {
     break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
   }
   .print-break-after-page {
     break-after: page;

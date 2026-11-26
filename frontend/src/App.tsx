@@ -139,7 +139,7 @@ const MainLayout: React.FC = () => {
   const isSplitScreenPage = currentPage === 'login' || currentPage === 'register' || currentPage === 'contact';
 
   return (
-    <div className={`min-h-screen pt-[61px] ${theme === 'light' ? 'bg-[#f8fafc] text-[#0f172a]' : 'bg-[#0e0d0d] text-[#e7e5e4]'} flex flex-col font-sans selection:bg-[#f95721]/30 selection:text-[#ff936b] relative overflow-x-hidden transition-colors duration-200`}>
+    <div className={`min-h-screen pt-[61px] print:pt-0 print:min-h-0 print:block ${theme === 'light' ? 'bg-[#f8fafc] text-[#0f172a]' : 'bg-[#0e0d0d] text-[#e7e5e4]'} flex flex-col font-sans selection:bg-[#f95721]/30 selection:text-[#ff936b] relative overflow-x-hidden print:overflow-visible transition-colors duration-200`}>
       {/* Subtle Interactive 3D Three.js Ambient Particle Constellation */}
       <Forensic3DBackdrop />
 
@@ -329,10 +329,10 @@ const MainLayout: React.FC = () => {
       )}
 
       {/* Main Body with Vertical Navigation Sidebar */}
-      <div className="flex-1 flex w-full relative z-10">
+      <div className="flex-1 flex w-full relative z-10 print:block">
         {/* Desktop Vertical Sidebar matching Image 2 */}
         {!isAuthPage && (
-          <div className="hidden lg:block shrink-0 sticky top-[61px] h-[calc(100vh-61px)] overflow-y-auto z-20">
+          <div className="no-print hidden lg:block shrink-0 sticky top-[61px] h-[calc(100vh-61px)] overflow-y-auto z-20">
             <SidebarNav className="h-full" />
           </div>
         )}

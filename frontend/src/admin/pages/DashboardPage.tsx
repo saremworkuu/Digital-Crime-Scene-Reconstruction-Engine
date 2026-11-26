@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { StatCard } from '../components/StatCard';
 import { StatusBadge } from '../components/StatusBadge';
+import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
 import {
   systemService,
@@ -74,8 +75,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateTab }) =
 
       setRecentAudit(audit.entries);
       setQueueJobs(summary.queue);
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Dashboard] Error loading metrics:', err);
+      toast.error('Failed to load admin overview: ' + (err?.message || 'Backend unavailable'));
     } finally {
       setIsLoading(false);
     }

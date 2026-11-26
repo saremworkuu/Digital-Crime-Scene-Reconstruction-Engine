@@ -1,5 +1,10 @@
 # Database session
 import logging
+import os
+import socket
+import time
+from urllib.parse import urlparse
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.compiler import compiles
@@ -18,37 +23,38 @@ def compile_uuid_sqlite(type_, compiler, **kw):
 def compile_jsonb_sqlite(type_, compiler, **kw):
     return "JSON"
 
-import socket
-from urllib.parse import urlparse
-
 db_url = settings.DATABASE_URL
 connect_args = {}
 
 if db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 else:
-    # Test socket availability before engine connect to avoid blocking on Windows TCP timeout
-    postgres_available = False
-    try:
-        parsed = urlparse(db_url)
-        host = parsed.hostname or "127.0.0.1"
-        port = parsed.port or 5432
-        with socket.create_connection((host, port), timeout=2.0):
-            postgres_available = True
-    except Exception:
-        postgres_available = False
+    parsed = urlparse(db_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 5432
+    is_local_host = host in ("127.0.0.1", "localhost", "::1")
+    is_deployed = bool(os.getenv("RENDER") or os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("FLY_APP_NAME"))
+    tcp_timeout = 2.0 if is_local_host else 6.0
+    pg_timeout = 2 if is_local_host else 10
 
-    if postgres_available:
-        try:
-            test_engine = create_engine(
-                db_url,
-                connect_args={"connect_timeout": 1} if "postgresql" in db_url else {}
-            )
-            with test_engine.connect() as conn:
-                pass
-            test_engine.dispose()
-        except Exception as e:
-            postgres_available = False
+    postgres_available = is_deployed
+    if not is_deployed:
+        for attempt in range(2):
+            try:
+                with socket.create_connection((host, port), timeout=tcp_timeout):
+                    postgres_available = True
+                test_engine = create_engine(
+                    db_url,
+                    connect_args={"connect_timeout": pg_timeout} if "postgresql" in db_url else {}
+                )
+                with test_engine.connect():
+                    pass
+                test_engine.dispose()
+                break
+            except Exception:
+                postgres_available = False
+                if attempt == 0 and not is_local_host:
+                    time.sleep(1.0)
 
     if not postgres_available:
         logger.warning(
@@ -56,6 +62,8 @@ else:
         )
         db_url = "sqlite:///dcsre.db"
         connect_args = {"check_same_thread": False}
+    elif "postgresql" in db_url:
+        connect_args = {"connect_timeout": pg_timeout}
 
 if db_url.startswith("sqlite"):
     engine = create_engine(
@@ -68,7 +76,7 @@ else:
     engine = create_engine(
         db_url,
         connect_args=connect_args,
-        pool_pre_ping=False,
+        pool_pre_ping=is_deployed,
         pool_size=10,
         max_overflow=20,
         pool_recycle=180,

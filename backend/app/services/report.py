@@ -899,7 +899,12 @@ def render_report_html(report_data: Dict[str, Any]) -> str:
     ul {{ padding-left: 20px; }}
     li {{ margin-bottom: 6px; font-size: 14px; }}
     .hash-line {{ font-size: 11px; font-family: monospace; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 8px; }}
-    @media print {{ body {{ padding: 0; }} }}
+    @media print {{
+      body {{ padding: 0; margin: 0; }}
+      h2, h3 {{ break-after: avoid; page-break-after: avoid; }}
+      thead {{ display: table-header-group; }}
+      tr, li {{ break-inside: avoid; page-break-inside: avoid; }}
+    }}
   </style>
 </head>
 <body>
@@ -962,10 +967,23 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+        SimpleDocTemplate, Paragraph, Table, TableStyle, HRFlowable, CondPageBreak
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.pdfgen import canvas
+
+    def _page_has_drawn_content(code_ops: list[str]) -> bool:
+        """Return True if ReportLab emitted visible painting operators on this page."""
+        paint_markers = (" Tj", " TJ", " Do", " S", " s", " f", " F", " B", " b", " re", " l", " sh")
+        for op in code_ops:
+            stripped = op.strip()
+            if not stripped:
+                continue
+            if stripped in ("q", "Q") or stripped.endswith(" cm"):
+                continue
+            if any(stripped.endswith(tok) or tok in stripped for tok in paint_markers):
+                return True
+        return False
 
     class NumberedCanvas(canvas.Canvas):
         def __init__(self, *args, **kwargs):
@@ -977,9 +995,15 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
             self._startPage()
 
         def save(self):
-            num_pages = len(self._saved_page_states)
-            for state in self._saved_page_states:
+            # Drop completely empty pages (e.g., spacer-only state) before stamping X of Y.
+            non_empty_states = [
+                state for state in self._saved_page_states
+                if _page_has_drawn_content(state.get("_code", []))
+            ] or self._saved_page_states[:1]
+            num_pages = len(non_empty_states)
+            for page_idx, state in enumerate(non_empty_states, 1):
                 self.__dict__.update(state)
+                self._pageNumber = page_idx
                 self.draw_page_decorations(num_pages)
                 super().showPage()
             super().save()
@@ -1012,17 +1036,49 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         textColor=colors.HexColor('#0f172a'), spaceAfter=3)
     h2_style = ParagraphStyle('SectionH2', parent=styles['Heading2'],
         fontName='Helvetica-Bold', fontSize=10.5, leading=13,
-        textColor=colors.HexColor('#ea580c'), spaceBefore=11, spaceAfter=5, keepWithNext=True)
+        textColor=colors.HexColor('#ea580c'), spaceBefore=11, spaceAfter=5, keepWithNext=False)
     body_style = ParagraphStyle('Body', parent=styles['Normal'],
-        fontName='Helvetica', fontSize=8.5, leading=12, textColor=colors.HexColor('#1e293b'))
+        fontName='Helvetica', fontSize=8.5, leading=12, textColor=colors.HexColor('#1e293b'),
+        spaceAfter=4)
     cell_style = ParagraphStyle('Cell', parent=styles['Normal'],
-        fontName='Helvetica', fontSize=7.5, leading=10, textColor=colors.HexColor('#1e293b'))
+        fontName='Helvetica', fontSize=7.5, leading=10, textColor=colors.HexColor('#1e293b'),
+        splitLongWords=1, wordWrap='CJK')
     cell_bold = ParagraphStyle('CellBold', parent=styles['Normal'],
-        fontName='Helvetica-Bold', fontSize=7.5, leading=10, textColor=colors.HexColor('#0f172a'))
+        fontName='Helvetica-Bold', fontSize=7.5, leading=10, textColor=colors.HexColor('#0f172a'),
+        splitLongWords=1, wordWrap='CJK')
     cell_code = ParagraphStyle('Code', parent=styles['Normal'],
-        fontName='Courier', fontSize=7, leading=9, textColor=colors.HexColor('#0369a1'))
+        fontName='Courier', fontSize=7, leading=9, textColor=colors.HexColor('#0369a1'),
+        splitLongWords=1, wordWrap='CJK')
     cell_crit = ParagraphStyle('Crit', parent=styles['Normal'],
-        fontName='Helvetica-Bold', fontSize=7, leading=9, textColor=colors.HexColor('#991b1b'))
+        fontName='Helvetica-Bold', fontSize=7, leading=9, textColor=colors.HexColor('#991b1b'),
+        splitLongWords=1, wordWrap='CJK')
+
+    frame_width = float(doc.width)
+    frame_height = float(doc.height)
+    max_cond_break = max(120.0, frame_height - 120.0)
+
+    def _build_table(rows: list, col_widths: list[int], style_cmds: list, repeat_rows: int = 1) -> Table:
+        tbl = Table(rows, colWidths=col_widths, repeatRows=repeat_rows, splitByRow=1, splitInRow=1)
+        tbl.setStyle(TableStyle(style_cmds))
+        return tbl
+
+    def _append_section(heading_text: str, section_flowables: list) -> None:
+        """Keep headings attached to their lead-in content without whole-table page breaks."""
+        h2 = Paragraph(heading_text, h2_style)
+        needed = h2.wrap(frame_width, frame_height)[1] + h2.getSpaceBefore() + h2.getSpaceAfter()
+        for item in section_flowables:
+            if isinstance(item, Table):
+                preview_rows = item._cellvalues[:min(2, len(item._cellvalues))]
+                preview_tbl = Table(preview_rows, colWidths=item._colWidths, repeatRows=0, splitByRow=1, splitInRow=1)
+                needed += min(preview_tbl.wrap(frame_width, frame_height)[1], 140.0)
+                break
+            elif hasattr(item, "wrap"):
+                needed += min(item.wrap(frame_width, frame_height)[1] + getattr(item, "getSpaceAfter", lambda: 0)(), 80.0)
+                if not isinstance(item, Paragraph):
+                    break
+        story.append(CondPageBreak(min(needed, max_cond_break)))
+        story.append(h2)
+        story.extend(section_flowables)
 
     story = []
 
@@ -1056,22 +1112,18 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
          Paragraph(f"<b>Version:</b> {html.escape(str(report_data.get('version', '1.0')))}", cell_style),
          Paragraph(f"<b>Status:</b> {html.escape(str(report_data.get('status', 'DRAFT')))}", cell_style)],
     ]
-    t = Table(meta, colWidths=[180, 180, 180])
-    t.setStyle(TableStyle([
+    t = _build_table(meta, [180, 180, 180], [
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
         ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
         ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-    ]))
+    ], repeat_rows=0)
     story.append(t)
-    story.append(Spacer(1, 6))
 
-    story.append(Paragraph("1. Executive Summary", h2_style))
-    story.append(Paragraph(html.escape(report_data.get("executive_summary", "None identified")), body_style))
-    story.append(Spacer(1, 4))
+    _append_section("1. Executive Summary", [
+        Paragraph(html.escape(report_data.get("executive_summary", "None identified")), body_style),
+    ])
 
-    story.append(Paragraph("2. Chain-of-Custody Evidence Manifest", h2_style))
-    story.append(Paragraph(html.escape(report_data.get("chain_of_custody_note", "")), body_style))
     ev_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Filename", "SHA-256 (full)", "Hash Status", "Uploaded By", "Uploaded At"]]]
     ev_rows = [
         [Paragraph(html.escape(str(c.get("filename",""))) + "<br/>" + html.escape(_format_size(c.get("size_bytes"))), cell_code),
@@ -1082,20 +1134,58 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         for c in _custody_entries(report_data)
     ]
     ev_table_data = ev_hdr + (ev_rows if ev_rows else [[Paragraph("None identified", cell_style)] + [""]*4])
-    t2 = Table(ev_table_data, colWidths=[90, 180, 60, 85, 125], repeatRows=1)
-    t2.setStyle(TableStyle([
+    t2 = _build_table(ev_table_data, [90, 180, 60, 85, 125], [
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
         ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
         ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
         ('WORDWRAP', (1,1), (1,-1), 1),
-    ]))
-    story.append(t2)
-    story.append(Spacer(1, 4))
+    ])
     artifact_names = [str(item.get("filename")) for item in report_data.get("evidence_manifest", []) if item.get("document_artifact")]
-    story.append(Paragraph("<b>Document artifacts:</b> " + (html.escape(", ".join(artifact_names)) if artifact_names else "None identified"), body_style))
+    _append_section("2. Chain-of-Custody Evidence Manifest", [
+        Paragraph(html.escape(report_data.get("chain_of_custody_note", "")), body_style),
+        t2,
+        Paragraph("<b>Document artifacts:</b> " + (html.escape(", ".join(artifact_names)) if artifact_names else "None identified"), ParagraphStyle('ArtifactsBody', parent=body_style, spaceBefore=4, spaceAfter=4)),
+    ])
 
-    story.append(Paragraph("5. Compromised Scope & Adversary Infrastructure", h2_style))
+    tl_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Event Time (UTC where source specifies it)", "Host", "User", "Tactic / Technique / Activity", "Source files / records"]]]
+    tl_rows = [
+        [Paragraph(html.escape(_format_timeline_time(ev)), cell_code),
+         Paragraph(html.escape(str(ev.get("host","N/A"))), cell_style),
+         Paragraph(html.escape(str(ev.get("user","N/A"))), cell_style),
+         Paragraph(html.escape(f"{ev.get('mitre_tactic', '')} {ev.get('mitre_technique', '')}: {ev.get('action', '')}"), cell_style),
+         Paragraph(html.escape("; ".join((ev.get("corroborated_by") or []) + [str(ev.get("source_file") or ev.get("source") or ""), ", ".join(ev.get("source_record_references") or [])]).strip("; ")), cell_style)]
+        for ev in report_data.get("attack_timeline_summary", [])
+    ]
+    tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph(empty_msg, cell_style)] + [""]*4])
+    t5 = _build_table(tl_data, [100, 80, 80, 165, 115], [
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ])
+    _append_section("3. Chronological Attack Sequence (event_time, UTC)", [t5])
+
+    det_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Rule", "Technique", "Tactic", "Severity", "Host", "First Seen", "Description"]]]
+    det_rows = [
+        [Paragraph(html.escape(str(d.get("rule_name",""))), cell_bold),
+         Paragraph(html.escape(", ".join(d.get("mitre_techniques_all") or [d.get("mitre_technique", "N/A")])), cell_code),
+         Paragraph(html.escape(str(d.get("mitre_tactic","N/A"))), cell_style),
+         Paragraph(str(d.get("severity","")).upper(), cell_crit if str(d.get("severity","")) in ("critical","high") else cell_style),
+         Paragraph(html.escape(str(d.get("target_host") or d.get("host","N/A"))), cell_style),
+         Paragraph(html.escape(_format_event_time(d.get("first_seen"))), cell_code),
+         Paragraph(html.escape(str(d.get("description",""))), cell_style)]
+        for d in report_data.get("mitre_coverage", [])
+    ]
+    det_data = det_hdr + (det_rows if det_rows else [[Paragraph(empty_msg, cell_style)] + [""]*6])
+    t4 = _build_table(det_data, [100, 55, 75, 45, 65, 75, 125], [
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ])
+    _append_section("4. Threat Detections", [t4])
+
     comp = report_data.get("compromised_assets", {})
     comp_data = [
         [Paragraph("<b>Entity Type</b>", cell_bold), Paragraph("<b>Identifier</b>", cell_bold), Paragraph("<b>Status</b>", cell_bold)]
@@ -1111,61 +1201,14 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         comp_data.append([Paragraph("Other Observed Address", cell_style), Paragraph(html.escape(str(ip)), cell_bold), Paragraph("Observed in evidence; no adversary role assigned", cell_style)])
     if len(comp_data) == 1:
         comp_data.append([Paragraph(empty_msg, cell_style), "", ""])
-    t3 = Table(comp_data, colWidths=[130, 220, 190], repeatRows=1)
-    t3.setStyle(TableStyle([
+    t3 = _build_table(comp_data, [130, 220, 190], [
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
         ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
         ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
-    story.append(t3)
-    story.append(Spacer(1, 4))
+    ])
+    _append_section("5. Compromised Scope & Adversary Infrastructure", [t3])
 
-    story.append(Paragraph("4. Threat Detections", h2_style))
-    det_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Rule", "Technique", "Tactic", "Severity", "Host", "First Seen", "Description"]]]
-    det_rows = [
-        [Paragraph(html.escape(str(d.get("rule_name",""))), cell_bold),
-         Paragraph(html.escape(", ".join(d.get("mitre_techniques_all") or [d.get("mitre_technique", "N/A")])), cell_code),
-         Paragraph(html.escape(str(d.get("mitre_tactic","N/A"))), cell_style),
-         Paragraph(str(d.get("severity","")).upper(), cell_crit if str(d.get("severity","")) in ("critical","high") else cell_style),
-         Paragraph(html.escape(str(d.get("target_host") or d.get("host","N/A"))), cell_style),
-         Paragraph(html.escape(_format_event_time(d.get("first_seen"))), cell_code),
-         Paragraph(html.escape(str(d.get("description",""))), cell_style)]
-        for d in report_data.get("mitre_coverage", [])
-    ]
-    det_data = det_hdr + (det_rows if det_rows else [[Paragraph(empty_msg, cell_style)] + [""]*6])
-    t4 = Table(det_data, colWidths=[100, 55, 75, 45, 65, 75, 125], repeatRows=1)
-    t4.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
-        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
-    story.append(t4)
-    story.append(Spacer(1, 4))
-
-    story.append(Paragraph("3. Chronological Attack Sequence (event_time, UTC)", h2_style))
-    tl_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ["Event Time (UTC where source specifies it)", "Host", "User", "Tactic / Technique / Activity", "Source files / records"]]]
-    tl_rows = [
-        [Paragraph(html.escape(_format_timeline_time(ev)), cell_code),
-         Paragraph(html.escape(str(ev.get("host","N/A"))), cell_style),
-         Paragraph(html.escape(str(ev.get("user","N/A"))), cell_style),
-         Paragraph(html.escape(f"{ev.get('mitre_tactic', '')} {ev.get('mitre_technique', '')}: {ev.get('action', '')}"), cell_style),
-         Paragraph(html.escape("; ".join((ev.get("corroborated_by") or []) + [str(ev.get("source_file") or ev.get("source") or ""), ", ".join(ev.get("source_record_references") or [])]).strip("; ")), cell_style)]
-        for ev in report_data.get("attack_timeline_summary", [])
-    ]
-    tl_data = tl_hdr + (tl_rows if tl_rows else [[Paragraph(empty_msg, cell_style)] + [""]*4])
-    t5 = Table(tl_data, colWidths=[100, 80, 80, 165, 115], repeatRows=1)
-    t5.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
-        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
-    story.append(t5)
-    story.append(Spacer(1, 4))
-
-    story.append(Paragraph("6. Indicators", h2_style))
     ind_hdr = [[Paragraph(f"<b>{x}</b>", cell_bold) for x in ("Type", "Indicator", "Role", "Source Finding")]]
     ind_rows = [
         [Paragraph(html.escape(str(item.get("type", ""))), cell_style),
@@ -1175,50 +1218,35 @@ def render_report_pdf(report_data: Dict[str, Any]) -> bytes:
         for item in report_data.get("indicators", [])
     ]
     ind_data = ind_hdr + (ind_rows if ind_rows else [[Paragraph(empty_msg, cell_style)] + [""] * 3])
-    ind_table = Table(ind_data, colWidths=[65, 230, 90, 155], repeatRows=1)
-    ind_table.setStyle(TableStyle([
+    ind_table = _build_table(ind_data, [65, 230, 90, 155], [
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
         ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
-    ]))
-    story.append(ind_table)
-    story.append(Spacer(1, 4))
+        ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ])
+    _append_section("6. Indicators", [ind_table])
 
-    story.append(Paragraph("7. Remediation Directives (generated from findings)", h2_style))
+    rem_style = ParagraphStyle('RemediationItem', parent=body_style, spaceAfter=2)
     rem_items = report_data.get("remediation", [])
+    rem_flowables = []
     if not rem_items:
-        story.append(Paragraph(empty_msg, body_style))
+        rem_flowables.append(Paragraph(empty_msg, rem_style))
     for idx, r in enumerate(rem_items, 1):
         action = r.get("action", r) if isinstance(r, dict) else str(r)
         refs = r.get("finding_refs", "") if isinstance(r, dict) else ""
         txt = f"<b>{idx}.</b> {html.escape(str(action))}"
         if refs:
             txt += f" <i>(findings: {html.escape(str(refs))})</i>"
-        story.append(Paragraph(txt, body_style))
-        story.append(Spacer(1, 2))
-
-    story.append(Paragraph("8. Methodology & Limitations", h2_style))
-    story.append(Paragraph(f"<b>Methodology:</b> {html.escape(report_data.get('methodology',''))}", body_style))
-    story.append(Spacer(1, 3))
-    story.append(Paragraph(f"<b>Limitations:</b> {html.escape(report_data.get('limitations',''))}", body_style))
-    story.append(Spacer(1, 6))
+        rem_flowables.append(Paragraph(txt, rem_style))
+    _append_section("7. Remediation Directives (generated from findings)", rem_flowables)
 
     hash_style = ParagraphStyle('Hash', parent=styles['Normal'],
-        fontName='Courier', fontSize=7, leading=9, textColor=colors.HexColor('#64748b'))
-    story.append(Paragraph(f"Report content SHA-256: {report_data.get('report_hash','not computed')}", hash_style))
-
-    # Keep the PDF's sequence, detections, and scope in the same section order
-    # as the HTML report (the builders share the underlying report data).
-    def _section_index(prefix: str) -> int:
-        return next(i for i, item in enumerate(story) if hasattr(item, "getPlainText") and item.getPlainText().startswith(prefix))
-    scope_start = _section_index("5. Compromised Scope")
-    detections_start = _section_index("4. Threat Detections")
-    sequence_start = _section_index("3. Chronological Attack Sequence")
-    indicators_start = _section_index("6. Indicators")
-    scope_block = story[scope_start:detections_start]
-    detections_block = story[detections_start:sequence_start]
-    sequence_block = story[sequence_start:indicators_start]
-    story[scope_start:indicators_start] = sequence_block + detections_block + scope_block
+        fontName='Courier', fontSize=7, leading=9, textColor=colors.HexColor('#64748b'), spaceBefore=4)
+    _append_section("8. Methodology & Limitations", [
+        Paragraph(f"<b>Methodology:</b> {html.escape(report_data.get('methodology',''))}", body_style),
+        Paragraph(f"<b>Limitations:</b> {html.escape(report_data.get('limitations',''))}", body_style),
+        Paragraph(f"Report content SHA-256: {report_data.get('report_hash','not computed')}", hash_style),
+    ])
 
     doc.build(story, canvasmaker=NumberedCanvas)
     return buf.getvalue()
