@@ -209,3 +209,27 @@ def test_change_password_updates_hash_revokes_old_token_and_rotates_access_token
         db.close()
         engine.dispose()
 
+
+def test_deployed_cors_origins_allowed():
+    from fastapi.testclient import TestClient
+    from app.main import app as fastapi_app
+
+    client = TestClient(fastapi_app)
+    for origin in [
+        "https://digital-crime-scene-reconstruction.vercel.app",
+        "https://digital-crime-scene-reconstruction-engine.vercel.app",
+        "https://digital-crime-scene-reconstruction-git-main-team.vercel.app",
+        "https://digital-crime-scene-reconstruction-engine.onrender.com",
+        "http://localhost:3000",
+    ]:
+        res = client.options(
+            "/api/v1/auth/login",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type,authorization",
+            },
+        )
+        assert res.status_code == 200, f"Origin blocked: {origin} -> {res.status_code} {res.text}"
+        assert res.headers.get("access-control-allow-origin") == origin
+

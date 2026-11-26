@@ -57,9 +57,9 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${token.trim()}`);
     }
 
-    // Hosted backends may need time to wake, and large evidence requests need
-    // considerably longer than the old four-second limit.
-    const timeoutMs = options.timeout ?? 60000;
+    // Hosted backends (such as Render free tier) may need time to wake from cold start,
+    // and large evidence requests need extra headroom.
+    const timeoutMs = options.timeout ?? 90000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -95,8 +95,16 @@ class ApiClient {
       return { data, status: response.status };
     } catch (err: any) {
       clearTimeout(timeoutId);
+      const rawMsg = String(err?.message || '');
+      const isNetworkBlocked =
+        err?.name === 'TypeError' ||
+        /networkerror|failed to fetch|load failed/i.test(rawMsg);
       return {
-        error: err.name === 'AbortError' ? 'Request timed out' : (err.message || 'Network request failed'),
+        error: err?.name === 'AbortError'
+          ? 'Request timed out (backend may still be waking up; please retry).'
+          : isNetworkBlocked
+            ? 'Unable to reach backend server (it may be waking up or blocked by CORS/network). Please wait a few seconds and try again.'
+            : (rawMsg || 'Network request failed'),
         status: 0,
       };
     }

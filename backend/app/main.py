@@ -26,6 +26,9 @@ for default_origin in [
     "http://127.0.0.1:3001",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://digital-crime-scene-reconstruction.vercel.app",
+    "https://digital-crime-scene-reconstruction-engine.vercel.app",
+    "https://digital-crime-scene-reconstruction-engine.onrender.com",
 ]:
     if default_origin not in origins:
         origins.append(default_origin)
@@ -33,12 +36,20 @@ for default_origin in [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*(vercel\.app|onrender\.com|netlify\.app)$|^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 app.state.limiter = limiter
 app.add_exception_handler(
