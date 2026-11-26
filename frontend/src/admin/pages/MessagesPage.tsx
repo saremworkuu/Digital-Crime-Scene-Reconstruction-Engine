@@ -1,10 +1,7 @@
 /**
  * MessagesPage (Contact Submissions Inbox)
- * Handles customer/investigator inquiries, incident escalations, and chain-of-custody requests.
- *
- * NOTE: For now this reads mock data only.
- * [INTEGRATION HOOK]: Connect the live FastAPI Contact submissions endpoint here
- * or inside `messagesService` when the production database table is deployed.
+ * Handles customer/investigator inquiries, incident escalations, and chain-of-custody requests
+ * backed by live FastAPI contact & admin endpoints.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -29,6 +26,7 @@ import { FilterBar } from '../components/FilterBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { messagesService, usersService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import {
   AdminContactMessage,
   MessageStatus,
@@ -43,12 +41,13 @@ export const MessagesPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [messages, setMessages] = useState<AdminContactMessage[]>([]);
-  const [total, setTotal] = useState(0);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const initialMessages = messagesService.getCachedMessages({ page: 1, limit: 10 });
+  const [messages, setMessages] = useState<AdminContactMessage[]>(() => initialMessages?.messages ?? []);
+  const [total, setTotal] = useState(() => initialMessages?.total ?? 0);
+  const [unreadCount, setUnreadCount] = useState(() => initialMessages?.unreadCount ?? 0);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(() => initialMessages?.totalPages ?? 1);
+  const [isLoading, setIsLoading] = useState(() => initialMessages === undefined);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -62,7 +61,7 @@ export const MessagesPage: React.FC = () => {
   const [isSendingReply, setIsSendingReply] = useState(false);
 
   // Examiners list for assignment
-  const [examiners, setExaminers] = useState<AdminUser[]>([]);
+  const [examiners, setExaminers] = useState<AdminUser[]>(() => usersService.getCachedUsers() ?? []);
 
   // Confirm Dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -78,17 +77,28 @@ export const MessagesPage: React.FC = () => {
   });
 
   const loadData = async (targetPage = page) => {
-    setIsLoading(true);
+    const filters = {
+      search,
+      status: statusFilter,
+      priority: priorityFilter,
+      category: categoryFilter,
+      page: targetPage,
+      limit: 10
+    };
+    const cached = messagesService.getCachedMessages(filters);
+    if (cached !== undefined) {
+      setMessages(cached.messages);
+      setTotal(cached.total);
+      setUnreadCount(cached.unreadCount);
+      setPage(cached.page);
+      setTotalPages(cached.totalPages);
+      setIsLoading(false);
+    } else if (messages.length === 0) {
+      setIsLoading(true);
+    }
     try {
       const [res, userList] = await Promise.all([
-        messagesService.getMessages({
-          search,
-          status: statusFilter,
-          priority: priorityFilter,
-          category: categoryFilter,
-          page: targetPage,
-          limit: 10
-        }),
+        messagesService.getMessages(filters),
         usersService.getUsers()
       ]);
 
@@ -113,6 +123,14 @@ export const MessagesPage: React.FC = () => {
   useEffect(() => {
     loadData(1);
   }, [search, statusFilter, priorityFilter, categoryFilter]);
+
+  useEffect(() => {
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/messages') || p.startsWith('/admin/users'))) {
+        loadData(1);
+      }
+    });
+  }, []);
 
   const handleOpenDetail = async (m: AdminContactMessage) => {
     setSelectedMessage(m);

@@ -5,8 +5,8 @@ from app.db.session import engine, SessionLocal
 from app.db.base import Base
 import app.db.models  # ensure all models registered
 from app.db.models.user import User, UserRole
+from app.db.models.system_settings import SystemSettings
 from app.core.security import hash_password
-from app.db.seed_admin_data import seed_admin_data
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +82,27 @@ def init_db():
                 department="Digital Forensic Incident Response (DFIR) Command",
                 two_factor_enabled=True,
                 status="active",
-                sessions=[
-                    {"id": "sess-01", "device": "Chrome 122 on macOS (Arm64)", "ip": "192.168.1.104", "last_active": "Just now"},
-                    {"id": "sess-02", "device": "Forensic Lab Workstation 01", "ip": "10.0.4.15", "last_active": "2 hours ago"}
-                ]
+                sessions=[],
             )
             db.add(admin)
             db.commit()
             logger.info("Seeded default admin user: saremworkuu@gmail.com")
 
-        # Seed all admin dashboard seed records
-        seed_admin_data(db)
-        logger.info("Admin seed data initialized successfully.")
+        # Ensure baseline SystemSettings configuration row exists without seeding fake/demo records
+        settings = db.query(SystemSettings).filter(SystemSettings.id == "default").first()
+        if not settings:
+            settings = SystemSettings(
+                id="default",
+                time_zone="UTC",
+                org_name="አሻራ Cyber Forensic Command",
+                retention_days=90,
+                min_password_length=12,
+                two_factor_enforced=False,
+                failed_login_lockout_limit=5,
+            )
+            db.add(settings)
+            db.commit()
+            logger.info("Initialized default SystemSettings configuration.")
     finally:
         db.close()
 

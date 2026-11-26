@@ -1,41 +1,53 @@
 import uuid
-from typing import List, Optional
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from typing import Dict, List, Optional
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, or_
 
 from app.core.permissions import require_admin
-from app.db.session import get_db
 from app.db.models.case import Case, CaseStatus
-from app.db.models.user import User
-from app.db.models.evidence import Evidence
 from app.db.models.case_assignment import CaseAssignment
-from app.db.models.audit_log import AuditLog
-from app.services.audit import log_audit_event
+from app.db.models.user import User
+from app.db.session import get_db
 from app.schemas.admin import (
-    AdminCaseResponse,
-    AdminCaseStatusUpdateRequest,
+    AdminCaseArchiveRequest,
     AdminCaseAssignRequest,
     AdminCaseLegalHoldRequest,
-    AdminCaseArchiveRequest,
+    AdminCaseResponse,
+    AdminCaseStatusUpdateRequest,
 )
+from app.services.audit import log_audit_event
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
-def to_admin_case_response(c: Case, db: Session) -> AdminCaseResponse:
-    from app.api.v1.evidence import count_case_artifacts
-    ev_count = count_case_artifacts(db, [c.id]).get(c.id, 0)
+def to_admin_case_response(
+    c: Case,
+    db: Session,
+    *,
+    artifact_counts: Optional[Dict[uuid.UUID, int]] = None,
+    assigned_by_case: Optional[Dict[uuid.UUID, List[str]]] = None,
+    owners_by_id: Optional[Dict[uuid.UUID, User]] = None,
+) -> AdminCaseResponse:
+    if artifact_counts is not None:
+        ev_count = artifact_counts.get(c.id, 0)
+    else:
+        from app.api.v1.evidence import count_case_artifacts
+        ev_count = count_case_artifacts(db, [c.id]).get(c.id, 0)
 
-    assigned_names = db.execute(
-        select(User.username)
-        .join(CaseAssignment, CaseAssignment.user_id == User.id)
-        .where(CaseAssignment.case_id == c.id)
-    ).scalars().all()
+    if assigned_by_case is not None:
+        assigned_names = assigned_by_case.get(c.id, [])
+    else:
+        assigned_names = list(
+            db.execute(
+                select(User.username)
+                .join(CaseAssignment, CaseAssignment.user_id == User.id)
+                .where(CaseAssignment.case_id == c.id)
+            ).scalars().all()
+        )
 
-    owner_u = db.get(User, c.created_by)
-    owner_name = owner_u.username if owner_u else "Sarem Worku"
+    owner_u = owners_by_id.get(c.created_by) if owners_by_id is not None else db.get(User, c.created_by)
+    owner_name = owner_u.username if owner_u else "Unknown"
 
     status_val = c.status.value if hasattr(c.status, "value") else str(c.status)
     created_str = c.created_at.isoformat() if hasattr(c.created_at, "isoformat") else str(c.created_at)
@@ -66,12 +78,11 @@ def resolve_case(case_id: str, db: Session) -> Case:
         if c and not c.is_deleted:
             return c
 
-    # Search by slug/name
     clean = case_id.replace("case-", "").replace("-", " ").strip()
     c = db.execute(
         select(Case).where(
             (Case.name.ilike(f"%{clean}%")) | (Case.description.ilike(f"%{clean}%")),
-            Case.is_deleted.is_(False)
+            Case.is_deleted.is_(False),
         )
     ).scalars().first()
 
@@ -88,27 +99,60 @@ def get_admin_cases(
     search: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    query = select(Case).where(Case.is_deleted.is_(False)).order_by(Case.created_at.desc())
+    query = select(Case).where(Case.is_deleted.is_(False))
+    if status and status != "all":
+        try:
+            query = query.where(Case.status == CaseStatus(status.lower()))
+        except Exception:
+            pass
+    if archived is not None:
+        query = query.where(Case.is_archived.is_(archived))
+    query = query.order_by(Case.created_at.desc())
+
     cases = db.execute(query).scalars().all()
+    if not cases:
+        return []
+
+    from app.api.v1.evidence import count_case_artifacts
+
+    case_ids = [c.id for c in cases]
+    artifact_counts = count_case_artifacts(db, case_ids)
+
+    assigned_rows = db.execute(
+        select(CaseAssignment.case_id, User.username)
+        .join(User, CaseAssignment.user_id == User.id)
+        .where(CaseAssignment.case_id.in_(case_ids))
+    ).all()
+    assigned_by_case: Dict[uuid.UUID, List[str]] = {}
+    for cid, uname in assigned_rows:
+        assigned_by_case.setdefault(cid, []).append(uname)
+
+    owner_ids = list({c.created_by for c in cases if c.created_by})
+    owners_by_id: Dict[uuid.UUID, User] = {}
+    if owner_ids:
+        for u in db.execute(select(User).where(User.id.in_(owner_ids))).scalars().all():
+            owners_by_id[u.id] = u
 
     results = []
+    search_q = search.lower().strip() if search else None
     for c in cases:
-        resp = to_admin_case_response(c, db)
-
+        resp = to_admin_case_response(
+            c,
+            db,
+            artifact_counts=artifact_counts,
+            assigned_by_case=assigned_by_case,
+            owners_by_id=owners_by_id,
+        )
         if status and status != "all" and resp.status.lower() != status.lower():
             continue
-        if archived is not None and resp.is_archived != archived:
-            continue
-        if search:
-            q = search.lower()
+        if search_q:
             if (
-                q not in resp.title.lower()
-                and q not in resp.owner.lower()
-                and q not in resp.description.lower()
-                and not any(q in inv.lower() for inv in resp.assigned_investigators)
+                search_q not in resp.title.lower()
+                and search_q not in resp.owner.lower()
+                and search_q not in resp.description.lower()
+                and not any(search_q in inv.lower() for inv in resp.assigned_investigators)
             ):
                 continue
-
         results.append(resp)
 
     return results
@@ -160,10 +204,6 @@ def assign_case_investigators(
     db: Session = Depends(get_db),
 ):
     c = resolve_case(case_id, db)
-
-    # Clear current assignments and re-assign
-    from app.db.models.case_assignment import CaseAssignment
-    from sqlalchemy import delete
 
     db.execute(delete(CaseAssignment).where(CaseAssignment.case_id == c.id))
 

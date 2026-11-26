@@ -49,19 +49,26 @@ def get_current_user(
                 user_id = payload.get("sub")
                 token_id = payload.get("jti")
 
-                if token_id:
-                    revoked_token = db.execute(
-                        select(RevokedToken).where(RevokedToken.jti == token_id)
-                    ).scalar_one_or_none()
-                    if revoked_token is not None:
-                        payload = None
-
-                if payload and user_id:
+                if user_id:
                     try:
                         user_uuid = uuid.UUID(str(user_id))
-                        user = db.get(User, user_uuid)
-                        if user and user.is_active:
-                            return user
+                        if token_id:
+                            row = db.execute(
+                                select(
+                                    User,
+                                    select(RevokedToken.jti)
+                                    .where(RevokedToken.jti == token_id)
+                                    .exists(),
+                                ).where(User.id == user_uuid, User.is_active.is_(True))
+                            ).first()
+                            if row is not None:
+                                user, is_revoked = row
+                                if not is_revoked:
+                                    return user
+                        else:
+                            user = db.get(User, user_uuid)
+                            if user and user.is_active:
+                                return user
                     except Exception:
                         pass
 

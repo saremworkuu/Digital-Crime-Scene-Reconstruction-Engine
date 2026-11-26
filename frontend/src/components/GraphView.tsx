@@ -391,6 +391,71 @@ export const GraphView: React.FC<GraphViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const exportSelectedNodeSummary = () => {
+    if (!selectedNode) return;
+    const roleLabel = ROLE_PALETTE[roleById.get(selectedNode.id) || 'internal_host'].label;
+    const nodeById = new Map(graphData.nodes.map(n => [n.id, n.label]));
+    const relatedEdges = graphData.edges.filter(
+      e => e.source === selectedNode.id || e.target === selectedNode.id
+    );
+
+    const lines: string[] = [
+      'DCSRE CORRELATION GRAPH - ENTITY EXPLANATION',
+      '==============================================',
+      `Case ID: ${activeCaseId || 'N/A'}`,
+      `Entity: ${selectedNode.label}`,
+      `Node ID: ${selectedNode.id}`,
+      `Type: ${selectedNode.type}`,
+      `Role: ${roleLabel}`,
+      `Status: ${selectedNode.is_compromised ? 'HIGHLIGHTED / FLAGGED ENTITY' : 'OBSERVED ENTITY'}`,
+      `Part of reconstructive attack chain: ${selectedNode.is_attack_path ? 'YES' : 'NO'}`,
+      `Total Graph Event Count: ${selectedNode.event_count ?? nodeEvents.length}`,
+      '',
+    ];
+
+    if (selectedNode.details && Object.keys(selectedNode.details).length > 0) {
+      lines.push('ENTITY METADATA', '---------------');
+      for (const [k, v] of Object.entries(selectedNode.details)) {
+        lines.push(`${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`);
+      }
+      lines.push('');
+    }
+
+    if (relatedEdges.length > 0) {
+      lines.push(`CONNECTED RELATIONSHIPS (${relatedEdges.length})`, '-------------------------');
+      for (const edge of relatedEdges) {
+        const srcLabel = nodeById.get(edge.source) || edge.source;
+        const dstLabel = nodeById.get(edge.target) || edge.target;
+        lines.push(
+          `- ${srcLabel} -> ${dstLabel} [${edge.label || 'related'}, count=${edge.count}]${edge.is_attack_path ? ' (attack path)' : ''}`
+        );
+      }
+      lines.push('');
+    }
+
+    lines.push(`ASSOCIATED EVENTS (${nodeEvents.length})`, '-----------------');
+    if (nodeEvents.length === 0) {
+      lines.push('No associated normalized events matched.');
+    } else {
+      for (const evt of nodeEvents) {
+        lines.push(
+          `[${evt.timestamp}] [${String(evt.severity || '').toUpperCase()}] ${evt.action} (host=${evt.host}, user=${evt.user}${evt.src_ip ? `, src=${evt.src_ip}` : ''}${evt.dst_ip ? `, dst=${evt.dst_ip}` : ''})`
+        );
+      }
+    }
+
+    const safeLabel = (selectedNode.label || selectedNode.id || 'entity')
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'entity';
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dcsre_entity_${safeLabel}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const edgeKeySet = useMemo(
     () => new Set(filteredEdges.map(e => `${e.source}->${e.target}`)),
     [filteredEdges]
@@ -751,6 +816,98 @@ export const GraphView: React.FC<GraphViewProps> = ({
             )}
           </div>
         )}
+
+        {/* Node Detail Inspector Drawer */}
+        {selectedNode && (
+          <div className={`absolute top-0 right-0 bottom-0 w-80 sm:w-96 ${isLight ? 'bg-white border-l border-slate-200 text-slate-800' : 'bg-[#161413] border-l border-[#2b2523] text-[#e7e5e4]'} shadow-2xl p-5 overflow-y-auto z-20 space-y-4`}>
+            <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#282321]">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-[#24130d] border border-[#ea580c]/40 flex items-center justify-center text-[#f95721] shrink-0">
+                  {getNodeIcon(selectedNode.type)}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-xs font-bold text-[#fafaf9] font-mono break-all">{selectedNode.label}</h4>
+                  <div className="text-[10px] font-mono text-[#78716c] uppercase">
+                    {ROLE_PALETTE[roleById.get(selectedNode.id) || 'internal_host'].label} ({selectedNode.type})
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={exportSelectedNodeSummary}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-colors cursor-pointer ${
+                    isLight
+                      ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-800'
+                      : 'bg-[#241e1b] hover:bg-[#342a26] border-[#38312d] text-[#e7e5e4]'
+                  }`}
+                  title="Download entity brief & metadata"
+                >
+                  <Download className="w-3 h-3 text-[#f95721]" />
+                  <span>Download</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedNodeId(null)}
+                  className="text-[#a8a29e] hover:text-[#fafaf9] p-1 cursor-pointer"
+                  aria-label="Close Entity Inspector"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className={`p-3 rounded-xl border text-xs font-mono ${
+              selectedNode.is_compromised
+                ? 'bg-[#29130d] border-[#ea580c]/60 text-[#fca5a5]'
+                : 'bg-[#100f0e] border-[#2b2523] text-[#d6d3d1]'
+            }`}>
+              <div className="font-semibold flex items-center gap-1.5">
+                {selectedNode.is_compromised && <ShieldAlert className="w-3.5 h-3.5 text-[#f95721]" />}
+                <span>{selectedNode.is_compromised ? 'HIGHLIGHTED / FLAGGED ENTITY' : 'OBSERVED ENTITY'}</span>
+              </div>
+              <div className="text-[11px] text-[#a8a29e] mt-1">
+                Part of reconstructive attack chain: {selectedNode.is_attack_path ? 'YES' : 'NO'}
+              </div>
+            </div>
+
+            {selectedNode.details && (
+              <div className="space-y-1.5 text-xs">
+                <div className="text-[11px] font-mono text-[#78716c] uppercase">Entity Metadata</div>
+                <div className="bg-[#0d0c0c] border border-[#2b2523] rounded-xl p-3 space-y-1.5 font-mono text-[11px]">
+                  {Object.entries(selectedNode.details).map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-2 text-[#a8a29e]">
+                      <span className="text-[#78716c] shrink-0">{k}:</span>
+                      <span className="text-[#fafaf9] font-medium text-right break-all">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <div className="text-[11px] font-mono text-[#78716c] uppercase flex justify-between items-center">
+                <span>Associated Events</span>
+                <span className="font-semibold text-[#f95721] font-mono tabular-nums">{nodeEvents.length}</span>
+              </div>
+
+              <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                {nodeEvents.map(evt => (
+                  <div
+                    key={evt.id}
+                    className="p-2.5 bg-[#0d0c0c] border border-[#282321] rounded-xl text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-mono text-[#78716c]">
+                      <span className="text-[#f95721] font-semibold">{evt.timestamp.slice(11, 19)} UTC</span>
+                      <span className="uppercase text-[#fca5a5] font-semibold">{evt.severity}</span>
+                    </div>
+                    <div className="text-[#fafaf9] font-medium truncate">{evt.action}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dedicated Non-Overlapping Legend Footer */}
@@ -772,81 +929,6 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <span>Attack Edge (hover edge for label)</span>
         </div>
       </div>
-
-      {/* Node Detail Inspector Drawer */}
-      {selectedNode && (
-        <div className={`absolute top-14 right-0 bottom-0 w-80 ${isLight ? 'bg-white border-l border-slate-200 text-slate-800' : 'bg-[#161413] border-l border-[#2b2523] text-[#e7e5e4]'} shadow-2xl p-5 overflow-y-auto z-20 space-y-4`}>
-          <div className="flex items-center justify-between pb-3 border-b border-[#282321]">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#24130d] border border-[#ea580c]/40 flex items-center justify-center text-[#f95721]">
-                {getNodeIcon(selectedNode.type)}
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-[#fafaf9] font-mono break-all">{selectedNode.label}</h4>
-                <div className="text-[10px] font-mono text-[#78716c] uppercase">
-                  {ROLE_PALETTE[roleById.get(selectedNode.id) || 'internal_host'].label} ({selectedNode.type})
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={() => setSelectedNodeId(null)}
-              className="text-[#a8a29e] hover:text-[#fafaf9] p-1 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className={`p-3 rounded-xl border text-xs font-mono ${
-            selectedNode.is_compromised
-              ? 'bg-[#29130d] border-[#ea580c]/60 text-[#fca5a5]'
-              : 'bg-[#100f0e] border-[#2b2523] text-[#d6d3d1]'
-          }`}>
-            <div className="font-semibold flex items-center gap-1.5">
-              {selectedNode.is_compromised && <ShieldAlert className="w-3.5 h-3.5 text-[#f95721]" />}
-              <span>{selectedNode.is_compromised ? 'HIGHLIGHTED / FLAGGED ENTITY' : 'OBSERVED ENTITY'}</span>
-            </div>
-            <div className="text-[11px] text-[#a8a29e] mt-1">
-              Part of reconstructive attack chain: {selectedNode.is_attack_path ? 'YES' : 'NO'}
-            </div>
-          </div>
-
-          {selectedNode.details && (
-            <div className="space-y-1.5 text-xs">
-              <div className="text-[11px] font-mono text-[#78716c] uppercase">Entity Metadata</div>
-              <div className="bg-[#0d0c0c] border border-[#2b2523] rounded-xl p-3 space-y-1.5 font-mono text-[11px]">
-                {Object.entries(selectedNode.details).map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-2 text-[#a8a29e]">
-                    <span className="text-[#78716c] shrink-0">{k}:</span>
-                    <span className="text-[#fafaf9] font-medium text-right break-all">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <div className="text-[11px] font-mono text-[#78716c] uppercase flex justify-between items-center">
-              <span>Associated Events</span>
-              <span className="font-semibold text-[#f95721] font-mono tabular-nums">{nodeEvents.length}</span>
-            </div>
-
-            <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-              {nodeEvents.map(evt => (
-                <div
-                  key={evt.id}
-                  className="p-2.5 bg-[#0d0c0c] border border-[#282321] rounded-xl text-xs space-y-1"
-                >
-                  <div className="flex items-center justify-between text-[10px] font-mono text-[#78716c]">
-                    <span className="text-[#f95721] font-semibold">{evt.timestamp.slice(11, 19)} UTC</span>
-                    <span className="uppercase text-[#fca5a5] font-semibold">{evt.severity}</span>
-                  </div>
-                  <div className="text-[#fafaf9] font-medium truncate">{evt.action}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

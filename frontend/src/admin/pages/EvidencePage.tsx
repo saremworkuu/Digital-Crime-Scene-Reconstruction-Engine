@@ -17,6 +17,7 @@ import { FilterBar } from '../components/FilterBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { evidenceService, casesService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminEvidence, AdminCase } from '../types';
 import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
@@ -25,9 +26,16 @@ export const EvidencePage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [evidenceList, setEvidenceList] = useState<AdminEvidence[]>([]);
-  const [casesMap, setCasesMap] = useState<Record<string, AdminCase>>({});
-  const [isLoading, setIsLoading] = useState(true);
+  const [evidenceList, setEvidenceList] = useState<AdminEvidence[]>(() => evidenceService.getCachedEvidence() ?? []);
+  const [casesMap, setCasesMap] = useState<Record<string, AdminCase>>(() => {
+    const cachedCases = casesService.getCachedCases() ?? [];
+    const map: Record<string, AdminCase> = {};
+    cachedCases.forEach((c) => {
+      map[c.id] = c;
+    });
+    return map;
+  });
+  const [isLoading, setIsLoading] = useState(() => evidenceService.getCachedEvidence() === undefined);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
@@ -53,10 +61,17 @@ export const EvidencePage: React.FC = () => {
   });
 
   const loadData = async () => {
-    setIsLoading(true);
+    const filters = { search, type: typeFilter, status: statusFilter };
+    const cached = evidenceService.getCachedEvidence(filters);
+    if (cached !== undefined) {
+      setEvidenceList(cached);
+      setIsLoading(false);
+    } else if (evidenceList.length === 0) {
+      setIsLoading(true);
+    }
     try {
       const [items, cases] = await Promise.all([
-        evidenceService.getEvidence({ search, type: typeFilter, status: statusFilter }),
+        evidenceService.getEvidence(filters),
         casesService.getCases()
       ]);
       setEvidenceList(items);
@@ -76,6 +91,14 @@ export const EvidencePage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [search, typeFilter, statusFilter]);
+
+  useEffect(() => {
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/evidence') || p.startsWith('/admin/cases'))) {
+        loadData();
+      }
+    });
+  }, []);
 
   const handleVerify = async (item: AdminEvidence) => {
     setVerifyingId(item.id);

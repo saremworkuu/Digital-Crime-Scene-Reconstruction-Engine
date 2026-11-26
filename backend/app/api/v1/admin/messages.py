@@ -1,25 +1,24 @@
-import uuid
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
 import math
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+import uuid
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, or_
 
 from app.core.permissions import require_admin
-from app.db.session import get_db
 from app.db.models.contact_message import ContactMessage
 from app.db.models.user import User
-from app.db.models.audit_log import AuditLog
-from app.services.audit import log_audit_event, utc_now
+from app.db.session import get_db
 from app.schemas.admin import (
     AdminContactMessageResponse,
-    AdminReplyMessage,
+    AdminMessageAssignRequest,
+    AdminMessagePriorityRequest,
     AdminMessageReplyRequest,
     AdminMessageStatusRequest,
-    AdminMessagePriorityRequest,
-    AdminMessageAssignRequest,
+    AdminReplyMessage,
 )
+from app.services.audit import log_audit_event, utc_now
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
@@ -33,7 +32,7 @@ def to_admin_message_response(m: ContactMessage) -> AdminContactMessageResponse:
             author=r.get("author", "Admin"),
             role=r.get("role", "Administrator"),
             message=r.get("message", ""),
-            timestamp=r.get("timestamp", "")
+            timestamp=r.get("timestamp", ""),
         )
         for idx, r in enumerate(raw_replies)
     ]
@@ -68,55 +67,77 @@ def get_admin_messages(
     limit: int = 10,
     db: Session = Depends(get_db),
 ):
-    query = select(ContactMessage).order_by(ContactMessage.date.desc())
-    items = db.execute(query).scalars().all()
+    safe_page = max(1, page)
+    safe_limit = max(1, min(limit, 100))
 
-    unread_count = sum(1 for m in items if not m.is_read and m.status not in ("archived", "spam"))
+    unread_count = int(
+        db.execute(
+            select(func.count(ContactMessage.id)).where(
+                ContactMessage.is_read.is_(False),
+                ~ContactMessage.status.in_(["archived", "spam"]),
+            )
+        ).scalar()
+        or 0
+    )
 
-    filtered = []
-    for m in items:
-        if status and status != "all" and m.status.lower() != status.lower():
-            continue
-        if category and category != "all" and m.category.lower() != category.lower():
-            continue
-        if priority and priority != "all" and m.priority.lower() != priority.lower():
-            continue
-        if assignee and assignee != "all":
-            if assignee == "unassigned" and m.assignee is not None:
-                continue
-            if assignee != "unassigned" and m.assignee != assignee:
-                continue
-        if search:
-            q = search.lower()
-            if (
-                q not in m.reference.lower()
-                and q not in m.sender_name.lower()
-                and q not in m.sender_email.lower()
-                and q not in m.subject.lower()
-                and q not in m.body.lower()
-            ):
-                continue
+    conditions = []
+    if status and status != "all":
+        conditions.append(func.lower(ContactMessage.status) == status.lower())
+    if category and category != "all":
+        conditions.append(func.lower(ContactMessage.category) == category.lower())
+    if priority and priority != "all":
+        conditions.append(func.lower(ContactMessage.priority) == priority.lower())
+    if assignee and assignee != "all":
+        if assignee == "unassigned":
+            conditions.append(ContactMessage.assignee.is_(None))
+        else:
+            conditions.append(ContactMessage.assignee == assignee)
+    if search and search.strip():
+        pattern = f"%{search.strip()}%"
+        conditions.append(
+            or_(
+                ContactMessage.reference.ilike(pattern),
+                ContactMessage.sender_name.ilike(pattern),
+                ContactMessage.sender_email.ilike(pattern),
+                ContactMessage.subject.ilike(pattern),
+                ContactMessage.body.ilike(pattern),
+            )
+        )
 
-        filtered.append(to_admin_message_response(m))
+    count_q = select(func.count(ContactMessage.id))
+    list_q = select(ContactMessage)
+    for cond in conditions:
+        count_q = count_q.where(cond)
+        list_q = list_q.where(cond)
 
-    total = len(filtered)
-    start_idx = (page - 1) * limit
-    paginated = filtered[start_idx : start_idx + limit]
+    total = int(db.execute(count_q).scalar() or 0)
+    offset = (safe_page - 1) * safe_limit
+    rows = db.execute(
+        list_q.order_by(ContactMessage.date.desc()).offset(offset).limit(safe_limit)
+    ).scalars().all()
 
     return {
-        "messages": paginated,
+        "messages": [to_admin_message_response(m) for m in rows],
         "total": total,
         "unreadCount": unread_count,
-        "page": page,
-        "totalPages": math.ceil(total / limit) if total > 0 else 1,
+        "page": safe_page,
+        "totalPages": math.ceil(total / safe_limit) if total > 0 else 1,
     }
 
 
 @router.get("/count")
 def get_unread_count(db: Session = Depends(get_db)):
-    query = select(ContactMessage)
-    items = db.execute(query).scalars().all()
-    count = sum(1 for m in items if m.status == "new" or not m.is_read)
+    count = int(
+        db.execute(
+            select(func.count(ContactMessage.id)).where(
+                or_(
+                    ContactMessage.status == "new",
+                    (ContactMessage.is_read.is_(False)) & (~ContactMessage.status.in_(["archived", "spam"])),
+                )
+            )
+        ).scalar()
+        or 0
+    )
     return {"count": count}
 
 
@@ -223,9 +244,10 @@ def add_message_reply(
         raise HTTPException(status_code=404, detail=f"Message {message_id} not found.")
 
     current_replies = list(getattr(m, "reply_thread", []) or [])
+    author_name = body.author or f"{current_admin.username} (Admin)"
     current_replies.append({
         "id": f"rep-{uuid.uuid4().hex[:6]}",
-        "author": body.author or current_admin.username,
+        "author": author_name,
         "role": "Administrator",
         "message": body.message,
         "timestamp": utc_now().isoformat(),
@@ -240,7 +262,7 @@ def add_message_reply(
         user=current_admin,
         action="message.reply_sent",
         resource=f"message:{message_id}",
-        details={"reference": m.reference, "author": body.author or current_admin.username},
+        details={"reference": m.reference, "author": author_name},
     )
 
     db.commit()

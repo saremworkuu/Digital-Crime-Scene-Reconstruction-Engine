@@ -57,12 +57,22 @@ else:
         db_url = "sqlite:///dcsre.db"
         connect_args = {"check_same_thread": False}
 
-engine = create_engine(
-    db_url,
-    connect_args=connect_args,
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
+if db_url.startswith("sqlite"):
+    engine = create_engine(
+        db_url,
+        connect_args=connect_args,
+    )
+else:
+    # Avoid extra per-request SELECT 1 roundtrips across remote Postgres connections;
+    # recycle pooled connections before server idle timeout.
+    engine = create_engine(
+        db_url,
+        connect_args=connect_args,
+        pool_pre_ping=False,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=180,
+    )
 
 SessionLocal = sessionmaker(
     autocommit=False,

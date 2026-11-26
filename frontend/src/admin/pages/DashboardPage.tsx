@@ -15,13 +15,13 @@ import { StatCard } from '../components/StatCard';
 import { StatusBadge } from '../components/StatusBadge';
 import { useApp } from '../../store';
 import {
-  usersService,
-  casesService,
-  evidenceService,
-  messagesService,
   systemService,
   auditService
 } from '../../services/admin';
+import {
+  clearLegacyAdminStorage,
+  subscribeAdminCacheInvalidation
+} from '../../services/admin/storageHelper';
 import { AdminAuditEntry, AdminQueueJob } from '../types';
 
 interface DashboardPageProps {
@@ -32,44 +32,48 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateTab }) =
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [counts, setCounts] = useState({
-    users: 0,
-    cases: 0,
-    evidence: 0,
-    failures: 0,
-    newMessages: 0,
-    failedLogins24h: 0
-  });
+  const cachedSummary = systemService.getCachedDashboardSummary();
+  const cachedAudit = auditService.getCachedAuditLogs({ limit: 6 });
 
-  const [recentAudit, setRecentAudit] = useState<AdminAuditEntry[]>([]);
-  const [queueJobs, setQueueJobs] = useState<AdminQueueJob[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [counts, setCounts] = useState(() => ({
+    users: cachedSummary?.users ?? 0,
+    cases: cachedSummary?.cases ?? 0,
+    evidence: cachedSummary?.evidence ?? 0,
+    failures: cachedSummary?.failures ?? 0,
+    newMessages: cachedSummary?.new_messages ?? 0,
+    failedLogins24h: cachedSummary?.failed_logins_24h ?? 0
+  }));
 
-  const loadMetrics = async () => {
-    setIsLoading(true);
+  const [recentAudit, setRecentAudit] = useState<AdminAuditEntry[]>(
+    () => cachedAudit?.entries ?? []
+  );
+  const [queueJobs, setQueueJobs] = useState<AdminQueueJob[]>(
+    () => cachedSummary?.queue ?? []
+  );
+  const [isLoading, setIsLoading] = useState(!(cachedSummary && cachedAudit));
+
+  const loadMetrics = async (force = false) => {
+    if (!cachedSummary || force) {
+      setIsLoading(true);
+    }
     try {
-      const [u, c, e, m, health, audit] = await Promise.all([
-        usersService.getUsers(),
-        casesService.getCases(),
-        evidenceService.getEvidence(),
-        messagesService.getNewMessagesCount(),
-        systemService.getSystemHealth(),
-        auditService.getAuditLogs({ limit: 6 })
+      clearLegacyAdminStorage();
+      const [summary, audit] = await Promise.all([
+        systemService.getDashboardSummary(force),
+        auditService.getAuditLogs({ limit: 6 }, force)
       ]);
 
-      const failedEvidence = e.filter((item) => item.parsing_status === 'failed').length;
-
       setCounts({
-        users: u.length,
-        cases: c.length,
-        evidence: e.filter((item) => !item.is_container).length,
-        failures: failedEvidence,
-        newMessages: m,
-        failedLogins24h: health.failed_logins_24h
+        users: summary.users,
+        cases: summary.cases,
+        evidence: summary.evidence,
+        failures: summary.failures,
+        newMessages: summary.new_messages,
+        failedLogins24h: summary.failed_logins_24h
       });
 
       setRecentAudit(audit.entries);
-      setQueueJobs(health.queue);
+      setQueueJobs(summary.queue);
     } catch (err) {
       console.error('[Dashboard] Error loading metrics:', err);
     } finally {
@@ -78,7 +82,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateTab }) =
   };
 
   useEffect(() => {
-    loadMetrics();
+    loadMetrics(false);
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/system') || p.startsWith('/admin/audit'))) {
+        loadMetrics(false);
+      }
+    });
   }, []);
 
   return (
@@ -105,7 +114,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateTab }) =
 
         <button
           type="button"
-          onClick={loadMetrics}
+          onClick={() => loadMetrics(true)}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono transition-all cursor-pointer w-fit ${
             isLight
               ? 'text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 hover:border-[#f95721] shadow-sm'

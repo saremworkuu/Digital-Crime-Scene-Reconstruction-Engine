@@ -6,15 +6,11 @@ import {
   Calendar,
   Lock,
   Shield,
-  RotateCcw,
-  CheckCircle2,
-  AlertTriangle,
-  Save,
-  HelpCircle
+  Save
 } from 'lucide-react';
 import { systemService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminSettings } from '../types';
-import { ConfirmDialog } from '../components/ConfirmDialog';
 import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
 
@@ -22,24 +18,23 @@ export const SettingsPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [settings, setSettings] = useState<AdminSettings | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const initialSettings = systemService.getCachedSettings();
+  const [settings, setSettings] = useState<AdminSettings | null>(() => initialSettings ?? null);
+  const [isLoading, setIsLoading] = useState(() => initialSettings === undefined);
   const [isSaving, setIsSaving] = useState(false);
 
   // Form State
-  const [orgName, setOrgName] = useState('');
-  const [timeZone, setTimeZone] = useState('UTC');
-  const [retentionDays, setRetentionDays] = useState(365);
-  const [minPasswordLength, setMinPasswordLength] = useState(12);
-  const [twoFactorEnforced, setTwoFactorEnforced] = useState(false);
-  const [lockoutLimit, setLockoutLimit] = useState(5);
-
-  // Reset Demo Data Confirm Dialog
-  const [resetDialogOpen, setResetDialogOpen] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
+  const [orgName, setOrgName] = useState(() => initialSettings?.org_name ?? '');
+  const [timeZone, setTimeZone] = useState(() => initialSettings?.time_zone ?? 'UTC');
+  const [retentionDays, setRetentionDays] = useState(() => initialSettings?.retention_days ?? 365);
+  const [minPasswordLength, setMinPasswordLength] = useState(() => initialSettings?.min_password_length ?? 12);
+  const [twoFactorEnforced, setTwoFactorEnforced] = useState(() => initialSettings?.two_factor_enforced ?? false);
+  const [lockoutLimit, setLockoutLimit] = useState(() => initialSettings?.failed_login_lockout_limit ?? 5);
 
   const loadSettings = async () => {
-    setIsLoading(true);
+    if (!settings) {
+      setIsLoading(true);
+    }
     try {
       const data = await systemService.getSettings();
       setSettings(data);
@@ -58,6 +53,11 @@ export const SettingsPage: React.FC = () => {
 
   useEffect(() => {
     loadSettings();
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/system/settings'))) {
+        loadSettings();
+      }
+    });
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -78,22 +78,6 @@ export const SettingsPage: React.FC = () => {
       toast.error('Failed to update settings: ' + err.message);
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleResetDemoData = async () => {
-    setIsResetting(true);
-    try {
-      await systemService.resetDemoData();
-      toast.success('Admin mock environment reset to factory seed values');
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-    } catch (err: any) {
-      toast.error('Failed to reset demo data: ' + err.message);
-    } finally {
-      setIsResetting(false);
-      setResetDialogOpen(false);
     }
   };
 
@@ -321,49 +305,6 @@ export const SettingsPage: React.FC = () => {
           </button>
         </div>
       </form>
-
-      {/* Danger Zone: Reset Demo Data */}
-      <div className={`rounded-xl p-5 space-y-4 border ${
-        isLight
-          ? 'border-red-200 bg-red-50/70 text-slate-800'
-          : 'border-red-500/30 bg-red-950/20'
-      }`}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className={`w-5 h-5 ${isLight ? 'text-red-500' : 'text-red-400'}`} />
-            <div>
-              <h2 className={`text-sm font-semibold ${isLight ? 'text-red-700' : 'text-red-300'}`}>Administrative Demo Environment Reset</h2>
-              <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-[#a8a29e]'}`}>
-                Purge all custom cases, newly registered examiners, mock messages, and modifications. Restores original factory seed state.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setResetDialogOpen(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer shrink-0 ${
-              isLight
-                ? 'bg-red-600 hover:bg-red-700 text-white'
-                : 'bg-red-900/60 hover:bg-red-800 text-red-200 border border-red-500/50'
-            }`}
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Reset Demo Data
-          </button>
-        </div>
-      </div>
-
-      {/* Confirm Reset Dialog */}
-      <ConfirmDialog
-        isOpen={resetDialogOpen}
-        title="Reset All Admin Mock Data to Factory Defaults?"
-        message="This action will clear all localStorage keys prefixed with 'dcsre_admin_' and re-seed 1 administrator, 2 investigators, 1 auditor, 2 cases, 8 evidence files, 6 Sigma rules, and 8 contact messages. The page will refresh immediately."
-        confirmLabel="Confirm Factory Reset"
-        variant="danger"
-        isLoading={isResetting}
-        onConfirm={handleResetDemoData}
-        onCancel={() => setResetDialogOpen(false)}
-      />
     </div>
   );
 };

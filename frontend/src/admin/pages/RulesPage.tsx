@@ -17,6 +17,7 @@ import { FilterBar } from '../components/FilterBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { rulesService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminSigmaRule, RuleSeverity } from '../types';
 import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
@@ -25,8 +26,8 @@ export const RulesPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [rules, setRules] = useState<AdminSigmaRule[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [rules, setRules] = useState<AdminSigmaRule[]>(() => rulesService.getCachedRules() ?? []);
+  const [isLoading, setIsLoading] = useState(() => rulesService.getCachedRules() === undefined);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -67,9 +68,16 @@ export const RulesPage: React.FC = () => {
   });
 
   const loadData = async () => {
-    setIsLoading(true);
+    const filters = { search, severity: severityFilter };
+    const cached = rulesService.getCachedRules(filters);
+    if (cached !== undefined) {
+      setRules(cached);
+      setIsLoading(false);
+    } else if (rules.length === 0) {
+      setIsLoading(true);
+    }
     try {
-      const list = await rulesService.getRules({ search, severity: severityFilter });
+      const list = await rulesService.getRules(filters);
       setRules(list);
     } catch (err: any) {
       toast.error('Failed to load detection rules: ' + err.message);
@@ -81,6 +89,14 @@ export const RulesPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [search, severityFilter]);
+
+  useEffect(() => {
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/rules'))) {
+        loadData();
+      }
+    });
+  }, []);
 
   const handleToggle = async (rule: AdminSigmaRule) => {
     const nextState = !rule.enabled;

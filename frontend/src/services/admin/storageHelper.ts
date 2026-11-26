@@ -1,53 +1,129 @@
 /**
- * Admin LocalStorage Persistence & Delay Helpers
- * Prefixed with `dcsre_admin_` to isolate mock admin data from live forensic stores.
+ * Admin Service Helpers
+ * Provides query-string serialization, uniform API response unwrapping,
+ * short-TTL in-memory SWR caching + in-flight request deduplication,
+ * and legacy localStorage mock key cleanup.
  */
 
-import {
-  SEED_USERS,
-  SEED_CASES,
-  SEED_EVIDENCE,
-  SEED_SIGMA_RULES,
-  SEED_MESSAGES,
-  SEED_AUDIT_LOGS,
-  SEED_SYSTEM_HEALTH,
-  SEED_SETTINGS
-} from '../../mocks/admin/seedData';
+import { ApiResponse } from '../../api';
 
-export const delay = (minMs = 300, maxMs = 600): Promise<void> => {
-  const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-  return new Promise((resolve) => setTimeout(resolve, ms));
-};
+const LEGACY_KEYS = [
+  'users',
+  'cases',
+  'evidence',
+  'rules',
+  'messages',
+  'audit',
+  'system_health',
+  'settings'
+];
 
-export const getStored = <T>(key: string, defaultValue: T): T => {
+interface CacheEntry<T> {
+  data: T;
+  updatedAt: number;
+}
+
+const memoryCache = new Map<string, CacheEntry<unknown>>();
+const inFlightRequests = new Map<string, Promise<unknown>>();
+const cacheListeners = new Set<(prefixes: string[]) => void>();
+let legacyCleared = false;
+
+export function clearLegacyAdminStorage(): void {
+  if (legacyCleared) return;
+  legacyCleared = true;
   try {
-    const raw = localStorage.getItem(`dcsre_admin_v3_${key}`);
-    if (raw) {
-      return JSON.parse(raw) as T;
+    for (const key of LEGACY_KEYS) {
+      localStorage.removeItem(`dcsre_admin_v3_${key}`);
     }
-  } catch (err) {
-    console.warn(`[Admin Storage] Failed to read key dcsre_admin_v3_${key}:`, err);
+  } catch {
+    // Ignore storage access errors in restricted contexts
   }
-  // Initialize with seed value if not present
-  setStored(key, defaultValue);
-  return defaultValue;
-};
+}
 
-export const setStored = <T>(key: string, value: T): void => {
-  try {
-    localStorage.setItem(`dcsre_admin_v3_${key}`, JSON.stringify(value));
-  } catch (err) {
-    console.warn(`[Admin Storage] Failed to write key dcsre_admin_v3_${key}:`, err);
+export function clearAllAdminMemoryCache(): void {
+  memoryCache.clear();
+  inFlightRequests.clear();
+}
+
+export function subscribeAdminCacheInvalidation(listener: (prefixes: string[]) => void): () => void {
+  cacheListeners.add(listener);
+  return () => {
+    cacheListeners.delete(listener);
+  };
+}
+
+export function invalidateAdminCache(...prefixes: string[]): void {
+  if (prefixes.length === 0) {
+    memoryCache.clear();
+    cacheListeners.forEach((fn) => fn(['*']));
+    return;
   }
-};
+  for (const key of Array.from(memoryCache.keys())) {
+    if (prefixes.some((p) => key.startsWith(p))) {
+      memoryCache.delete(key);
+    }
+  }
+  cacheListeners.forEach((fn) => fn(prefixes));
+}
 
-export const resetAllAdminData = (): void => {
-  setStored('users', SEED_USERS);
-  setStored('cases', SEED_CASES);
-  setStored('evidence', SEED_EVIDENCE);
-  setStored('rules', SEED_SIGMA_RULES);
-  setStored('messages', SEED_MESSAGES);
-  setStored('audit', SEED_AUDIT_LOGS);
-  setStored('system_health', SEED_SYSTEM_HEALTH);
-  setStored('settings', SEED_SETTINGS);
-};
+export function peekAdminCache<T>(key: string): T | undefined {
+  const entry = memoryCache.get(key);
+  return entry ? (entry.data as T) : undefined;
+}
+
+export async function fetchWithAdminCache<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  options?: { ttlMs?: number; force?: boolean }
+): Promise<T> {
+  const ttlMs = options?.ttlMs ?? 30000;
+  const force = options?.force ?? false;
+
+  if (!force) {
+    const cached = memoryCache.get(key);
+    if (cached && Date.now() - cached.updatedAt < ttlMs) {
+      return cached.data as T;
+    }
+  }
+
+  const existing = inFlightRequests.get(key);
+  if (existing && !force) {
+    return existing as Promise<T>;
+  }
+
+  const promise = fetcher()
+    .then((data) => {
+      memoryCache.set(key, { data, updatedAt: Date.now() });
+      return data;
+    })
+    .finally(() => {
+      inFlightRequests.delete(key);
+    });
+
+  inFlightRequests.set(key, promise);
+  return promise;
+}
+
+export function withQuery(
+  path: string,
+  params?: Record<string, string | number | boolean | undefined | null>
+): string {
+  if (!params) return path;
+  const search = new URLSearchParams();
+  for (const [key, val] of Object.entries(params)) {
+    if (val === undefined || val === null || val === '') continue;
+    search.set(key, String(val));
+  }
+  const qs = search.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+export function unwrapApi<T>(res: ApiResponse<T>, errorMessage = 'Request failed'): T {
+  if (res.error) {
+    throw new Error(res.error);
+  }
+  if (res.data === undefined) {
+    throw new Error(errorMessage);
+  }
+  return res.data;
+}

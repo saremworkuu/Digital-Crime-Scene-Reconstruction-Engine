@@ -351,17 +351,6 @@ const MainLayout: React.FC = () => {
             <span className={`${theme === 'light' ? 'text-[#3f3f46]' : 'text-[#a8a29e]'} font-medium`}>አሻራ</span>
             <span className="text-[11px] text-[#78716c]">· Digital Crime Scene Reconstruction Engine</span>
           </div>
-          <div className="text-[10px] text-[#78716c]">
-            <a
-              href="https://www.flaticon.com/free-icons/finger-print"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="finger print icons"
-              className="hover:text-[#f95721] transition-colors"
-            >
-              Finger print icons created by sonnycandra - Flaticon
-            </a>
-          </div>
         </div>
       </footer>
     </div>

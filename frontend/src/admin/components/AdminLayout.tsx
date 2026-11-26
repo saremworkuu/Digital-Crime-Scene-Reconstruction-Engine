@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -11,6 +11,7 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Shield,
   ExternalLink,
   Menu,
@@ -60,6 +61,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState<number>(0);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Poll or refresh unread messages count periodically
   useEffect(() => {
@@ -143,65 +156,134 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           </div>
         </div>
 
-        {/* Right: User Identity, Role Badge & Exit to Workspace */}
+        {/* Right: Profile Menu & Exit to Workspace */}
         <div className="flex items-center gap-3">
           {currentUser && (
-            <button
-              type="button"
-              onClick={() => setIsEditProfileOpen(true)}
-              title="Click to edit administrator profile"
-              className={`hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-lg border transition-all cursor-pointer group text-left ${
-                theme === 'light'
-                  ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 hover:border-slate-300'
-                  : 'bg-[#181615] hover:bg-[#201d1b] border-[#262220] hover:border-[#383330]'
-              }`}
-            >
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border transition-transform group-hover:scale-105 ${
+            <div ref={profileMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+                title="Account Menu"
+                className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg border transition-all cursor-pointer group text-left ${
                   theme === 'light'
-                    ? 'bg-orange-100 text-[#f95721] border-orange-200'
-                    : 'bg-[#24130d] text-[#f95721] border-[#ea580c]/30'
+                    ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 hover:border-slate-300'
+                    : 'bg-[#181615] hover:bg-[#201d1b] border-[#262220] hover:border-[#383330]'
                 }`}
               >
-                {currentUser.name ? currentUser.name.charAt(0) : 'A'}
-              </div>
-              <div className="text-left text-xs">
                 <div
-                  className={`font-medium leading-tight truncate max-w-[130px] ${
-                    theme === 'light' ? 'text-slate-900' : 'text-[#e7e5e4]'
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border transition-transform group-hover:scale-105 ${
+                    theme === 'light'
+                      ? 'bg-orange-100 text-[#f95721] border-orange-200'
+                      : 'bg-[#24130d] text-[#f95721] border-[#ea580c]/30'
                   }`}
                 >
-                  {currentUser.name}
+                  {currentUser.name ? currentUser.name.charAt(0) : 'A'}
                 </div>
-                <div
-                  className={`text-[10px] font-mono leading-tight ${
-                    theme === 'light' ? 'text-slate-500' : 'text-[#78716c]'
-                  }`}
-                >
-                  {currentUser.email}
+                <div className="hidden sm:block text-left text-xs">
+                  <div
+                    className={`font-medium leading-tight truncate max-w-[130px] ${
+                      theme === 'light' ? 'text-slate-900' : 'text-[#e7e5e4]'
+                    }`}
+                  >
+                    {currentUser.name}
+                  </div>
+                  <div
+                    className={`text-[10px] font-mono leading-tight ${
+                      theme === 'light' ? 'text-slate-500' : 'text-[#78716c]'
+                    }`}
+                  >
+                    {currentUser.email}
+                  </div>
                 </div>
-              </div>
-              <span
-                className={`text-[9px] font-mono uppercase font-bold px-1.5 py-0.5 rounded border ml-1 ${
-                  theme === 'light'
-                    ? currentUser.role === 'admin'
-                      ? 'bg-red-50 text-red-700 border-red-200'
-                      : (currentUser.role as string) === 'auditor'
-                      ? 'bg-purple-50 text-purple-700 border-purple-200'
-                      : 'bg-orange-50 text-orange-700 border-orange-200'
-                    : currentUser.role === 'admin'
-                    ? 'bg-red-950/40 text-red-400 border-red-500/40'
-                    : (currentUser.role as string) === 'auditor'
-                    ? 'bg-purple-950/40 text-purple-400 border-purple-500/40'
-                    : 'bg-orange-950/40 text-[#f95721] border-[#ea580c]/40'
-                }`}
-              >
-                {currentUser.role}
-              </span>
-              <UserCog className="w-3.5 h-3.5 text-[#f95721] opacity-75 group-hover:opacity-100 transition-opacity ml-0.5" />
-            </button>
-          )}
+                <ChevronDown className="w-3.5 h-3.5 text-[#78716c]" />
+              </button>
 
+              {profileMenuOpen && (
+                <div
+                  className={`absolute right-0 mt-1.5 w-72 rounded-xl shadow-2xl py-1 z-50 animate-fadeIn border ${
+                    theme === 'light' ? 'bg-white border-slate-200' : 'bg-[#181615] border-[#2e2926]'
+                  }`}
+                >
+                  <div className={`px-3 py-2.5 border-b space-y-1 ${theme === 'light' ? 'border-slate-200' : 'border-[#2e2926]'}`}>
+                    <div className={`text-xs font-semibold ${theme === 'light' ? 'text-slate-900' : 'text-[#fafaf9]'}`}>
+                      {currentUser.name}
+                    </div>
+                    <div className={`text-[11px] truncate font-mono ${theme === 'light' ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                      {currentUser.email}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-[#a8a29e] pt-1">
+                      <span className="text-[#f95721] truncate max-w-[160px]">{currentUser.department}</span>
+                      {(currentUser.badgeId || currentUser.badge_id) && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded border ${
+                            theme === 'light'
+                              ? 'bg-slate-100 text-slate-700 border-slate-200'
+                              : 'bg-[#221f1d] text-[#d6d3d1] border-[#332c28]'
+                          }`}
+                        >
+                          {currentUser.badgeId || currentUser.badge_id}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className={`px-3 py-2 border-b flex items-center justify-center text-[11px] font-mono ${
+                      theme === 'light'
+                        ? 'bg-slate-50 border-slate-200 text-slate-700'
+                        : 'bg-[#121110] border-[#2e2926] text-[#a8a29e]'
+                    }`}
+                  >
+                    <span
+                      className={`w-full text-center font-semibold uppercase tracking-wider text-[10px] px-2 py-0.5 rounded ${
+                        currentUser.role === 'admin'
+                          ? theme === 'light'
+                            ? 'bg-red-50 text-red-700 border border-red-200'
+                            : 'bg-[#3b1219] text-[#fca5a5] border border-[#ef4444]/40'
+                          : theme === 'light'
+                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                            : 'bg-purple-950/40 text-purple-400 border border-purple-500/40'
+                      }`}
+                    >
+                      {currentUser.role === 'admin' ? 'Administrator' : String(currentUser.role)}
+                    </span>
+                  </div>
+
+                  <div className="pt-1 space-y-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileMenuOpen(false);
+                        setIsEditProfileOpen(true);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors cursor-pointer font-medium ${
+                        theme === 'light' ? 'text-slate-700 hover:bg-slate-100' : 'text-[#e7e5e4] hover:bg-[#23201e]'
+                      }`}
+                    >
+                      <UserCog className="w-3.5 h-3.5 text-[#f95721]" />
+                      <span>Edit Profile</span>
+                    </button>
+
+                    <div className={`border-t my-1 ${theme === 'light' ? 'border-slate-200' : 'border-[#2e2926]'}`} />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileMenuOpen(false);
+                        logout();
+                      }}
+                      className={`w-full text-left px-3 py-1.5 text-xs text-red-500 flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        theme === 'light' ? 'hover:bg-red-50' : 'hover:bg-red-950/30'
+                      }`}
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -293,19 +375,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               theme === 'light' ? 'border-slate-200' : 'border-[#24201e]'
             }`}
           >
-            <button
-              type="button"
-              onClick={() => setIsEditProfileOpen(true)}
-              className={`text-left text-xs font-medium transition-colors cursor-pointer py-1 px-2 ${
-                theme === 'light'
-                  ? 'text-slate-600 hover:text-[#ea580c]'
-                  : 'text-[#a8a29e] hover:text-[#f95721]'
-              } ${isCollapsed ? 'text-center px-0' : ''}`}
-              title="Edit Profile"
-            >
-              {isCollapsed ? 'Profile' : 'Edit Profile'}
-            </button>
-
             <button
               type="button"
               onClick={() => {
@@ -423,21 +492,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                   theme === 'light' ? 'border-slate-200' : 'border-[#24201e]'
                 }`}
               >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    setIsEditProfileOpen(true);
-                  }}
-                  className={`text-left text-xs font-medium transition-colors cursor-pointer py-1.5 px-2 ${
-                    theme === 'light'
-                      ? 'text-slate-600 hover:text-[#ea580c]'
-                      : 'text-[#a8a29e] hover:text-[#f95721]'
-                  }`}
-                >
-                  Edit Profile
-                </button>
-
                 <button
                   type="button"
                   onClick={() => {

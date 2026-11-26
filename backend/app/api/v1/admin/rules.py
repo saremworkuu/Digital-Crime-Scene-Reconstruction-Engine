@@ -202,31 +202,63 @@ def test_admin_rule(
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    import re
+    from app.db.models.events import Event
+
     r = db.get(SigmaRule, rule_id)
     if not r:
         raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found.")
 
-    matches = [
-        {
-            "timestamp": "2026-10-23T04:18:22Z",
-            "host": "DC01.corp.internal",
-            "log_snippet": f"Event 4688: Process creation matching rule [{r.name}] with target token elevation"
-        },
-        {
-            "timestamp": "2026-10-22T21:40:11Z",
-            "host": "SRV-APPS-02",
-            "log_snippet": f"MITRE {r.mitre_id} alert: Query [{r.query[:40]}...] detected in auth stream"
-        }
+    quoted_terms = [q.lower().strip() for q in re.findall(r'"([^"]{2,})"', r.query or "") if q.strip()]
+    fallback_terms = [
+        tok.lower()
+        for tok in re.split(r"[^A-Za-z0-9_.-]+", f"{r.name} {r.query}")
+        if len(tok) >= 4 and tok.lower() not in {"contains", "regex", "and", "not", "true", "false", "rule", "sigma"}
     ]
+    terms = quoted_terms or fallback_terms[:4]
 
-    # Increment trigger counter
-    r.times_triggered += len(matches)
+    recent_events = db.execute(
+        select(Event).order_by(Event.timestamp.desc()).limit(500)
+    ).scalars().all()
+
+    matches = []
+    match_count = 0
+    for ev in recent_events:
+        details = ev.details if isinstance(ev.details, dict) else {}
+        haystack = " ".join(
+            [
+                str(ev.event_type or ""),
+                str(ev.source or ""),
+                str(details.get("raw") or ""),
+                str(details.get("command_line") or ""),
+                str(details.get("process") or ""),
+                str(details.get("action") or ""),
+            ]
+        ).lower()
+        if terms and any(term in haystack for term in terms):
+            match_count += 1
+            if len(matches) < 10:
+                host = str(details.get("host") or details.get("dst_ip") or details.get("src_ip") or ev.source or "unknown")
+                snippet = str(
+                    details.get("raw")
+                    or details.get("command_line")
+                    or f"{ev.event_type}: {details.get('action') or ''}".strip()
+                )[:240]
+                matches.append(
+                    {
+                        "timestamp": ev.timestamp.isoformat() if hasattr(ev.timestamp, "isoformat") else str(ev.timestamp),
+                        "host": host,
+                        "log_snippet": snippet,
+                    }
+                )
+
+    r.times_triggered = match_count
     db.commit()
 
     return AdminRuleTestResponse(
         ruleId=rule_id,
-        matchCount=len(matches),
-        sampleMatches=matches
+        matchCount=match_count,
+        sampleMatches=matches,
     )
 
 

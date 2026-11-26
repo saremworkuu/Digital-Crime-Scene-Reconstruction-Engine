@@ -1,34 +1,42 @@
-import uuid
 import hashlib
+import uuid
 from pathlib import Path
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from typing import Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
-from sqlalchemy import select, delete
 
 from app.core.permissions import require_admin
-from app.db.session import get_db
-from app.db.models.evidence import Evidence
 from app.db.models.case import Case
-from app.db.models.user import User
 from app.db.models.event_evidence import EventEvidence
 from app.db.models.events import Event
-from app.db.models.audit_log import AuditLog
-from app.services.audit import build_evidence_audit_details, log_audit_event
+from app.db.models.evidence import Evidence
+from app.db.models.user import User
+from app.db.session import get_db
 from app.schemas.admin import (
     AdminEvidenceResponse,
     AdminEvidenceVerifyResponse,
 )
+from app.services.audit import build_evidence_audit_details, log_audit_event
 
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
-def to_admin_evidence_response(e: Evidence, db: Session) -> AdminEvidenceResponse:
-    uploader_u = db.get(User, e.uploaded_by) if e.uploaded_by else None
-    uploader_name = uploader_u.username if uploader_u else "Sarem Worku"
+def to_admin_evidence_response(
+    e: Evidence,
+    db: Session,
+    *,
+    users_by_id: Optional[Dict[uuid.UUID, User]] = None,
+    legacy_zip_event_counts: Optional[Dict[uuid.UUID, int]] = None,
+) -> AdminEvidenceResponse:
+    if users_by_id is not None:
+        uploader_u = users_by_id.get(e.uploaded_by) if e.uploaded_by else None
+    else:
+        uploader_u = db.get(User, e.uploaded_by) if e.uploaded_by else None
+    uploader_name = uploader_u.username if uploader_u else "Unknown"
 
     status_str = e.parsing_status.value if hasattr(e.parsing_status, "value") else str(e.parsing_status)
-    # Map parsed -> completed for frontend compatibility
     if status_str == "parsed":
         status_str = "completed"
 
@@ -42,10 +50,11 @@ def to_admin_evidence_response(e: Evidence, db: Session) -> AdminEvidenceRespons
     from app.services.report import is_container_evidence
     evt_count = 0
     if (e.parser_used or "").strip() != "ZipArchive" and str(e.filename or "").strip().lower().endswith(".zip"):
-        evt_count = db.execute(
-            select(Event.id).where(Event.evidence_id == e.id).limit(1)
-        ).first() is not None
-        evt_count = 1 if evt_count else 0
+        if legacy_zip_event_counts is not None:
+            evt_count = legacy_zip_event_counts.get(e.id, 0)
+        else:
+            has_evt = db.execute(select(Event.id).where(Event.evidence_id == e.id).limit(1)).first() is not None
+            evt_count = 1 if has_evt else 0
     is_container = is_container_evidence(e, event_count=evt_count)
 
     return AdminEvidenceResponse(
@@ -92,32 +101,66 @@ def get_admin_evidence(
     search: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    query = select(Evidence).order_by(Evidence.uploaded_at.desc())
-    items = db.execute(query).scalars().all()
+    rows = db.execute(
+        select(Evidence, User, Case.name)
+        .outerjoin(User, Evidence.uploaded_by == User.id)
+        .outerjoin(Case, Evidence.case_id == Case.id)
+        .order_by(Evidence.uploaded_at.desc())
+    ).all()
+    if not rows:
+        return []
+
+    users_by_id: Dict[uuid.UUID, User] = {
+        u.id: u for _, u, _ in rows if u is not None
+    }
+    cases_by_id: Dict[uuid.UUID, str] = {
+        e.case_id: (cname or "") for e, _, cname in rows if e.case_id
+    }
+
+    legacy_zip_ids = [
+        e.id
+        for e, _, _ in rows
+        if (e.parser_used or "").strip() != "ZipArchive"
+        and str(e.filename or "").strip().lower().endswith(".zip")
+    ]
+    legacy_zip_event_counts: Dict[uuid.UUID, int] = {}
+    if legacy_zip_ids:
+        for ev_id, cnt in db.execute(
+            select(Event.evidence_id, func.count(Event.id))
+            .where(Event.evidence_id.in_(legacy_zip_ids))
+            .group_by(Event.evidence_id)
+        ).all():
+            legacy_zip_event_counts[ev_id] = int(cnt or 0)
 
     results = []
-    for e in items:
-        resp = to_admin_evidence_response(e, db)
+    search_q = search.lower().strip() if search else None
+    type_q = type.lower() if type and type != "all" else None
+    status_q = status.lower() if status and status != "all" else None
+
+    for e, _, _ in rows:
+        resp = to_admin_evidence_response(
+            e,
+            db,
+            users_by_id=users_by_id,
+            legacy_zip_event_counts=legacy_zip_event_counts,
+        )
 
         if case_id and case_id != "all":
-            # Match by uuid or case slug
-            c = db.get(Case, e.case_id)
-            c_name = c.name if c else ""
+            c_name = cases_by_id.get(e.case_id, "")
             if resp.case_id != case_id and case_id not in c_name.lower().replace(" ", "-"):
                 continue
 
-        if type and type != "all" and resp.type.lower() != type.lower():
+        if type_q and resp.type.lower() != type_q:
             continue
 
-        if status and status != "all" and resp.parsing_status.lower() != status.lower():
+        if status_q and resp.parsing_status.lower() != status_q:
             continue
 
-        if search:
-            q = search.lower()
+        if search_q:
             if (
-                q not in resp.file_name.lower()
-                and q not in resp.uploader.lower()
-                and q not in resp.sha256.lower()
+                search_q not in resp.file_name.lower()
+                and search_q not in resp.uploader.lower()
+                and search_q not in resp.sha256.lower()
             ):
                 continue
 
@@ -135,7 +178,6 @@ def verify_evidence_integrity(
     ev = resolve_evidence(evidence_id, db)
 
     computed_hash = ev.sha256_hash
-    # If file exists on disk, compute real sha256
     if ev.file_path:
         fpath = Path(ev.file_path)
         if fpath.exists() and fpath.is_file():
@@ -146,7 +188,7 @@ def verify_evidence_integrity(
             computed_hash = hasher.hexdigest()
 
     expected_hash = ev.expected_sha256 or ev.sha256_hash
-    match = (computed_hash.lower() == expected_hash.lower())
+    match = computed_hash.lower() == expected_hash.lower()
 
     ev.verified = match
     ev.sha256_hash = computed_hash
@@ -190,7 +232,6 @@ def delete_admin_evidence(
 ):
     ev = resolve_evidence(evidence_id, db)
 
-    # Check legal hold on parent case
     parent_case = db.get(Case, ev.case_id)
     if parent_case and getattr(parent_case, "legal_hold", False):
         raise HTTPException(
@@ -198,11 +239,9 @@ def delete_admin_evidence(
             detail=f'Deletion Blocked: Case "{parent_case.name}" is currently locked under Legal Hold.',
         )
 
-    # Clean associations & events
     db.execute(delete(EventEvidence).where(EventEvidence.evidence_id == ev.id))
     db.execute(delete(Event).where(Event.evidence_id == ev.id))
 
-    # Remove file on disk if exists
     try:
         if ev.file_path:
             fpath = Path(ev.file_path)

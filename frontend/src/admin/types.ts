@@ -144,6 +144,16 @@ export interface AdminSystemHealth {
   recent_errors: Array<{ timestamp: string; component: string; message: string }>;
 }
 
+export interface AdminDashboardSummary {
+  users: number;
+  cases: number;
+  evidence: number;
+  failures: number;
+  new_messages: number;
+  failed_logins_24h: number;
+  queue: AdminQueueJob[];
+}
+
 export interface AdminSettings {
   time_zone: string;
   org_name: string;

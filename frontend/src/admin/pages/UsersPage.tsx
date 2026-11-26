@@ -18,6 +18,7 @@ import { FilterBar } from '../components/FilterBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { usersService, systemService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminUser, AdminRole, UserStatus, AdminSettings } from '../types';
 import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
@@ -26,8 +27,8 @@ export const UsersPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [users, setUsers] = useState<AdminUser[]>(() => usersService.getCachedUsers() ?? []);
+  const [isLoading, setIsLoading] = useState(() => usersService.getCachedUsers() === undefined);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -47,7 +48,7 @@ export const UsersPage: React.FC = () => {
   const [formStatus, setFormStatus] = useState<UserStatus>('active');
 
   // Security Settings
-  const [settings, setSettings] = useState<AdminSettings | null>(null);
+  const [settings, setSettings] = useState<AdminSettings | null>(() => systemService.getCachedSettings() ?? null);
   const [savingSettings, setSavingSettings] = useState(false);
 
   // Dialog State
@@ -64,10 +65,17 @@ export const UsersPage: React.FC = () => {
   });
 
   const loadData = async () => {
-    setIsLoading(true);
+    const filters = { search, role: roleFilter, status: statusFilter };
+    const cached = usersService.getCachedUsers(filters);
+    if (cached !== undefined) {
+      setUsers(cached);
+      setIsLoading(false);
+    } else if (users.length === 0) {
+      setIsLoading(true);
+    }
     try {
       const [userList, sysSettings] = await Promise.all([
-        usersService.getUsers({ search, role: roleFilter, status: statusFilter }),
+        usersService.getUsers(filters),
         systemService.getSettings()
       ]);
       setUsers(userList);
@@ -86,6 +94,14 @@ export const UsersPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [search, roleFilter, statusFilter]);
+
+  useEffect(() => {
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/users') || p.startsWith('/admin/system/settings'))) {
+        loadData();
+      }
+    });
+  }, []);
 
   const handleOpenCreate = () => {
     setFormName('');

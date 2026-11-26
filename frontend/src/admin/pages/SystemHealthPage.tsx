@@ -15,6 +15,7 @@ import {
   Radio
 } from 'lucide-react';
 import { systemService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminSystemHealth, AdminParserStatus, AdminQueueJob } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { toast } from '../../components/Toast';
@@ -24,14 +25,16 @@ export const SystemHealthPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [health, setHealth] = useState<AdminSystemHealth | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [health, setHealth] = useState<AdminSystemHealth | null>(() => systemService.getCachedSystemHealth() ?? null);
+  const [isLoading, setIsLoading] = useState(() => systemService.getCachedSystemHealth() === undefined);
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
 
-  const loadHealth = async () => {
-    setIsLoading(true);
+  const loadHealth = async (force = false) => {
+    if (!health || force) {
+      setIsLoading(true);
+    }
     try {
-      const data = await systemService.getSystemHealth();
+      const data = await systemService.getSystemHealth(force);
       setHealth(data);
     } catch (err: any) {
       toast.error('Failed to load system health: ' + err.message);
@@ -41,7 +44,12 @@ export const SystemHealthPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadHealth();
+    loadHealth(false);
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/system') || p.startsWith('/admin/evidence'))) {
+        loadHealth(false);
+      }
+    });
   }, []);
 
   const handleRetryJob = async (jobId: string) => {
@@ -65,9 +73,10 @@ export const SystemHealthPage: React.FC = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const usedPercentage = health
-    ? Math.min(100, Math.round((health.storage_used_bytes / health.storage_total_bytes) * 100))
-    : 0;
+  const usedPercentage =
+    health && health.storage_total_bytes > 0
+      ? Math.min(100, Math.round((health.storage_used_bytes / health.storage_total_bytes) * 100))
+      : 0;
 
   return (
     <div className="space-y-6">
@@ -87,7 +96,7 @@ export const SystemHealthPage: React.FC = () => {
           </p>
         </div>
         <button
-          onClick={loadHealth}
+          onClick={() => loadHealth(true)}
           disabled={isLoading}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono transition-colors cursor-pointer self-start sm:self-auto disabled:opacity-50 border ${
             isLight
@@ -145,8 +154,8 @@ export const SystemHealthPage: React.FC = () => {
           <div className={`flex items-center justify-between text-[11px] pt-1 ${
             isLight ? 'text-slate-500' : 'text-[#78716c]'
           }`}>
-            <span>Primary Disk: NVMe Array /opt/dcsre/vault</span>
-            <span>Free: {health ? formatBytes(health.storage_total_bytes - health.storage_used_bytes) : '...'}</span>
+            <span>Evidence Vault Volume (Host Disk & DB Artifacts)</span>
+            <span>Free: {health ? formatBytes(Math.max(0, health.storage_total_bytes - health.storage_used_bytes)) : '...'}</span>
           </div>
         </div>
 
@@ -195,7 +204,9 @@ export const SystemHealthPage: React.FC = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-[#f95721]" />
-            <h2 className={`text-sm font-semibold ${isLight ? 'text-slate-900' : 'text-[#e7e5e4]'}`}>Evidence Parser Engines (8 Types)</h2>
+            <h2 className={`text-sm font-semibold ${isLight ? 'text-slate-900' : 'text-[#e7e5e4]'}`}>
+              Evidence Parser Engines ({health?.parsers.length ?? 0} Active)
+            </h2>
           </div>
           <span className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-[#78716c]'}`}>Automated Heuristic Normalizers</span>
         </div>

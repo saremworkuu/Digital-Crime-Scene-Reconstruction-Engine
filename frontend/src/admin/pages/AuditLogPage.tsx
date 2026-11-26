@@ -6,11 +6,13 @@ import {
   Eye,
   Calendar,
   ShieldCheck,
-  FileSpreadsheet
+  FileSpreadsheet,
+  X
 } from 'lucide-react';
 import { DataTable, Column } from '../components/DataTable';
 import { FilterBar } from '../components/FilterBar';
 import { auditService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminAuditEntry } from '../types';
 import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
@@ -19,11 +21,12 @@ export const AuditLogPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [logs, setLogs] = useState<AdminAuditEntry[]>([]);
-  const [total, setTotal] = useState(0);
+  const initialAudit = auditService.getCachedAuditLogs({ page: 1, limit: 12 });
+  const [logs, setLogs] = useState<AdminAuditEntry[]>(() => initialAudit?.entries ?? []);
+  const [total, setTotal] = useState(() => initialAudit?.total ?? 0);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(() => initialAudit?.totalPages ?? 1);
+  const [isLoading, setIsLoading] = useState(() => initialAudit === undefined);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -34,17 +37,27 @@ export const AuditLogPage: React.FC = () => {
   // Selected Entry for JSON Details Inspector
   const [inspectEntry, setInspectEntry] = useState<AdminAuditEntry | null>(null);
 
-  const loadLogs = async (targetPage = page) => {
-    setIsLoading(true);
+  const loadLogs = async (targetPage = page, force = false) => {
+    const filters = {
+      search,
+      action: actionFilter,
+      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
+      date_to: dateTo ? new Date(dateTo + 'T23:59:59').toISOString() : undefined,
+      page: targetPage,
+      limit: 12
+    };
+    const cached = force ? undefined : auditService.getCachedAuditLogs(filters);
+    if (cached !== undefined) {
+      setLogs(cached.entries);
+      setTotal(cached.total);
+      setPage(cached.page);
+      setTotalPages(cached.totalPages);
+      setIsLoading(false);
+    } else if (logs.length === 0 || force) {
+      setIsLoading(true);
+    }
     try {
-      const res = await auditService.getAuditLogs({
-        search,
-        action: actionFilter,
-        date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-        date_to: dateTo ? new Date(dateTo + 'T23:59:59').toISOString() : undefined,
-        page: targetPage,
-        limit: 12
-      });
+      const res = await auditService.getAuditLogs(filters, force);
 
       setLogs(res.entries);
       setTotal(res.total);
@@ -60,6 +73,14 @@ export const AuditLogPage: React.FC = () => {
   useEffect(() => {
     loadLogs(1);
   }, [search, actionFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/audit'))) {
+        loadLogs(1);
+      }
+    });
+  }, []);
 
   const handleExportCsv = () => {
     try {
@@ -289,32 +310,36 @@ export const AuditLogPage: React.FC = () => {
       {/* Detail Modal for Log Inspection */}
       {inspectEntry && (
         <div
+          onClick={() => setInspectEntry(null)}
           className={`fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn ${
             isLight ? 'bg-slate-900/40' : 'bg-black/80'
           }`}
         >
           <div
-            className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl space-y-4 ${
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border p-6 shadow-2xl space-y-4 ${
               isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-[#141211] border-[#2e2623] text-white'
             }`}
           >
             <div className={`flex items-center justify-between pb-3 border-b ${isLight ? 'border-slate-100' : 'border-[#26201e]'}`}>
-              <div className="space-y-0.5">
+              <div className="space-y-0.5 min-w-0 pr-2">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-[#f95721] font-bold">
                   Immutable Record
                 </span>
-                <h3 className={`text-base font-bold font-sans ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                <h3 className={`text-base font-bold font-sans break-all ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   {inspectEntry.id}
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setInspectEntry(null)}
-                className={`text-xs font-mono cursor-pointer ${
-                  isLight ? 'text-slate-400 hover:text-slate-700' : 'text-stone-400 hover:text-white'
+                aria-label="Close Inspector"
+                title="Close"
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer shrink-0 ${
+                  isLight ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-stone-400 hover:text-white hover:bg-[#241f1d]'
                 }`}
               >
-                Close
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -368,20 +393,6 @@ export const AuditLogPage: React.FC = () => {
               >
                 {JSON.stringify(inspectEntry.details, null, 2)}
               </pre>
-            </div>
-
-            <div className="pt-2 text-right">
-              <button
-                type="button"
-                onClick={() => setInspectEntry(null)}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${
-                  isLight
-                    ? 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
-                    : 'text-stone-300 bg-stone-900 hover:bg-stone-800 border border-stone-700'
-                }`}
-              >
-                Close Inspector
-              </button>
             </div>
           </div>
         </div>

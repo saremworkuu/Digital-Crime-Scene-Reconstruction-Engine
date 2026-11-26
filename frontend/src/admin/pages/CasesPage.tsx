@@ -15,6 +15,7 @@ import { FilterBar } from '../components/FilterBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { casesService, usersService } from '../../services/admin';
+import { subscribeAdminCacheInvalidation } from '../../services/admin/storageHelper';
 import { AdminCase, CaseStatus, AdminUser } from '../types';
 import { toast } from '../../components/Toast';
 import { useApp } from '../../store';
@@ -23,9 +24,11 @@ export const CasesPage: React.FC = () => {
   const { theme } = useApp();
   const isLight = theme === 'light';
 
-  const [cases, setCases] = useState<AdminCase[]>([]);
-  const [allExaminers, setAllExaminers] = useState<AdminUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [cases, setCases] = useState<AdminCase[]>(() => casesService.getCachedCases() ?? []);
+  const [allExaminers, setAllExaminers] = useState<AdminUser[]>(() =>
+    (usersService.getCachedUsers() ?? []).filter((u) => u.role === 'investigator' || u.role === 'admin')
+  );
+  const [isLoading, setIsLoading] = useState(() => casesService.getCachedCases() === undefined);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -50,10 +53,17 @@ export const CasesPage: React.FC = () => {
   });
 
   const loadData = async () => {
-    setIsLoading(true);
+    const filters = { search, status: statusFilter };
+    const cached = casesService.getCachedCases(filters);
+    if (cached !== undefined) {
+      setCases(cached);
+      setIsLoading(false);
+    } else if (cases.length === 0) {
+      setIsLoading(true);
+    }
     try {
       const [caseList, userList] = await Promise.all([
-        casesService.getCases({ search, status: statusFilter }),
+        casesService.getCases(filters),
         usersService.getUsers()
       ]);
       setCases(caseList);
@@ -68,6 +78,14 @@ export const CasesPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [search, statusFilter]);
+
+  useEffect(() => {
+    return subscribeAdminCacheInvalidation((prefixes) => {
+      if (prefixes.some((p) => p === '*' || p.startsWith('/admin/cases') || p.startsWith('/admin/users'))) {
+        loadData();
+      }
+    });
+  }, []);
 
   const handleStatusChange = async (c: AdminCase, nextStatus: CaseStatus) => {
     try {

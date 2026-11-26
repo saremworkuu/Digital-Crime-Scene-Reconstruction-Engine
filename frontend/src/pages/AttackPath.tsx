@@ -21,32 +21,11 @@ import { MitreBadge } from '../components/MitreBadge';
 import { SeverityTag } from '../components/SeverityTag';
 import { DetectionResult, NormalizedEvent } from '../types';
 import { formatCaseNameWithId } from '../utils/caseDisplay';
-
-const MITRE_TACTIC_ORDER = [
-  'reconnaissance',
-  'resource development',
-  'initial access',
-  'execution',
-  'persistence',
-  'privilege escalation',
-  'defense evasion',
-  'credential access',
-  'discovery',
-  'lateral movement',
-  'collection',
-  'command and control',
-  'exfiltration',
-  'impact',
-];
-
-function getFirstSeenTimestamp(finding: DetectionResult): string {
-  return String(finding.rule_information?.first_seen || finding.timestamp || '');
-}
-
-function getTacticRank(tactic?: string): number {
-  const idx = MITRE_TACTIC_ORDER.indexOf(String(tactic || '').trim().toLowerCase());
-  return idx === -1 ? MITRE_TACTIC_ORDER.length : idx;
-}
+import {
+  groupFindingsByTactic,
+  resolveFindingFirstSeen,
+  sortFindingsChronologically,
+} from '../utils/attackPathOrder';
 
 function getMergedRules(finding: DetectionResult): string[] {
   const raw = finding.rule_information?.corroborating_rules;
@@ -62,27 +41,33 @@ export const AttackPath: React.FC = () => {
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [inspectingEvent, setInspectingEvent] = useState<NormalizedEvent | null>(null);
 
+  const eventsById = useMemo(
+    () => new Map(activeCaseEvents.map((e) => [String(e.id), e])),
+    [activeCaseEvents]
+  );
+
   // 1. Build the attack path ONLY from stored findings (Stage 6)
   const validFindings = useMemo(() => {
     return activeCaseDetections.filter(d => !d.false_positive && (d.matched_event_ids?.length ?? 0) > 0);
   }, [activeCaseDetections]);
 
-  // Order findings either chronologically (first_seen) or by standard MITRE ATT&CK tactic sequence.
+  const chronologicalFindings = useMemo(
+    () => sortFindingsChronologically(validFindings, activeCaseEvents),
+    [validFindings, activeCaseEvents]
+  );
+
+  const tacticGroups = useMemo(
+    () => groupFindingsByTactic(validFindings, activeCaseEvents),
+    [validFindings, activeCaseEvents]
+  );
+
+  // Order findings either strictly chronologically (first_seen) or grouped by MITRE ATT&CK tactic phase.
   const orderedFindings = useMemo(() => {
-    return [...validFindings].sort((a, b) => {
-      const timeDiff =
-        new Date(getFirstSeenTimestamp(a)).getTime() -
-        new Date(getFirstSeenTimestamp(b)).getTime();
-      if (orderMode === 'tactic') {
-        const tacticDiff = getTacticRank(a.mitre_tactic) - getTacticRank(b.mitre_tactic);
-        if (tacticDiff !== 0) return tacticDiff;
-        if (timeDiff !== 0) return timeDiff;
-        return String(a.rule_name || '').localeCompare(String(b.rule_name || ''));
-      }
-      if (timeDiff !== 0) return timeDiff;
-      return getTacticRank(a.mitre_tactic) - getTacticRank(b.mitre_tactic);
-    });
-  }, [validFindings, orderMode]);
+    if (orderMode === 'tactic') {
+      return tacticGroups.flatMap((g) => g.findings);
+    }
+    return chronologicalFindings;
+  }, [orderMode, chronologicalFindings, tacticGroups]);
 
   // Selected finding for detailed inspection
   const selectedFinding = useMemo(() => {
@@ -276,115 +261,150 @@ export const AttackPath: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Column: Tactic Step Sequence (7 cols) */}
-          <div className="lg:col-span-7 space-y-3">
-            {orderedFindings.map((finding, idx) => {
-              const isSelected = selectedFinding?.id === finding.id;
-              const stepNum = idx + 1;
-              const sourceLabel = finding.source || (finding.rule_id.startsWith('edr-') ? 'EDR' : 'Rule');
-              const mergedRules = getMergedRules(finding);
-              const firstSeenTs = getFirstSeenTimestamp(finding);
-              const lastSeenTs = finding.rule_information?.last_seen
-                ? String(finding.rule_information.last_seen)
-                : undefined;
+          {/* Left Column: Chronological List OR Grouped MITRE ATT&CK Tactic Sequence (7 cols) */}
+          <div className="lg:col-span-7 space-y-4">
+            {(() => {
+              const renderFindingCard = (finding: DetectionResult, stepNum: number) => {
+                const isSelected = selectedFinding?.id === finding.id;
+                const sourceLabel = finding.source || (finding.rule_id.startsWith('edr-') ? 'EDR' : 'Rule');
+                const mergedRules = getMergedRules(finding);
+                const firstSeenTs = resolveFindingFirstSeen(finding, eventsById);
+                const lastSeenTs = finding.rule_information?.last_seen
+                  ? String(finding.rule_information.last_seen)
+                  : undefined;
+
+                return (
+                  <div
+                    key={finding.id}
+                    onClick={() => setSelectedFindingId(finding.id)}
+                    className={`p-4 rounded-xl border transition-all cursor-pointer relative group ${
+                      isSelected
+                        ? 'bg-[#22130d] border-[#ea580c] shadow-[0_0_16px_rgba(249,87,33,0.18)]'
+                        : 'bg-[#151312] border-[#282321] hover:border-[#3a322e] hover:bg-[#191716]'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        {/* Step Number Badge */}
+                        <div className={`w-7 h-7 rounded-lg shrink-0 flex items-center justify-center font-mono font-bold text-xs ${
+                          isSelected
+                            ? 'bg-[#f95721] text-white shadow-md'
+                            : 'bg-[#261711] text-[#ff8d60] border border-[#7c2d12]'
+                        }`}>
+                          {stepNum}
+                        </div>
+
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-[#fafaf9] group-hover:text-[#f95721] transition-colors truncate">
+                              {finding.rule_name}
+                            </span>
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                              sourceLabel === 'EDR'
+                                ? 'bg-purple-950/80 text-purple-300 border-purple-700/50'
+                                : 'bg-blue-950/80 text-blue-300 border-blue-700/50'
+                            }`}>
+                              {sourceLabel}
+                            </span>
+                            {mergedRules.length > 0 && (
+                              <span
+                                title={`Merged with: ${mergedRules.join(', ')}`}
+                                className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-emerald-950/70 text-emerald-300 border-emerald-700/50"
+                              >
+                                Merged (+{mergedRules.length})
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Tactic & Host/User Context */}
+                          <div className="text-[11px] font-mono text-[#a8a29e] flex flex-wrap items-center gap-2">
+                            <span className="text-[#f95721] font-medium">{finding.mitre_tactic}</span>
+                            {(() => {
+                              const sourceIps = finding.source_ips?.length
+                                ? finding.source_ips
+                                : (finding.rule_information?.source_ips || finding.rule_information?.src_ips || (finding.src_ip ? [finding.src_ip] : []));
+                              const targetHosts = [...new Set([
+                                ...(finding.hosts || []),
+                                ...(finding.entities_involved?.hosts || []),
+                                ...(finding.target_host ? [finding.target_host] : []),
+                                ...(finding.host && finding.host !== 'unknown' && finding.host !== 'unknown_host' ? [finding.host] : []),
+                              ])];
+                              return (
+                                <>
+                                  {sourceIps.length > 0 && (
+                                    <span>Source: <strong className="text-[#ff8d60]">{sourceIps.join(', ')}</strong></span>
+                                  )}
+                                  {targetHosts.length > 0 && (
+                                    <span>Target host: <strong className="text-[#fafaf9]">{targetHosts.join(', ')}</strong></span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                            {finding.user && finding.user !== 'unknown' && (
+                              <span>User: <strong className="text-[#fafaf9]">{finding.user}</strong></span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Tag: Severity & Technique */}
+                      <div className="shrink-0 text-right space-y-1">
+                        <SeverityTag severity={finding.severity} />
+                        {(finding.mitre_techniques_all?.length ? finding.mitre_techniques_all : [finding.mitre_technique]).filter(Boolean).map(technique => (
+                          <div key={technique} className="pt-0.5">
+                            <MitreBadge techniqueId={technique} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 pt-2 border-t border-[#241e1c] flex items-center justify-between text-[10px] font-mono text-[#78716c]">
+                      <span>
+                        FIRST SEEN: {new Date(firstSeenTs).toUTCString()}
+                        {lastSeenTs && lastSeenTs !== firstSeenTs ? ` -> ${new Date(lastSeenTs).toUTCString()}` : ''}
+                      </span>
+                      <span className="text-[#f95721] group-hover:underline flex items-center gap-0.5">
+                        {finding.matched_event_ids?.length || 1} Event(s) <ChevronRight className="w-3 h-3" />
+                      </span>
+                    </div>
+                  </div>
+                );
+              };
+
+              if (orderMode === 'tactic') {
+                let runningStep = 0;
+                return tacticGroups.map((group) => (
+                  <div
+                    key={group.tacticKey}
+                    className="rounded-2xl border border-[#2a2421] bg-[#12100f]/90 p-3.5 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between px-1 pb-1.5 border-b border-[#25201e]">
+                      <div className="flex items-center gap-2">
+                        <Tag className="w-3.5 h-3.5 text-[#f95721]" />
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#fafaf9]">
+                          {group.tacticLabel}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#2a140d] border border-[#ea580c]/30 text-[#f95721] font-semibold">
+                        {group.findings.length} {group.findings.length === 1 ? 'finding' : 'findings'}
+                      </span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {group.findings.map((finding) => {
+                        runningStep += 1;
+                        return renderFindingCard(finding, runningStep);
+                      })}
+                    </div>
+                  </div>
+                ));
+              }
 
               return (
-                <div
-                  key={finding.id}
-                  onClick={() => setSelectedFindingId(finding.id)}
-                  className={`p-4 rounded-xl border transition-all cursor-pointer relative group ${
-                    isSelected
-                      ? 'bg-[#22130d] border-[#ea580c] shadow-[0_0_16px_rgba(249,87,33,0.18)]'
-                      : 'bg-[#151312] border-[#282321] hover:border-[#3a322e] hover:bg-[#191716]'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
-                      {/* Step Number Badge */}
-                      <div className={`w-7 h-7 rounded-lg shrink-0 flex items-center justify-center font-mono font-bold text-xs ${
-                        isSelected
-                          ? 'bg-[#f95721] text-white shadow-md'
-                          : 'bg-[#261711] text-[#ff8d60] border border-[#7c2d12]'
-                      }`}>
-                        {stepNum}
-                      </div>
-
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-bold text-[#fafaf9] group-hover:text-[#f95721] transition-colors truncate">
-                            {finding.rule_name}
-                          </span>
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                            sourceLabel === 'EDR'
-                              ? 'bg-purple-950/80 text-purple-300 border-purple-700/50'
-                              : 'bg-blue-950/80 text-blue-300 border-blue-700/50'
-                          }`}>
-                            {sourceLabel}
-                          </span>
-                          {mergedRules.length > 0 && (
-                            <span
-                              title={`Merged with: ${mergedRules.join(', ')}`}
-                              className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-emerald-950/70 text-emerald-300 border-emerald-700/50"
-                            >
-                              Merged (+{mergedRules.length})
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Tactic & Host/User Context */}
-                        <div className="text-[11px] font-mono text-[#a8a29e] flex flex-wrap items-center gap-2">
-                          <span className="text-[#f95721] font-medium">{finding.mitre_tactic}</span>
-                          {(() => {
-                            const sourceIps = finding.source_ips?.length
-                              ? finding.source_ips
-                              : (finding.rule_information?.source_ips || finding.rule_information?.src_ips || (finding.src_ip ? [finding.src_ip] : []));
-                            const targetHosts = [...new Set([
-                              ...(finding.hosts || []),
-                              ...(finding.entities_involved?.hosts || []),
-                              ...(finding.target_host ? [finding.target_host] : []),
-                              ...(finding.host && finding.host !== 'unknown' && finding.host !== 'unknown_host' ? [finding.host] : []),
-                            ])];
-                            return (
-                              <>
-                                {sourceIps.length > 0 && (
-                                  <span>Source: <strong className="text-[#ff8d60]">{sourceIps.join(', ')}</strong></span>
-                                )}
-                                {targetHosts.length > 0 && (
-                                  <span>Target host: <strong className="text-[#fafaf9]">{targetHosts.join(', ')}</strong></span>
-                                )}
-                              </>
-                            );
-                          })()}
-                          {finding.user && finding.user !== 'unknown' && (
-                            <span>User: <strong className="text-[#fafaf9]">{finding.user}</strong></span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right Tag: Severity & Technique */}
-                    <div className="shrink-0 text-right space-y-1">
-                      <SeverityTag severity={finding.severity} />
-                      {(finding.mitre_techniques_all?.length ? finding.mitre_techniques_all : [finding.mitre_technique]).filter(Boolean).map(technique => (
-                        <div className="pt-0.5">
-                          <MitreBadge key={technique} techniqueId={technique} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-2 pt-2 border-t border-[#241e1c] flex items-center justify-between text-[10px] font-mono text-[#78716c]">
-                    <span>
-                      FIRST SEEN: {new Date(firstSeenTs).toUTCString()}
-                      {lastSeenTs && lastSeenTs !== firstSeenTs ? ` -> ${new Date(lastSeenTs).toUTCString()}` : ''}
-                    </span>
-                    <span className="text-[#f95721] group-hover:underline flex items-center gap-0.5">
-                      {finding.matched_event_ids?.length || 1} Event(s) <ChevronRight className="w-3 h-3" />
-                    </span>
-                  </div>
+                <div className="space-y-3">
+                  {orderedFindings.map((finding, idx) => renderFindingCard(finding, idx + 1))}
                 </div>
               );
-            })}
+            })()}
           </div>
 
           {/* Right Column: Finding Evidence Inspector (5 cols) */}

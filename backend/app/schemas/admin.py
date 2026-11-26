@@ -244,6 +244,16 @@ class AdminSystemHealthResponse(BaseModel):
     recent_errors: List[Dict[str, Any]]
 
 
+class AdminDashboardSummaryResponse(BaseModel):
+    users: int
+    cases: int
+    evidence: int
+    failures: int
+    new_messages: int
+    failed_logins_24h: int
+    queue: List[AdminQueueJob] = []
+
+
 class AdminSettingsResponse(BaseModel):
     time_zone: str
     org_name: str

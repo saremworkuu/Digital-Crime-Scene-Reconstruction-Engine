@@ -1,16 +1,23 @@
 /**
  * AdminApp Container
  * Connects AdminLayout, AdminGuard, and all 9 Admin pages.
- * Supports URL hash routing (e.g. #/admin/users) and state navigation.
- *
- * NOTE: Real security must be enforced server-side later via JWT verification
- * and RBAC middleware. Frontend guards only control user experience flow.
+ * Keeps visited tabs mounted for instant switching and warms core admin caches cleanly.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../store';
 import { AdminGuard } from './components/AdminGuard';
 import { AdminLayout } from './components/AdminLayout';
+import {
+  auditService,
+  casesService,
+  evidenceService,
+  messagesService,
+  rulesService,
+  systemService,
+  usersService
+} from '../services/admin';
+import { clearAllAdminMemoryCache, clearLegacyAdminStorage } from '../services/admin/storageHelper';
 
 // Admin Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -25,8 +32,8 @@ import { SettingsPage } from './pages/SettingsPage';
 
 export const AdminApp: React.FC = () => {
   const { currentUser, setCurrentPage } = useApp();
+  const isAuditor = (currentUser?.role as string) === 'auditor';
 
-  // Helper to extract sub-tab from hash if available (e.g. #/admin/audit -> 'audit')
   const getSubTabFromHash = (): string => {
     if (typeof window !== 'undefined') {
       const hash = window.location.hash;
@@ -35,10 +42,63 @@ export const AdminApp: React.FC = () => {
         return match[1];
       }
     }
-    return (currentUser?.role as string) === 'auditor' ? 'audit' : 'dashboard';
+    return isAuditor ? 'audit' : 'dashboard';
   };
 
   const [activeSubTab, setActiveSubTab] = useState<string>(getSubTabFromHash);
+  const [visitedTabs, setVisitedTabs] = useState<string[]>(() => [getSubTabFromHash()]);
+  const warmedUserRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    clearLegacyAdminStorage();
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      clearAllAdminMemoryCache();
+      warmedUserRef.current = null;
+      return;
+    }
+
+    if (isAuditor || warmedUserRef.current === currentUser.id) {
+      return;
+    }
+    warmedUserRef.current = currentUser.id;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        await Promise.allSettled([casesService.getCases(), usersService.getUsers()]);
+        if (cancelled) return;
+        await Promise.allSettled([
+          auditService.getAuditLogs({ page: 1, limit: 12 }),
+          messagesService.getMessages({ page: 1, limit: 10 })
+        ]);
+        if (cancelled) return;
+        await Promise.allSettled([
+          evidenceService.getEvidence(),
+          rulesService.getRules()
+        ]);
+        if (cancelled) return;
+        await Promise.allSettled([
+          systemService.getSystemHealth(),
+          systemService.getSettings()
+        ]);
+      } catch {
+        // Ignore background prefetch errors
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [currentUser, isAuditor]);
+
+  // Keep visited tabs mounted for zero-latency back-and-forth switching
+  useEffect(() => {
+    setVisitedTabs((prev) => (prev.includes(activeSubTab) ? prev : [...prev, activeSubTab]));
+  }, [activeSubTab]);
 
   // Sync hash changes with sub-tab state
   useEffect(() => {
@@ -69,8 +129,8 @@ export const AdminApp: React.FC = () => {
     }
   };
 
-  const renderActivePage = () => {
-    switch (activeSubTab) {
+  const renderTabContent = (tabId: string) => {
+    switch (tabId) {
       case 'dashboard':
         return <DashboardPage onNavigateTab={handleSelectTab} />;
       case 'users':
@@ -90,13 +150,15 @@ export const AdminApp: React.FC = () => {
       case 'settings':
         return <SettingsPage />;
       default:
-        return (currentUser?.role as string) === 'auditor' ? (
+        return isAuditor ? (
           <AuditLogPage />
         ) : (
           <DashboardPage onNavigateTab={handleSelectTab} />
         );
     }
   };
+
+  const tabsToRender = isAuditor ? ['audit'] : visitedTabs;
 
   return (
     <AdminGuard activeAdminSubTab={activeSubTab}>
@@ -105,7 +167,14 @@ export const AdminApp: React.FC = () => {
         onSelectTab={handleSelectTab}
         onExitAdmin={handleExitAdmin}
       >
-        {renderActivePage()}
+        {tabsToRender.map((tabId) => {
+          const isCurrent = tabId === activeSubTab || (isAuditor && tabId === 'audit');
+          return (
+            <div key={tabId} className={isCurrent ? 'block' : 'hidden'}>
+              {renderTabContent(tabId)}
+            </div>
+          );
+        })}
       </AdminLayout>
     </AdminGuard>
   );
