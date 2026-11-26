@@ -143,3 +143,61 @@ test('validateUploadBatch enforces file count, per-file size, and total batch si
   const totalLimited = validateUploadBatch([small1, small2], { maxFiles: 10, maxFileSize: 100, maxTotalSize: 10 });
   assert.match(totalLimited.batchError || '', /exceeds the maximum allowed/);
 });
+
+test('collectFilesFromDataTransfer reads more than 100 entries in one directory via readEntries loop, handles nested subfolders, and skips junk', async () => {
+  const children: FileSystemEntryLike[] = [];
+  for (let i = 0; i < 105; i += 1) {
+    children.push(makeFileEntry(`event_${String(i).padStart(3, '0')}.log`, `line ${i}`));
+  }
+  children.push(
+    makeFileEntry('.DS_Store', 'junk'),
+    makeFileEntry('Thumbs.db', 'junk'),
+    makeDirEntry('__MACOSX', [makeFileEntry('._event_000.log', 'junk')]),
+    makeDirEntry('nested_dir', [
+      makeDirEntry('deeper_dir', [makeFileEntry('deep_auth.log', 'sshd[1]: Accepted')]),
+    ]),
+  );
+
+  const largeDir = makeDirEntry('large_case_folder', children, 100);
+  const dataTransfer: DataTransferLike = {
+    items: [
+      {
+        kind: 'file',
+        webkitGetAsEntry: () => largeDir,
+      },
+    ],
+  };
+
+  const walked = await collectFilesFromDataTransfer(dataTransfer);
+  assert.equal(walked.files.length, 106);
+  assert.equal(walked.skippedJunkCount, 3);
+  assert.equal(walked.skippedDirectoryCount, 3);
+
+  const deepEntry = walked.files.find((item) =>
+    item.relativePath === 'large_case_folder/nested_dir/deeper_dir/deep_auth.log'
+  );
+  assert.ok(deepEntry);
+  assert.equal(deepEntry.file.name, 'deep_auth.log');
+
+  const batchResult = validateUploadBatch(walked.files, {
+    maxFiles: 120,
+    maxFileSize: 1024 * 1024,
+    maxTotalSize: 10 * 1024 * 1024,
+  });
+  assert.equal(batchResult.batchError, null);
+  assert.equal(batchResult.validFiles.length, 106);
+});
+
+test('nested subfolder file uses its plain leaf filename rather than relative path for single-file upload', () => {
+  const nestedFile = makeFile('leaf_audit.log', 'type=SYSCALL', 'case_dir/sub_one/sub_two/leaf_audit.log');
+  const walked = collectFilesFromFileList([nestedFile]);
+  assert.equal(walked.files.length, 1);
+  assert.equal(walked.files[0].relativePath, 'case_dir/sub_one/sub_two/leaf_audit.log');
+  assert.equal(walked.files[0].file.name, 'leaf_audit.log');
+
+  const formData = new FormData();
+  formData.append('file', walked.files[0].file, walked.files[0].file.name);
+  const uploaded = formData.get('file') as File;
+  assert.equal(uploaded.name, 'leaf_audit.log');
+  assert.equal(uploaded.name.includes('/'), false);
+});

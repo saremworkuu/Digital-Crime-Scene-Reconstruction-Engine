@@ -5,7 +5,7 @@ from app.db.session import engine, SessionLocal
 from app.db.base import Base
 import app.db.models  # ensure all models registered
 from app.db.models.user import User, UserRole
-from app.db.models.system_settings import SystemSettings
+from app.db.seed_admin_data import seed_admin_data
 from app.core.security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -88,21 +88,8 @@ def init_db():
             db.commit()
             logger.info("Seeded default admin user: saremworkuu@gmail.com")
 
-        # Ensure baseline SystemSettings configuration row exists without seeding fake/demo records
-        settings = db.query(SystemSettings).filter(SystemSettings.id == "default").first()
-        if not settings:
-            settings = SystemSettings(
-                id="default",
-                time_zone="UTC",
-                org_name="አሻራ Cyber Forensic Command",
-                retention_days=90,
-                min_password_length=12,
-                two_factor_enforced=False,
-                failed_login_lockout_limit=5,
-            )
-            db.add(settings)
-            db.commit()
-            logger.info("Initialized default SystemSettings configuration.")
+        # Initialize baseline SystemSettings, 2 Inbox messages, and 2 Detection Rules (when empty)
+        seed_admin_data(db)
     finally:
         db.close()
 

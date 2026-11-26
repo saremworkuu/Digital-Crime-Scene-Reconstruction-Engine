@@ -1480,9 +1480,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    const fileHash = await computeSHA256(file);
+    let fileHash = '';
+    if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.subtle) {
+      try {
+        fileHash = await computeSHA256(file);
+      } catch {
+        // Non-secure contexts lack Web Crypto; backend returns authoritative sha256_hash.
+        fileHash = '';
+      }
+    }
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file, file.name);
     if (parserTypeOverride && !isZipUpload) {
       formData.append('parser_type', parserTypeOverride);
     }

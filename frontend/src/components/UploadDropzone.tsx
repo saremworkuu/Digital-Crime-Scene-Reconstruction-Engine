@@ -47,7 +47,17 @@ const STATUS_LABEL: Record<UploadQueueStatus, string> = {
 export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUploadSuccess }) => {
   const { uploadEvidence, currentUser, setCurrentPage, setAuthNotice } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const setFolderInputRef = React.useCallback((el: HTMLInputElement | null) => {
+    folderInputRef.current = el;
+    if (el) {
+      const dirInput = el as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean };
+      dirInput.webkitdirectory = true;
+      dirInput.directory = true;
+      el.setAttribute('webkitdirectory', '');
+      el.setAttribute('directory', '');
+    }
+  }, []);
   const batchCounterRef = useRef(0);
 
   const [isDragging, setIsDragging] = useState(false);
@@ -94,6 +104,8 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
         );
       } else if (walkResult.skippedDirectoryCount > 0) {
         setErrorMessage('Selected folder is empty or contains no uploadable evidence files.');
+      } else {
+        setErrorMessage('No files were returned by the folder/file picker or drop event.');
       }
       return;
     }
@@ -158,8 +170,18 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
     for (let i = 0; i < validation.validFiles.length; i += 1) {
       const { file, relativePath } = validation.validFiles[i];
       const itemKey = `${batchPrefix}-file-${i}`;
+      const webkitRel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || '';
 
       updateBatchItem(itemKey, { status: 'uploading', reason: undefined });
+      console.log('[folder-upload] Upload start:', {
+        index: i + 1,
+        total: validation.validFiles.length,
+        name: file.name,
+        size: file.size,
+        webkitRelativePath: webkitRel,
+        relativePath,
+        caseId: batchCaseId,
+      });
 
       try {
         const parserOverride = selectedParser === 'auto' ? undefined : selectedParser;
@@ -257,7 +279,31 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
           });
         }
       } catch (err: any) {
-        const reason = err?.message || 'Upload failed';
+        const message = err?.message || 'Upload failed';
+        const httpStatus = typeof err?.status === 'number' ? err.status : undefined;
+        const rawDetail = err?.detail;
+        const detailStr =
+          rawDetail === undefined || rawDetail === null
+            ? ''
+            : typeof rawDetail === 'string'
+              ? rawDetail
+              : JSON.stringify(rawDetail);
+        const reasonParts = [message];
+        if (httpStatus !== undefined && !message.includes(`HTTP ${httpStatus}`)) {
+          reasonParts.push(`status=${httpStatus}`);
+        }
+        if (detailStr && !message.includes(detailStr)) {
+          reasonParts.push(`detail=${detailStr}`);
+        }
+        const reason = reasonParts.join(' | ');
+        console.error('[folder-upload] Upload catch error:', {
+          name: file.name,
+          webkitRelativePath: webkitRel,
+          message,
+          status: httpStatus,
+          detail: rawDetail,
+          error: err,
+        });
         const isUnsupported = /unsupported file extension|no suitable parser/i.test(reason);
         failureMessages.push(`${file.name}: ${reason}`);
         updateBatchItem(itemKey, {
@@ -289,8 +335,20 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
     }
   };
 
-  const handleFiles = async (files: FileList | null) => {
+  const logPickedSample = (source: 'picker' | 'drop', rawCount: number, walkResult: FolderWalkResult) => {
+    const firstThree = walkResult.files.slice(0, 3).map((item) => ({
+      name: item.file.name,
+      webkitRelativePath: (item.file as File & { webkitRelativePath?: string }).webkitRelativePath || '',
+      relativePath: item.relativePath,
+    }));
+    console.log(`[folder-upload] ${source} returned ${rawCount} raw item(s); walked ${walkResult.files.length} uploadable file(s), skippedJunk=${walkResult.skippedJunkCount}, skippedDir=${walkResult.skippedDirectoryCount}`);
+    console.log('[folder-upload] First 3 files (name & webkitRelativePath):', firstThree);
+  };
+
+  const handleFiles = async (files: FileList | File[] | null) => {
+    const rawCount = files ? files.length : 0;
     const walkResult = collectFilesFromFileList(files);
+    logPickedSample('picker', rawCount, walkResult);
     await processWalkResult(walkResult);
   };
 
@@ -299,9 +357,12 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
     setIsDragging(false);
     if (!requireAuth()) return;
     try {
+      const rawCount = e.dataTransfer?.items?.length ?? e.dataTransfer?.files?.length ?? 0;
       const walkResult = await collectFilesFromDataTransfer(e.dataTransfer);
+      logPickedSample('drop', rawCount, walkResult);
       await processWalkResult(walkResult);
     } catch (err: any) {
+      console.error('[folder-upload] Drop error:', err);
       setErrorMessage(`Failed to read dropped folder or files: ${err?.message || 'Unknown error'}`);
     }
   };
@@ -338,42 +399,48 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
           </div>
         </div>
 
+        {/* File & Folder Inputs kept outside the clickable dropzone so input clicks never bubble to fileInputRef */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          accept=".log,.txt,.evtx,.pcap,.pcapng,.csv,.json,.pdf,.xml,.zip"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const snapshot = Array.from(e.target.files || []);
+            e.target.value = '';
+            void handleFiles(snapshot);
+          }}
+        />
+        <input
+          ref={setFolderInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const snapshot = Array.from(e.target.files || []);
+            e.target.value = '';
+            void handleFiles(snapshot);
+          }}
+        />
+
         {/* Clean Full-Width Drag and Drop Area */}
         <div
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          onClick={() => {
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('button')) return;
             if (isProcessing || !requireAuth()) return;
             fileInputRef.current?.click();
           }}
           className={`w-full relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[180px] ${isDragging
-              ? 'border-[#f95721] bg-[#2a140d]/40 shadow-[0_0_15px_rgba(249,87,33,0.3)]'
-              : 'border-[#332c28] hover:border-[#f95721]/60 bg-[#110f0e]/80 hover:bg-[#141210]'
+            ? 'border-[#f95721] bg-[#2a140d]/40 shadow-[0_0_15px_rgba(249,87,33,0.3)]'
+            : 'border-[#332c28] hover:border-[#f95721]/60 bg-[#110f0e]/80 hover:bg-[#141210]'
             }`}
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            accept=".log,.txt,.evtx,.pcap,.pcapng,.csv,.json,.pdf,.xml,.zip"
-            onChange={(e) => {
-              void handleFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <input
-            ref={folderInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-            onChange={(e) => {
-              void handleFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
 
           <div className="flex flex-col items-center justify-center space-y-3">
             <div className="w-12 h-12 rounded-xl bg-[#221712] border border-[#ea580c]/40 flex items-center justify-center text-[#f95721] shadow-inner">
@@ -469,7 +536,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUpload
                     <span className="font-medium text-[#e7e5e4] truncate">{up.name}</span>
                   </div>
                   {(up.relativePath || up.reason) && (
-                    <div className="pl-5.5 text-[11px] text-[#a8a29e] truncate">
+                    <div className="pl-5 text-[11px] text-[#a8a29e] whitespace-normal break-words select-text">
                       {up.relativePath && <span>{up.relativePath}</span>}
                       {up.relativePath && up.reason && <span> · </span>}
                       {up.reason && (

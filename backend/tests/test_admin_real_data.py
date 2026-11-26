@@ -118,16 +118,22 @@ def test_admin_system_health_and_summary_have_no_fake_baselines(tmp_path):
         engine.dispose()
 
 
-def test_seed_admin_data_does_not_insert_fake_users_rules_or_messages(tmp_path):
+def test_seed_admin_data_seeds_two_inbox_and_two_rules_without_fake_users(tmp_path):
     client, db, _admin_user, engine = _setup_admin_test_app(tmp_path)
     try:
         seed_admin_data(db)
 
-        assert client.get("/api/v1/admin/users").json()[0]["sessions"] == []
-        assert len(client.get("/api/v1/admin/users").json()) == 1
-        assert client.get("/api/v1/admin/rules").json() == []
-        assert client.get("/api/v1/admin/messages").json()["messages"] == []
-        assert client.get("/api/v1/admin/messages/count").json()["count"] == 0
+        users = client.get("/api/v1/admin/users").json()
+        assert len(users) == 1
+        assert users[0]["sessions"] == []
+
+        rules = client.get("/api/v1/admin/rules").json()
+        assert len(rules) == 2
+        assert all(r["times_triggered"] == 0 for r in rules)
+
+        inbox = client.get("/api/v1/admin/messages").json()
+        assert len(inbox["messages"]) == 2
+        assert client.get("/api/v1/admin/messages/count").json()["count"] == 1
         assert client.post("/api/v1/admin/system/reset-demo").status_code == 404
     finally:
         fastapi_app.dependency_overrides.clear()

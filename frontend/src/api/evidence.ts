@@ -12,7 +12,21 @@ export const evidenceApi = {
 
     const response = await apiClient.postFormData<any>(`/evidence/cases/${caseId}/evidence/upload`, formData);
     if (response.error || !response.data) {
-      throw new Error(response.error || 'The backend did not confirm the evidence upload.');
+      const rawDetail = response.error;
+      const detailText =
+        typeof rawDetail === 'string'
+          ? rawDetail
+          : rawDetail !== undefined && rawDetail !== null
+            ? JSON.stringify(rawDetail)
+            : 'The backend did not confirm the evidence upload.';
+      const statusPrefix = typeof response.status === 'number' && response.status > 0 ? `HTTP ${response.status}: ` : '';
+      const err = new Error(`${statusPrefix}${detailText}`) as Error & {
+        status?: number;
+        detail?: unknown;
+      };
+      err.status = response.status;
+      err.detail = rawDetail;
+      throw err;
     }
     return response.data;
   },
