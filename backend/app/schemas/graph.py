@@ -15,6 +15,7 @@ class GraphNode(BaseModel):
     event_count: int = 1
     first_seen: Optional[str] = None
     last_seen: Optional[str] = None
+    ambiguous: Optional[bool] = None
     details: Optional[Any] = None
 
 

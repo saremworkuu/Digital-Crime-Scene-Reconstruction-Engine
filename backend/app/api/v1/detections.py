@@ -1,9 +1,9 @@
 import uuid
 import json
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,12 @@ from app.db.models.detection_event import DetectionEvent
 from app.db.models.events import Event
 from app.db.models.user import User
 from app.db.session import get_db
-from app.schemas.detection import DetectionResponse, FalsePositiveRequest, DetectionRuleResponse
+from app.schemas.detection import (
+    DetectionResponse,
+    FalsePositiveRequest,
+    DetectionRuleResponse,
+    RuleErrorEntry,
+)
 from app.services.entity_classification import (
     build_host_alias_map,
     is_ip_address,
@@ -321,14 +326,24 @@ def _coalesce_findings_by_host(findings: List[dict], events: List[Event]) -> Lis
             duplicate["severity"] = finding.get("severity")
     return merged
 from app.services.detection_engine import (
+    DEFAULT_TMP_INGRESS_WINDOW_SECONDS,
+    MIN_TMP_INGRESS_WINDOW_SECONDS,
+    MAX_TMP_INGRESS_WINDOW_SECONDS,
     execute_detections_on_events,
     get_rule_coverage_matrix,
+    resolve_tmp_ingress_window_seconds,
     BUILTIN_SIGMA_RULES,
 )
 from app.services.event_ordering import sort_events
 
 
-def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]:
+def _execute_case_detections(
+    case_id: uuid.UUID,
+    db: Session,
+    tmp_ingress_window_seconds: Optional[int] = None,
+    rule_errors_out: Optional[List[Dict[str, str]]] = None,
+) -> List[Detection]:
+    resolved_tmp_window = resolve_tmp_ingress_window_seconds(tmp_ingress_window_seconds)
     events = sort_events(
         db.execute(
             select(Event)
@@ -362,12 +377,23 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
         db.flush()
 
     findings = []
+    engine_rule_errors: List[Dict[str, str]] = []
     # 1. Deterministic Sigma detection engine + correlation rules + EDR findings
     try:
-        findings.extend(execute_detections_on_events(events, case_id))
+        findings.extend(
+            execute_detections_on_events(
+                events,
+                case_id,
+                tmp_ingress_window_seconds=resolved_tmp_window,
+                rule_errors=engine_rule_errors,
+            )
+        )
     except Exception as e:
         import logging
         logging.warning("Error running detection engine: %s", e)
+
+    if rule_errors_out is not None and engine_rule_errors:
+        rule_errors_out.extend(engine_rule_errors)
 
     # 2. Supporting heuristic rules
     for detector in (
@@ -506,14 +532,44 @@ def _execute_case_detections(case_id: uuid.UUID, db: Session) -> List[Detection]
 )
 def run_detection(
     case_id: str,
+    tmp_ingress_window_seconds: Optional[int] = Query(
+        default=None,
+        ge=MIN_TMP_INGRESS_WINDOW_SECONDS,
+        le=MAX_TMP_INGRESS_WINDOW_SECONDS,
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     case = get_authorized_case(case_id=case_id, current_user=current_user, db=db, allow_viewer=False)
-    detections = _execute_case_detections(case.id, db)
+    try:
+        resolved_tmp_window = resolve_tmp_ingress_window_seconds(tmp_ingress_window_seconds)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    detections = []
+    rule_errors: List[Dict[str, str]] = []
+    detections = _execute_case_detections(
+        case.id,
+        db,
+        tmp_ingress_window_seconds=resolved_tmp_window,
+        rule_errors_out=rule_errors,
+    )
+    if rule_errors:
+        log_audit_event(
+            db=db,
+            user=current_user,
+            action="detection.rule_errors",
+            resource=f"case:{case.id}",
+            case_id=case.id,
+            details={"rule_errors": rule_errors},
+        )
+        db.commit()
     events = db.execute(select(Event).where(Event.case_id == case.id)).scalars().all()
     alias_map = build_host_alias_map(events)
     responses = [build_detection_response(db, d, alias_map=alias_map) for d in detections]
+    if rule_errors:
+        err_models = [RuleErrorEntry(**item) for item in rule_errors]
+        for resp in responses:
+            resp.rule_errors = err_models
     return sorted(responses, key=lambda response: response.timestamp or "")
 
 
@@ -599,10 +655,11 @@ def get_case_rule_coverage(
             .order_by(Event.timestamp.asc(), Event.id.asc())
         ).scalars().all()
     )
-    findings = execute_detections_on_events(events, case.id)
+    rule_errors: List[Dict[str, str]] = []
+    findings = execute_detections_on_events(events, case.id, rule_errors=rule_errors)
     for detector in (detect_macro_attachment_delivery, detect_smb_lateral_movement, detect_periodic_beaconing):
         findings.extend(detector(events))
-    return get_rule_coverage_matrix(findings)
+    return get_rule_coverage_matrix(findings, rule_errors=rule_errors)
 
 
 @router.get("/rules", response_model=List[DetectionRuleResponse])
@@ -628,6 +685,7 @@ def get_detection_rules(
                 status="active",
                 tags=[r["mitre_tactic"].lower(), r["mitre_technique"].lower()],
                 yaml_content=json.dumps(r["detection"], indent=2),
+                evaluation_note=r.get("evaluation_note"),
             )
         )
 

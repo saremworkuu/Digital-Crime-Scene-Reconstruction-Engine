@@ -7,6 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from app.db.models.detection import DetectionSeverity
 
 
+class RuleErrorEntry(BaseModel):
+    rule_id: str
+    error: str
+
+
 class DetectionResponse(BaseModel):
     id: uuid.UUID
     case_id: uuid.UUID
@@ -31,6 +36,7 @@ class DetectionResponse(BaseModel):
     entities_involved: Optional[dict[str, List[str]]] = Field(
         default_factory=lambda: {"hosts": [], "users": [], "ips": []}
     )
+    rule_errors: Optional[List[RuleErrorEntry]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,3 +63,4 @@ class DetectionRuleResponse(BaseModel):
     status: Optional[str] = "active"
     tags: List[str] = Field(default_factory=list)
     yaml_content: Optional[str] = None
+    evaluation_note: Optional[str] = None

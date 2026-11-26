@@ -558,3 +558,104 @@ def test_zip_container_stored_in_custody_but_excluded_from_indicators_and_manife
         assert custody_by_name["flows.csv"]["is_container"] is False
     finally:
         cleanup()
+
+
+def test_zip_container_excluded_from_case_counts_matches_one_by_one_and_blocks_reparse(tmp_path, monkeypatch):
+    client, TestSession, case_one_by_one, upload_dir, cleanup = _setup_test_app(tmp_path, monkeypatch)
+    try:
+        case_zip = _create_second_case(TestSession, case_one_by_one.created_by, "ZIP Count Parity Case")
+
+        auth_bytes = b"Aug  1 08:10:00 hostA sshd[10]: Failed password for alice from 198.51.100.40 port 41000\n"
+        web_bytes = b'198.51.100.40 - - [01/Aug/2026:08:11:00 +0000] "GET /login HTTP/1.1" 200 512 "-" "curl/8.0"\n'
+        csv_bytes = (
+            b"timestamp,host,src_ip,dst_ip,dst_port,protocol,bytes\n"
+            b"2026-08-01T08:12:00Z,hostA,10.0.0.5,198.51.100.40,443,TCP,1024\n"
+        )
+        fixtures = [
+            ("auth.log", auth_bytes, "text/plain"),
+            ("access.log", web_bytes, "text/plain"),
+            ("flows.csv", csv_bytes, "text/csv"),
+        ]
+
+        # 1) Upload N files one by one
+        for fname, content, mime in fixtures:
+            r = client.post(
+                f"/api/v1/evidence/cases/{case_one_by_one.id}/evidence/upload",
+                files={"file": (fname, content, mime)},
+            )
+            assert r.status_code == 201, r.text
+
+        # 2) Upload a ZIP containing the exact same N files
+        zip_bytes = _build_zip_bytes([(fname, content, None) for fname, content, _mime in fixtures])
+        zr = client.post(
+            f"/api/v1/evidence/cases/{case_zip.id}/evidence/upload",
+            files={"file": ("bundle.zip", zip_bytes, "application/zip")},
+        )
+        assert zr.status_code == 201, zr.text
+        zbody = zr.json()
+        assert zbody["is_container"] is True
+        assert zbody["event_count"] == 0
+
+        # Both GET /cases/{id} and GET /cases/ report N (3), NOT N+1 (4)
+        c1_res = client.get(f"/api/v1/cases/{case_one_by_one.id}").json()
+        c2_res = client.get(f"/api/v1/cases/{case_zip.id}").json()
+        assert c1_res["evidence_count"] == 3
+        assert c2_res["evidence_count"] == 3
+
+        list_by_id = {c["id"]: c for c in client.get("/api/v1/cases/").json()}
+        assert list_by_id[str(case_one_by_one.id)]["evidence_count"] == 3
+        assert list_by_id[str(case_zip.id)]["evidence_count"] == 3
+
+        # Evidence list preserves container custody row with derived metadata
+        ev_items = client.get(f"/api/v1/evidence/cases/{case_zip.id}/evidence").json()
+        assert len(ev_items) == 4  # 1 container + 3 members
+        by_name = {item["filename"]: item for item in ev_items}
+        assert by_name["bundle.zip"]["is_container"] is True
+        assert by_name["bundle.zip"]["extracted_count"] == 3
+        assert by_name["bundle.zip"]["event_count"] == 0
+        assert by_name["bundle.zip"]["parser_used"] == "ZipArchive"
+        for fname, _content, _mime in fixtures:
+            assert by_name[fname]["is_container"] is False
+
+        # Legacy stored container without parser_used="ZipArchive" is also excluded cleanly
+        session = TestSession()
+        try:
+            legacy_zip_path = upload_dir / "legacy_dummy.bin"
+            legacy_zip_path.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+            legacy_ev = Evidence(
+                case_id=case_zip.id,
+                uploaded_by=case_one_by_one.created_by,
+                filename="old_container.zip",
+                description="Legacy uploaded archive",
+                file_type="application/zip",
+                file_path=str(legacy_zip_path),
+                sha256_hash=hashlib.sha256(b"legacy").hexdigest(),
+                file_size=22,
+                parsing_status=ParsingStatus.PARSED,
+                parser_used=None,
+            )
+            session.add(legacy_ev)
+            session.commit()
+        finally:
+            session.close()
+
+        assert client.get(f"/api/v1/cases/{case_zip.id}").json()["evidence_count"] == 3
+        legacy_items = {
+            item["filename"]: item
+            for item in client.get(f"/api/v1/evidence/cases/{case_zip.id}/evidence").json()
+        }
+        assert legacy_items["old_container.zip"]["is_container"] is True
+
+        # Container cannot be reparsed as a log type
+        rep_resp = client.post(
+            f"/api/v1/evidence/{zbody['id']}/reparse",
+            json={"parser_type": "linux_auth"},
+        )
+        assert rep_resp.status_code == 400
+        refreshed = {
+            item["filename"]: item
+            for item in client.get(f"/api/v1/evidence/cases/{case_zip.id}/evidence").json()
+        }
+        assert refreshed["bundle.zip"]["parser_used"] == "ZipArchive"
+    finally:
+        cleanup()

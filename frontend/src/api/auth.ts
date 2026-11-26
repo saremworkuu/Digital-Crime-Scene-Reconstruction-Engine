@@ -38,8 +38,17 @@ export const authApi = {
   getCurrentUser: async () => {
     return apiClient.get<User>('/auth/me');
   },
-  changePassword: async (currentPassword: string, newPassword: string) => {
-    return apiClient.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword });
+  changePassword: async (currentPassword: string, newPassword: string, confirmPassword?: string) => {
+    return apiClient.post<{
+      message?: string;
+      access_token?: string;
+      token?: string;
+      token_type?: string;
+    }>('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+      ...(confirmPassword ? { confirm_password: confirmPassword } : {}),
+    });
   },
   updateProfile: async (data: {
     name?: string;

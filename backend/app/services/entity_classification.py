@@ -185,7 +185,11 @@ def is_netflow_pcap_or_waf(item: Any) -> bool:
     return False
 
 
-def build_host_alias_map(events: Iterable[Any]) -> dict[str, str]:
+def build_host_alias_map(
+    events: Iterable[Any],
+    *,
+    ambiguous_ips: set[str] | None = None,
+) -> dict[str, str]:
     """Build an unambiguous IP -> canonical host map from explicit evidence bindings.
 
     Extracts pairings from records that carry both a non-IP host name and an IP
@@ -257,6 +261,10 @@ def build_host_alias_map(events: Iterable[Any]) -> dict[str, str]:
 
     alias_map: dict[str, str] = {}
     for ip, candidates in ip_host_candidates.items():
+        if len({host.casefold() for host in candidates}) > 1:
+            if ambiguous_ips is not None:
+                ambiguous_ips.add(ip)
+            continue
         best = max(candidates.values())
         winners = [host for host, score in candidates.items() if score == best]
         if len(winners) == 1:

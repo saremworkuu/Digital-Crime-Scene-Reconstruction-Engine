@@ -16,6 +16,7 @@ import { INITIAL_SIGMA_RULES } from '../sample-data/sigma-rules';
 import { computeSHA256 } from '../services/hasher';
 import { parseEvidenceContent } from '../services/parsers';
 import { compareEventsDeterministically } from '../utils/eventOrdering';
+import { getContainerExtractedCount, isEvidenceContainer } from '../utils/evidenceContainer';
 import {
   casesApi,
   evidenceApi,
@@ -914,28 +915,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const effectiveBadge = updates.badgeId || updates.badge_id;
 
-    // Optional: handle password change if requested
-    if (updates.newPassword) {
-      if (!updates.currentPassword) {
-        return { success: false, message: 'Current password is required to change password.' };
-      }
-      try {
-        await authApi.changePassword(updates.currentPassword, updates.newPassword);
-      } catch (err: any) {
-        console.warn('Password update through API encountered error:', err);
-        const detailMsg = err?.response?.data?.detail;
-        if (detailMsg) {
-          return { success: false, message: String(detailMsg) };
-        }
-        if (currentUser.password && currentUser.password !== updates.currentPassword) {
-          return { success: false, message: 'Incorrect current password.' };
-        }
-      }
-    }
-
-    // Attempt backend profile update
+    // Update profile fields first while existing token is still active (if not strictly password-only)
     let backendUser: User | null = null;
-    try {
+    if (!updates.newPassword) {
       const resp = await authApi.updateProfile({
         name: updates.name,
         username: updates.name,
@@ -944,13 +926,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         badge_id: effectiveBadge,
         badgeId: effectiveBadge
       });
+      if (resp?.error && resp.status !== 0) {
+        return { success: false, message: String(resp.error) };
+      }
       if (resp && resp.data) {
         backendUser = resp.data;
       }
-    } catch (apiErr: any) {
-      console.warn('Backend updateProfile API call failed (proceeding with local session update):', apiErr);
-      if (apiErr?.response?.data?.detail) {
-        return { success: false, message: String(apiErr.response.data.detail) };
+    } else {
+      if (!updates.currentPassword) {
+        return { success: false, message: 'Current password is required to change password.' };
+      }
+      if (updates.newPassword === updates.currentPassword) {
+        return { success: false, message: 'New password must be different from your current password.' };
+      }
+      const pwRes = await authApi.changePassword(
+        updates.currentPassword,
+        updates.newPassword,
+        updates.newPassword
+      );
+      if (pwRes?.error) {
+        if (pwRes.status === 0 && currentUser.password && currentUser.password !== updates.currentPassword) {
+          return { success: false, message: 'Incorrect current password.' };
+        }
+        if (pwRes.status !== 0) {
+          return { success: false, message: String(pwRes.error) };
+        }
+      }
+      const rotatedToken = pwRes?.data?.access_token || pwRes?.data?.token;
+      if (rotatedToken) {
+        apiClient.setToken(rotatedToken);
       }
     }
 
@@ -995,7 +999,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       { id: currentUser.id, name: updatedUser.name, role: updatedUser.role }
     );
 
-    return { success: true, message: 'Profile updated successfully.', user: updatedUser };
+    return {
+      success: true,
+      message: updates.newPassword ? 'Password updated successfully.' : 'Profile updated successfully.',
+      user: updatedUser
+    };
   };
 
   // Active Case Data Subsets
@@ -1060,7 +1068,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             status: be.status || (be.parsing_status === 'parsed' ? 'Parsed' : be.parsing_status === 'failed' ? 'Failed' : 'Parsed'),
             parser_used: be.parser_used || be.file_type,
             event_count: be.event_count || 0,
-            raw_sample: be.raw_sample || ''
+            raw_sample: be.raw_sample || '',
+            is_container: Boolean(be.is_container),
+            extracted_count: typeof be.extracted_count === 'number' ? be.extracted_count : null,
           }));
 
           loadedArtifactCasesRef.current.add(targetCaseId);
@@ -1275,7 +1285,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!loadedArtifactCasesRef.current.has(c.id)) {
         return c;
       }
-      const cEvid = evidenceList.filter(e => e.case_id === c.id);
+      const cEvid = evidenceList.filter(e => e.case_id === c.id && !isEvidenceContainer(e));
       const cEvts = events.filter(e => e.case_id === c.id);
       const cDets = detections.filter(d => d.case_id === c.id && !d.false_positive);
       const critCount = cDets.filter(d => d.severity === 'critical').length;
@@ -1363,7 +1373,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Action: Delete Case (FR-CASE-6)
   const deleteCase = (caseId: string) => {
     const targetCase = cases.find(c => c.id === caseId);
-    const evCount = targetCase?.evidence_count ?? evidenceList.filter(e => e.case_id === caseId).length;
+    const evCount = targetCase?.evidence_count ?? evidenceList.filter(e => e.case_id === caseId && !isEvidenceContainer(e)).length;
     const eventCount = targetCase?.event_count ?? events.filter(e => e.case_id === caseId).length;
 
     casesApi.delete(caseId)
@@ -1504,14 +1514,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         if (stData.status !== 'pending' && stData.parsing_status !== 'pending') {
           resolvedStatus = stData.status === 'failed' ? 'Failed' : 'Parsed';
-          resolvedEventCount = (extractedResults || []).reduce(
-            (sum: number, item: any) => sum + Number(item?.evidence?.event_count || 0),
-            0
-          );
           break;
         }
       }
     }
+
+    const derivedIsContainer = Boolean(
+      backendEvid.is_container ??
+      (isZipUpload || String(backendEvid.parser_used || detectedParser) === 'ZipArchive')
+    );
+    const derivedExtractedCount = derivedIsContainer
+      ? getContainerExtractedCount({
+          extracted_count: backendEvid.extracted_count,
+          extracted_results: extractedResults,
+        })
+      : null;
 
     const savedEvidence: EvidenceFile = {
       id: String(backendEvid.id),
@@ -1525,10 +1542,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       uploader_id: String(backendEvid.uploaded_by || backendEvid.uploader_id || currentUser?.id || ''),
       status: resolvedStatus,
       parser_used: backendEvid.parser_used || detectedParser,
-      event_count: resolvedEventCount,
+      event_count: derivedIsContainer ? 0 : resolvedEventCount,
       raw_sample: backendEvid.raw_sample || '',
       duplicate: Boolean(backendEvid.duplicate),
       duplicate_of: backendEvid.duplicate_of ? String(backendEvid.duplicate_of) : undefined,
+      is_container: derivedIsContainer,
+      extracted_count: derivedExtractedCount,
       extracted_results: extractedResults,
     };
     setEvidenceList(prev => {
@@ -1578,7 +1597,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           status: be.status || (be.parsing_status === 'parsed' ? 'Parsed' : be.parsing_status === 'failed' ? 'Failed' : 'Parsed'),
           parser_used: be.parser_used || be.file_type,
           event_count: be.event_count || 0,
-          raw_sample: be.raw_sample || ''
+          raw_sample: be.raw_sample || '',
+          is_container: Boolean(be.is_container),
+          extracted_count: typeof be.extracted_count === 'number' ? be.extracted_count : null,
         }));
         safeSetStorage(`dcsre_evidence_cache_${resolvedCaseId}`, JSON.stringify(backendEvidence));
         setEvidenceList(prev => [
@@ -1705,7 +1726,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Action: Reparse Evidence (FR-PARSE-9)
   const reparseEvidence = (evidenceId: string, parserType: ParserType) => {
     const evidence = evidenceList.find(e => e.id === evidenceId);
-    if (!evidence) return;
+    if (!evidence || isEvidenceContainer(evidence)) return;
 
     if (evidence.raw_sample) {
       const parseResult = parseEvidenceContent(evidence.raw_sample || '', parserType, evidence.case_id || evidence.caseId || '', evidence.id);

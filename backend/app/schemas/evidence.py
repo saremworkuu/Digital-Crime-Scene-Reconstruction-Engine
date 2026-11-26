@@ -38,6 +38,8 @@ class EvidenceResponse(BaseModel):
     raw_sample: Optional[str] = None
     duplicate: bool = False
     duplicate_of: Optional[uuid.UUID] = None
+    is_container: bool = False
+    extracted_count: Optional[int] = None
     extracted_results: Optional[List[EvidenceUploadResult]] = None
 
     model_config = ConfigDict(from_attributes=True)

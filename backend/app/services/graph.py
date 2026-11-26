@@ -364,7 +364,8 @@ def build_attack_graph(
     extracted_events = [extract_event_fields(e) for e in events]
 
     # B2 Pass 1: Build IP-to-host alias map purely from explicit evidence bindings.
-    ip_to_host = build_host_alias_map(events)
+    ambiguous_ips: Set[str] = set()
+    ip_to_host = build_host_alias_map(events, ambiguous_ips=ambiguous_ips)
     host_aliases_lookup: Dict[str, List[str]] = {}
     for alias_ip, alias_host in ip_to_host.items():
         host_aliases_lookup.setdefault(alias_host, []).append(alias_ip)
@@ -663,6 +664,7 @@ def build_attack_graph(
     def _ensure_ip_node(ip_addr: str, *, is_attack: bool, ts: str = "", evt_id: str = "") -> str:
         node_id = f"ip-{ip_addr}"
         is_priv = is_private_ip(ip_addr)
+        is_ambiguous = ip_addr in ambiguous_ips
         roles_set = ip_infra_roles.get(ip_addr, set())
         is_adversary = bool(roles_set) or (ip_addr in adversary_ips)
         node_role = (
@@ -683,6 +685,8 @@ def build_attack_graph(
                 "first_seen": ts,
                 "last_seen": ts,
             }
+            if is_ambiguous:
+                nodes_map[node_id]["ambiguous"] = True
         else:
             if evt_id:
                 nodes_map[node_id]["event_count"] += 1
@@ -698,6 +702,8 @@ def build_attack_graph(
                 if not nodes_map[node_id].get("first_seen"):
                     nodes_map[node_id]["first_seen"] = ts
                 nodes_map[node_id]["last_seen"] = ts
+            if is_ambiguous:
+                nodes_map[node_id]["ambiguous"] = True
         if roles_set:
             node_details = nodes_map[node_id].setdefault("details", {})
             node_details["infrastructure_roles"] = sorted(roles_set)

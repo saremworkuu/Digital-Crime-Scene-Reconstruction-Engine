@@ -39,6 +39,15 @@ def to_admin_evidence_response(e: Evidence, db: Session) -> AdminEvidenceRespons
     if "." in file_ext:
         file_ext = file_ext.replace(".", "").upper()
 
+    from app.services.report import is_container_evidence
+    evt_count = 0
+    if (e.parser_used or "").strip() != "ZipArchive" and str(e.filename or "").strip().lower().endswith(".zip"):
+        evt_count = db.execute(
+            select(Event.id).where(Event.evidence_id == e.id).limit(1)
+        ).first() is not None
+        evt_count = 1 if evt_count else 0
+    is_container = is_container_evidence(e, event_count=evt_count)
+
     return AdminEvidenceResponse(
         id=str(e.id),
         case_id=str(e.case_id),
@@ -52,6 +61,7 @@ def to_admin_evidence_response(e: Evidence, db: Session) -> AdminEvidenceRespons
         parsing_status=status_str,
         error_text=e.parsing_error,
         verified=e.verified,
+        is_container=is_container,
     )
 
 

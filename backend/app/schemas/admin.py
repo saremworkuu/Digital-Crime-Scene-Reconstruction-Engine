@@ -93,6 +93,7 @@ class AdminEvidenceResponse(BaseModel):
     parsing_status: str
     error_text: Optional[str] = None
     verified: Optional[bool] = None
+    is_container: bool = False
 
 
 class AdminEvidenceVerifyResponse(BaseModel):

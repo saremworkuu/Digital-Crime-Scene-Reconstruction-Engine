@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../store';
 import {
   X,
@@ -65,6 +66,15 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
     }
   }, [isOpen, currentUser]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape' && !isSubmitting) onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, isSubmitting, onClose]);
+
   if (!isOpen || !currentUser) return null;
 
   const isAdmin = currentUser.role === 'admin';
@@ -91,6 +101,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
       }
       if (newPassword.length < 8) {
         setErrorMsg('New password must be at least 8 characters long.');
+        return;
+      }
+      if (newPassword === currentPassword) {
+        setErrorMsg('New password must be different from your current password.');
         return;
       }
       if (newPassword !== confirmPassword) {
@@ -124,7 +138,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
 
       const res = await updateCurrentUserProfile(payload);
       if (res.success) {
-        setSuccessMsg(res.message || 'Profile updated successfully.');
+        const okMsg = res.message || (activeTab === 'security' ? 'Password updated successfully.' : 'Profile updated successfully.');
+        setSuccessMsg(okMsg);
+        toast.success(okMsg);
         if (activeTab === 'security') {
           setCurrentPassword('');
           setNewPassword('');
@@ -132,7 +148,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
         }
         setTimeout(() => {
           onClose();
-        }, 1200);
+        }, 1000);
       } else {
         setErrorMsg(res.message || 'Failed to update profile. Please check your credentials.');
       }
@@ -143,10 +159,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md animate-fadeIn">
+  const modalNode = (
+    <div
+      onClick={() => { if (!isSubmitting) onClose(); }}
+      className="fixed inset-0 z-[100] overflow-y-auto bg-black/75 backdrop-blur-md p-4 sm:p-6 flex items-center justify-center animate-fadeIn"
+    >
       <div
-        className={`w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl border shadow-[0_25px_80px_rgba(0,0,0,0.85)] overflow-hidden transition-all duration-200 ${
+        onClick={(e) => e.stopPropagation()}
+        className={`w-full max-w-xl max-h-[86vh] my-auto flex flex-col rounded-2xl border shadow-[0_25px_80px_rgba(0,0,0,0.85)] overflow-hidden transition-all duration-200 ${
           isLight
             ? 'bg-white border-slate-200 text-slate-800'
             : 'bg-[#141211] border-[#2e2926] text-[#e7e5e4]'
@@ -154,7 +174,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
       >
         {/* Header with Operator Badge */}
         <div
-          className={`px-6 py-4.5 border-b flex items-center justify-between ${
+          className={`shrink-0 px-5 sm:px-6 py-4 border-b flex items-center justify-between gap-3 ${
             isLight
               ? 'bg-slate-50 border-slate-200'
               : 'bg-[#1a1716] border-[#2e2926]'
@@ -223,7 +243,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
 
         {/* Tab Selection */}
         <div
-          className={`flex border-b px-6 pt-2 gap-4 ${
+          className={`shrink-0 flex border-b px-5 sm:px-6 pt-2 gap-4 ${
             isLight ? 'border-slate-200 bg-slate-50/50' : 'border-[#2e2926] bg-[#121110]'
           }`}
         >
@@ -268,23 +288,22 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
           </button>
         </div>
 
-        {/* Feedback Alerts */}
-        {errorMsg && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
-
-        {successMsg && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs flex items-center gap-2.5">
-            <Check className="w-4 h-4 shrink-0" />
-            <span>{successMsg}</span>
-          </div>
-        )}
-
         {/* Form Body */}
-        <form onSubmit={handleSaveProfile} className="p-4 sm:p-6 space-y-4 flex-1 overflow-y-auto">
+        <form onSubmit={handleSaveProfile} className="flex-1 min-h-0 flex flex-col">
+          <div className="p-5 sm:p-6 space-y-4 flex-1 min-h-0 overflow-y-auto">
+          {errorMsg && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs flex items-center gap-2.5">
+              <Check className="w-4 h-4 shrink-0" />
+              <span>{successMsg}</span>
+            </div>
+          )}
           {activeTab === 'details' ? (
             <div className="space-y-4 text-xs">
               {/* Full Name */}
@@ -398,6 +417,35 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
                 </div>
                 <span className="text-[10px] font-mono text-[#78716c]">Role Locked (RBAC)</span>
               </div>
+
+              {/* Password Shortcut Card */}
+              <div
+                className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-200 text-slate-700'
+                    : 'bg-[#181514] border-[#2e2926] text-[#d6d3d1]'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Lock className="w-4 h-4 text-[#f95721] shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-semibold">Account Password</div>
+                    <div className={`text-[11px] truncate ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                      Rotate your examiner login passphrase
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('security');
+                    setErrorMsg(null);
+                  }}
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-[#24130d] hover:bg-[#341b12] border border-[#ea580c]/40 text-[#f95721] text-[11px] font-semibold cursor-pointer transition-colors"
+                >
+                  Change Password
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-4 text-xs">
@@ -509,10 +557,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
             </div>
           )}
 
+          </div>
+
           {/* Action Buttons */}
           <div
-            className={`pt-4 border-t flex items-center justify-end gap-3 ${
-              isLight ? 'border-slate-200' : 'border-[#2e2926]'
+            className={`shrink-0 px-5 sm:px-6 py-3.5 border-t flex items-center justify-end gap-3 ${
+              isLight ? 'border-slate-200 bg-slate-50/70' : 'border-[#2e2926] bg-[#161413]'
             }`}
           >
             <button
@@ -536,12 +586,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Saving Changes...</span>
+                  <span>{activeTab === 'security' ? 'Updating Password...' : 'Saving Changes...'}</span>
                 </>
               ) : (
                 <>
-                  <Save className="w-4 h-4" />
-                  <span>Save Profile</span>
+                  {activeTab === 'security' ? <KeyRound className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                  <span>{activeTab === 'security' ? 'Update Password' : 'Save Profile'}</span>
                 </>
               )}
             </button>
@@ -550,4 +600,6 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };

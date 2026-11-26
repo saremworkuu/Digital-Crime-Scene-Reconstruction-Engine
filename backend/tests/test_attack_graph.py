@@ -373,3 +373,62 @@ def test_alias_map_normalizes_netflow_pcap_waf_and_merges_graph_node():
     host_nodes = [n for n in graph["nodes"] if n["label"] == "APP-02"]
     assert len(host_nodes) == 1
     assert "10.99.2.25" in ((host_nodes[0].get("details") or {}).get("aliases") or [])
+
+
+def test_shared_private_ip_with_uneven_hostname_counts_does_not_misattribute_and_flags_ambiguous():
+    from app.schemas.graph import AttackGraphData
+    from app.services.entity_classification import build_host_alias_map
+
+    events = [
+        {"id": "e1", "timestamp": "2026-08-01T10:00:00Z", "event_type": "host_info", "details": {"host": "HOST-A", "host_ip": "10.0.0.1", "source_file": "seg_a.xml"}},
+        {"id": "e2", "timestamp": "2026-08-01T10:01:00Z", "event_type": "host_info", "details": {"host": "HOST-A", "host_ip": "10.0.0.1", "source_file": "seg_a.xml"}},
+        {"id": "e3", "timestamp": "2026-08-01T10:02:00Z", "event_type": "host_info", "details": {"host": "HOST-B", "host_ip": "10.0.0.1", "source_file": "seg_b.xml"}},
+        {"id": "e4", "timestamp": "2026-08-01T10:03:00Z", "event_type": "network_connection", "details": {"host": "HOST-B", "src_ip": "10.0.0.1", "dst_ip": "198.51.100.50", "dst_port": 443, "source_file": "seg_b_flow.csv"}},
+    ]
+
+    ambiguous: set[str] = set()
+    alias_map = build_host_alias_map(events, ambiguous_ips=ambiguous)
+    assert alias_map == {}
+    assert ambiguous == {"10.0.0.1"}
+
+    graph = build_attack_graph(events)
+    nodes_by_id = {n["id"]: n for n in graph["nodes"]}
+
+    # Both machines keep separate host nodes without HOST-B traffic being rewritten to HOST-A
+    assert "host-HOST-A" in nodes_by_id
+    assert "host-HOST-B" in nodes_by_id
+    assert "e4" not in nodes_by_id["host-HOST-A"]["event_ids"]
+    assert not any(edge["source"] == "host-HOST-A" for edge in graph["edges"])
+
+    # Conflicting IP stays its own node and is flagged ambiguous
+    assert "ip-10.0.0.1" in nodes_by_id
+    assert nodes_by_id["ip-10.0.0.1"].get("ambiguous") is True
+
+    # Schema preserves optional ambiguous flag
+    validated = AttackGraphData.model_validate(graph)
+    ip_model = next(n for n in validated.nodes if n.id == "ip-10.0.0.1")
+    assert ip_model.ambiguous is True
+
+
+def test_single_hostname_seen_by_name_and_ip_stays_one_node():
+    events = [
+        {"id": "s1", "timestamp": "2026-08-01T11:00:00Z", "event_type": "host_info", "details": {"host": "SRV-ONLY", "host_ip": "10.0.0.5", "source_file": "scan.xml"}},
+        {"id": "s2", "timestamp": "2026-08-01T11:01:00Z", "event_type": "network_connection", "details": {"host": "unknown_host", "src_ip": "10.0.0.5", "dst_ip": "198.51.100.90", "dst_port": 443, "source_file": "flow.csv"}},
+    ]
+    graph = build_attack_graph(events)
+    nodes_by_id = {n["id"]: n for n in graph["nodes"]}
+    assert "host-SRV-ONLY" in nodes_by_id
+    assert "ip-10.0.0.5" not in nodes_by_id
+    assert nodes_by_id["host-SRV-ONLY"].get("ambiguous") is None
+
+
+def test_unmapped_ip_with_no_hostnames_stays_one_ip_node_without_ambiguous_flag():
+    events = [
+        {"id": "u1", "timestamp": "2026-08-01T12:00:00Z", "event_type": "network_connection", "details": {"src_ip": "10.0.0.99", "dst_ip": "198.51.100.12", "dst_port": 80}},
+        {"id": "u2", "timestamp": "2026-08-01T12:01:00Z", "event_type": "network_connection", "details": {"src_ip": "10.0.0.99", "dst_ip": "198.51.100.13", "dst_port": 443}},
+    ]
+    graph = build_attack_graph(events)
+    ip_nodes = [n for n in graph["nodes"] if n["id"] == "ip-10.0.0.99"]
+    assert len(ip_nodes) == 1
+    assert ip_nodes[0].get("ambiguous") is None
+    assert ip_nodes[0]["event_count"] == 2

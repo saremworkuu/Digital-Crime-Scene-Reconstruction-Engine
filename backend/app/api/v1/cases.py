@@ -31,9 +31,8 @@ router = APIRouter()
 
 def enrich_case_response(case: Case, db: Session) -> CaseResponse:
     """Computes real-time case telemetry (evidence, events, detections, assignees)."""
-    ev_count = db.execute(
-        select(func.count(Evidence.id)).where(Evidence.case_id == case.id)
-    ).scalar() or 0
+    from app.api.v1.evidence import count_case_artifacts
+    ev_count = count_case_artifacts(db, [case.id]).get(case.id, 0)
 
     evt_count = db.execute(
         select(func.count(Event.id)).where(Event.case_id == case.id)
@@ -86,13 +85,8 @@ def enrich_cases_batch(cases: List[Case], db: Session) -> List[CaseResponse]:
     case_ids = [c.id for c in cases]
     owner_ids = {c.created_by for c in cases if c.created_by}
 
-    ev_counts = dict(
-        db.execute(
-            select(Evidence.case_id, func.count(Evidence.id))
-            .where(Evidence.case_id.in_(case_ids))
-            .group_by(Evidence.case_id)
-        ).all()
-    )
+    from app.api.v1.evidence import count_case_artifacts
+    ev_counts = count_case_artifacts(db, case_ids)
 
     evt_counts = dict(
         db.execute(
@@ -473,9 +467,8 @@ def delete_case(
             detail=f'Deletion Blocked: Case "{case.name}" is currently locked under Legal Hold.',
         )
 
-    evidence_count = db.execute(
-        select(func.count(Evidence.id)).where(Evidence.case_id == case.id)
-    ).scalar() or 0
+    from app.api.v1.evidence import count_case_artifacts
+    evidence_count = count_case_artifacts(db, [case.id]).get(case.id, 0)
     event_count = db.execute(
         select(func.count(Event.id)).where(Event.case_id == case.id)
     ).scalar() or 0

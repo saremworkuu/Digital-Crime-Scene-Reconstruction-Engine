@@ -17,6 +17,7 @@ C1 fixes:
 """
 import fnmatch
 import json
+import logging
 import re
 import uuid
 from collections import defaultdict
@@ -30,6 +31,28 @@ from app.services.entity_classification import (
     strip_target_alias_ips,
 )
 from app.services.detection import extract_sqli_indicators
+
+
+DEFAULT_TMP_INGRESS_WINDOW_SECONDS: int = 300
+MIN_TMP_INGRESS_WINDOW_SECONDS: int = 10
+MAX_TMP_INGRESS_WINDOW_SECONDS: int = 86400
+
+
+def resolve_tmp_ingress_window_seconds(window_seconds: Optional[int] = None) -> int:
+    """Validate and return the correlation window (seconds) for rule-tmp-download-exec."""
+    if window_seconds is None:
+        return DEFAULT_TMP_INGRESS_WINDOW_SECONDS
+    if isinstance(window_seconds, bool) or not isinstance(window_seconds, int):
+        raise ValueError(
+            f"tmp_ingress_window_seconds must be an integer between "
+            f"{MIN_TMP_INGRESS_WINDOW_SECONDS} and {MAX_TMP_INGRESS_WINDOW_SECONDS}."
+        )
+    if not (MIN_TMP_INGRESS_WINDOW_SECONDS <= window_seconds <= MAX_TMP_INGRESS_WINDOW_SECONDS):
+        raise ValueError(
+            f"tmp_ingress_window_seconds={window_seconds} is out of allowed bounds "
+            f"[{MIN_TMP_INGRESS_WINDOW_SECONDS}, {MAX_TMP_INGRESS_WINDOW_SECONDS}]."
+        )
+    return window_seconds
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +236,12 @@ BUILTIN_SIGMA_RULES: List[Dict[str, Any]] = [
         "mitre_tactic": "Initial Access",
         "mitre_technique": "T1190",
         "description": "Detects SQL injection syntax in HTTP request logs.",
+        "evaluation_note": (
+            "Evaluated at runtime by extract_sqli_indicators() (double URL decoding across "
+            "web, WAF, and DB query fields with structured regex patterns); the selection list "
+            "is reference metadata only."
+        ),
+        # Reference metadata only; runtime evaluation calls extract_sqli_indicators().
         "detection": {
             "selection": {
                 "raw|contains": [
@@ -783,7 +812,12 @@ def _looks_like_ip(s: str) -> bool:
 # Main detection executor
 # ---------------------------------------------------------------------------
 
-def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[Dict[str, Any]]:
+def execute_detections_on_events(
+    events: List[Any],
+    case_id: uuid.UUID,
+    tmp_ingress_window_seconds: Optional[int] = None,
+    rule_errors: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, Any]]:
     """
     Evaluates all loaded Sigma rules and correlation rules against stored events.
     Returns structured findings matching Stage 5 requirements.
@@ -793,7 +827,13 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
     - MITRE mapping is taken directly from the rule (no defaults).
     - action field is never placed in severity.
     """
+    resolved_tmp_window = resolve_tmp_ingress_window_seconds(tmp_ingress_window_seconds)
     findings: List[Dict[str, Any]] = []
+
+    def _record_rule_error(rule_id: str, exc: Exception) -> None:
+        logging.warning("Detection rule '%s' failed: %s", rule_id, exc)
+        if rule_errors is not None:
+            rule_errors.append({"rule_id": rule_id, "error": str(exc)})
 
     def get_ts(e: Any) -> float:
         ts = getattr(e, "timestamp", None) or (e.get("timestamp") if isinstance(e, dict) else None)
@@ -844,8 +884,8 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
                 result.append(h_val)
         return result
 
-    def _correlate_tmp_ingress_transfer() -> List[Any]:
-        """Match wget/curl to /tmp or hidden paths followed within 5 minutes by extract/cron/execute."""
+    def _correlate_tmp_ingress_transfer(window_seconds: int = DEFAULT_TMP_INGRESS_WINDOW_SECONDS) -> List[Any]:
+        """Match wget/curl to /tmp or hidden paths followed within window_seconds by extract/cron/execute."""
         download_re = re.compile(r"\b(?:wget|curl)\b", re.IGNORECASE)
         staged_path_re = re.compile(r"(/(?:tmp|var/tmp|dev/shm)/\S+|/\.[A-Za-z0-9_.-]+\S*)")
         extract_re = re.compile(r"\b(?:tar|unzip|gunzip|7z|bzip2)\b", re.IGNORECASE)
@@ -882,7 +922,7 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
 
             for nxt in sorted_events[idx + 1 :]:
                 delta = get_ts(nxt) - anchor_ts
-                if delta > 300.0:
+                if delta > float(window_seconds):
                     break
                 if delta < 0:
                     continue
@@ -919,10 +959,7 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
     # ------------------------------------------------------------------
     # Evaluate dump/transfer exfiltration rules after non-exfil findings are collected
     # so transfers targeting already-flagged attacker IPs escalate severity accurately.
-    for rule in BUILTIN_SIGMA_RULES:
-        if rule["id"] in {"rule-mysqldump-scp-exfil", "rule-scp-transfer"}:
-            continue
-        # Skip metric-type events for non-metric rules
+    def _evaluate_builtin_rule(rule: Dict[str, Any]) -> None:
         sel = rule["detection"].get("selection", {})
         if rule["id"] == "rule-web-sql-injection":
             matched_events = [
@@ -930,65 +967,84 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
                 if extract_sqli_indicators(evt)
             ]
         elif rule["id"] == "rule-tmp-download-exec":
-            matched_events = _correlate_tmp_ingress_transfer()
+            matched_events = _correlate_tmp_ingress_transfer(resolved_tmp_window)
         else:
             matched_events = [
                 evt for evt in sorted_events
                 if evaluate_event_selection(evt, sel)
             ]
 
-        if matched_events:
-            first_evt = matched_events[0]
-            last_evt = matched_events[-1]
+        if not matched_events:
+            return
 
-            hosts = _victim_hosts_for_events(matched_events)
-            users = list({_extract_field_value(e, "user") for e in matched_events
-                          if _extract_field_value(e, "user") and _extract_field_value(e, "user") not in ("unknown", "-")})
-            raw_src_ips = sorted({str(_extract_field_value(e, "SourceIp")).strip() for e in matched_events if _extract_field_value(e, "SourceIp")})
-            src_ips = strip_target_alias_ips(raw_src_ips, hosts, alias_map)
-            src_files = list({_extract_field_value(e, "source_file") for e in matched_events if _extract_field_value(e, "source_file")})
-            rec_ids = [_extract_field_value(e, "source_record_id") for e in matched_events if _extract_field_value(e, "source_record_id") is not None]
+        first_evt = matched_events[0]
+        last_evt = matched_events[-1]
 
-            finding_id = f"{rule['id']}-{str(case_id)[:8]}"
-            # B1: actor is the src_ip (who did it); target_host is the host (where)
-            actor = src_ips[0] if src_ips else (users[0] if users else None)
-            target_host = hosts[0] if hosts else None
+        hosts = _victim_hosts_for_events(matched_events)
+        users = list({_extract_field_value(e, "user") for e in matched_events
+                      if _extract_field_value(e, "user") and _extract_field_value(e, "user") not in ("unknown", "-")})
+        raw_src_ips = sorted({str(_extract_field_value(e, "SourceIp")).strip() for e in matched_events if _extract_field_value(e, "SourceIp")})
+        src_ips = strip_target_alias_ips(raw_src_ips, hosts, alias_map)
+        src_files = list({_extract_field_value(e, "source_file") for e in matched_events if _extract_field_value(e, "source_file")})
+        rec_ids = [_extract_field_value(e, "source_record_id") for e in matched_events if _extract_field_value(e, "source_record_id") is not None]
 
-            # fix-3: seed mitre_techniques_all from the rule's explicit list
-            rule_techs = rule.get("mitre_techniques") or [rule["mitre_technique"]]
-            findings.append({
-                "id": finding_id,
-                "rule_id": rule["id"],
-                "rule_name": rule["name"],
-                "severity": rule["severity"],   # B4: never put action here
-                "mitre_tactic": rule["mitre_tactic"],
-                "mitre_technique": rule["mitre_technique"],
-                "mitre_techniques_all": list(rule_techs),
-                "description": f"{rule['description']} Detected in {len(matched_events)} event(s).",
-                # B1 fields
-                "actor": actor,
-                "target_host": target_host,
-                "host": target_host or "unknown",
+        finding_id = f"{rule['id']}-{str(case_id)[:8]}"
+        # B1: actor is the src_ip (who did it); target_host is the host (where)
+        actor = src_ips[0] if src_ips else (users[0] if users else None)
+        target_host = hosts[0] if hosts else None
+
+        # fix-3: seed mitre_techniques_all from the rule's explicit list
+        rule_techs = rule.get("mitre_techniques") or [rule["mitre_technique"]]
+        rule_desc = rule["description"]
+        extra_rule_info: Dict[str, Any] = {}
+        if rule["id"] == "rule-tmp-download-exec":
+            rule_desc = (
+                f"Detects download tools (wget/curl) writing to /tmp or hidden paths followed "
+                f"within {resolved_tmp_window} seconds by extraction, cron persistence, or execution from that path."
+            )
+            extra_rule_info["tmp_ingress_window_seconds"] = resolved_tmp_window
+        findings.append({
+            "id": finding_id,
+            "rule_id": rule["id"],
+            "rule_name": rule["name"],
+            "severity": rule["severity"],   # B4: never put action here
+            "mitre_tactic": rule["mitre_tactic"],
+            "mitre_technique": rule["mitre_technique"],
+            "mitre_techniques_all": list(rule_techs),
+            "description": f"{rule_desc} Detected in {len(matched_events)} event(s).",
+            # B1 fields
+            "actor": actor,
+            "target_host": target_host,
+            "host": target_host or "unknown",
+            "hosts": hosts,
+            "user": users[0] if users else "unknown",
+            "src_ip": src_ips[0] if src_ips else None,
+            "source_ips": src_ips,
+            "first_seen": getattr(first_evt, "timestamp", None) or first_evt.get("timestamp"),
+            "last_seen": getattr(last_evt, "timestamp", None) or last_evt.get("timestamp"),
+            "source": "Rule",
+            "source_file": src_files[0] if src_files else None,
+            "source_record_references": rec_ids,
+            "matching_event_ids": [str(getattr(e, "id", None) or e.get("id")) for e in matched_events],
+            "rule_information": {
+                "matched_count": len(matched_events),
                 "hosts": hosts,
-                "user": users[0] if users else "unknown",
-                "src_ip": src_ips[0] if src_ips else None,
+                "users": users,
+                "source_files": src_files,
+                "tactic": rule["mitre_tactic"],
+                "src_ips": src_ips,
                 "source_ips": src_ips,
-                "first_seen": getattr(first_evt, "timestamp", None) or first_evt.get("timestamp"),
-                "last_seen": getattr(last_evt, "timestamp", None) or last_evt.get("timestamp"),
-                "source": "Rule",
-                "source_file": src_files[0] if src_files else None,
-                "source_record_references": rec_ids,
-                "matching_event_ids": [str(getattr(e, "id", None) or e.get("id")) for e in matched_events],
-                "rule_information": {
-                    "matched_count": len(matched_events),
-                    "hosts": hosts,
-                    "users": users,
-                    "source_files": src_files,
-                    "tactic": rule["mitre_tactic"],
-                    "src_ips": src_ips,
-                    "source_ips": src_ips,
-                }
-            })
+                **extra_rule_info,
+            }
+        })
+
+    for rule in BUILTIN_SIGMA_RULES:
+        if rule["id"] in {"rule-mysqldump-scp-exfil", "rule-scp-transfer"}:
+            continue
+        try:
+            _evaluate_builtin_rule(rule)
+        except Exception as exc:
+            _record_rule_error(str(rule.get("id") or "unknown"), exc)
 
     # ------------------------------------------------------------------
     # 1b. Correlated Database Dump + External SCP/Transfer + NetFlow (T1048)
@@ -1550,7 +1606,10 @@ def execute_detections_on_events(events: List[Any], case_id: uuid.UUID) -> List[
     return findings
 
 
-def get_rule_coverage_matrix(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+def get_rule_coverage_matrix(
+    findings: List[Dict[str, Any]],
+    rule_errors: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
     """Rule coverage view: each rule, times fired, techniques covered/not covered."""
     rule_counts: Dict[str, int] = defaultdict(int)
     covered_techniques: Set[str] = set()
@@ -1584,10 +1643,13 @@ def get_rule_coverage_matrix(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
             "times_fired": rule_counts.get(r["name"], 0),
         })
 
-    return {
+    matrix = {
         "rules": rules_summary,
         "total_rules": len(catalog),
         "total_findings": len(findings),
         "covered_techniques": sorted(list(covered_techniques)),
         "uncovered_techniques": sorted(list(catalog_techniques - covered_techniques)),
     }
+    if rule_errors is not None:
+        matrix["rule_errors"] = list(rule_errors)
+    return matrix

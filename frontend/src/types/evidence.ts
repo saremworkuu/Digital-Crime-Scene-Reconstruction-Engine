@@ -34,5 +34,7 @@ export interface EvidenceFile {
   raw_sample?: string;
   duplicate?: boolean;
   duplicate_of?: string;
+  is_container?: boolean;
+  extracted_count?: number | null;
   extracted_results?: ExtractedEvidenceResult[];
 }

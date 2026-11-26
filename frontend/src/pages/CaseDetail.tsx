@@ -14,6 +14,7 @@ import {
 import { SeverityTag } from '../components/SeverityTag';
 import { MitreBadge } from '../components/MitreBadge';
 import { formatCaseShortId } from '../utils/caseDisplay';
+import { formatEvidenceStatusLabel, isEvidenceContainer } from '../utils/evidenceContainer';
 
 export const CaseDetail: React.FC = () => {
   const {
@@ -24,6 +25,8 @@ export const CaseDetail: React.FC = () => {
     updateCaseStatus,
     currentUser
   } = useApp();
+
+  const artifactEvidenceCount = activeCaseEvidence.filter((ev) => !isEvidenceContainer(ev)).length;
 
   if (!activeCase) {
     return (
@@ -72,7 +75,7 @@ export const CaseDetail: React.FC = () => {
             className="px-3 py-1.5 rounded-lg bg-[#241e1b] hover:bg-[#342a26] text-[#e7e5e4] text-xs transition-colors flex items-center gap-1.5 border border-[#38312d] cursor-pointer"
           >
             <FileCheck2 className="w-3.5 h-3.5 text-[#f95721]" />
-            <span>Evidence ({activeCaseEvidence.length})</span>
+            <span>Evidence ({artifactEvidenceCount})</span>
           </button>
           <button
             onClick={() => setCurrentPage('timeline')}
@@ -133,7 +136,7 @@ export const CaseDetail: React.FC = () => {
             <div className="flex items-center justify-between border-b border-[#282321] pb-2">
               <h3 className="text-xs font-semibold text-[#fafaf9] uppercase font-mono flex items-center gap-2 tracking-wider">
                 <FileCheck2 className="w-3.5 h-3.5 text-[#f95721]" />
-                <span>Associated Evidence Files ({activeCaseEvidence.length})</span>
+                <span>Associated Evidence Files ({artifactEvidenceCount})</span>
               </h3>
               <button
                 onClick={() => setCurrentPage('evidence')}
@@ -144,7 +147,9 @@ export const CaseDetail: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              {activeCaseEvidence.map((ev) => (
+              {activeCaseEvidence.map((ev) => {
+                const isContainer = isEvidenceContainer(ev);
+                return (
                 <div
                   key={ev.id}
                   className="p-3 bg-[#100f0e] border border-[#282321] rounded-xl text-xs space-y-1.5"
@@ -153,11 +158,11 @@ export const CaseDetail: React.FC = () => {
                     <div className="font-semibold text-[#fafaf9] font-mono flex items-center gap-2">
                       <span>{ev.filename}</span>
                       <span className="text-[10px] font-normal uppercase text-[#a8a29e] px-1.5 py-0.5 bg-[#25201e] rounded border border-[#38312d]">
-                        {ev.parser_used}
+                        {isContainer ? 'container' : ev.parser_used}
                       </span>
                     </div>
                     <span className="text-[#86efac] font-mono text-[11px] font-semibold">
-                      {ev.status} ({ev.event_count} events)
+                      {isContainer ? formatEvidenceStatusLabel(ev) : `${ev.status} (${ev.event_count} events)`}
                     </span>
                   </div>
 
@@ -166,7 +171,8 @@ export const CaseDetail: React.FC = () => {
                     <span>Uploaded by {ev.uploader_name}</span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

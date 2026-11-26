@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ConcernMatrix } from '../components/ConcernMatrix';
 import { ParserType } from '../types';
+import { formatEvidenceStatusLabel, isEvidenceContainer } from '../utils/evidenceContainer';
 
 interface ComplianceControl {
   id: string;
@@ -232,7 +233,7 @@ export const Compliance: React.FC = () => {
           {/* Quick Evidence Inventory */}
           <div className="space-y-1.5 pt-2">
             <span className="text-[11px] font-mono text-neutral-500 uppercase tracking-wider">
-              Enclave Evidence Custody ({evidenceList.length} items)
+              Enclave Evidence Custody ({evidenceList.filter((ev) => !isEvidenceContainer(ev)).length} items)
             </span>
             <div className="max-h-36 overflow-y-auto space-y-1">
               {evidenceList.map((ev) => (
@@ -242,7 +243,7 @@ export const Compliance: React.FC = () => {
                     <span className="text-neutral-200 font-medium truncate">{ev.filename}</span>
                   </div>
                   <span className="text-[10px] font-mono text-neutral-400 shrink-0">
-                    {ev.event_count || ev.eventCount || 0} events
+                    {isEvidenceContainer(ev) ? formatEvidenceStatusLabel(ev) : `${ev.event_count || ev.eventCount || 0} events`}
                   </span>
                 </div>
               ))}

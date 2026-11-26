@@ -62,7 +62,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateTab }) =
       setCounts({
         users: u.length,
         cases: c.length,
-        evidence: e.length,
+        evidence: e.filter((item) => !item.is_container).length,
         failures: failedEvidence,
         newMessages: m,
         failedLogins24h: health.failed_logins_24h

@@ -25,9 +25,8 @@ router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 def to_admin_case_response(c: Case, db: Session) -> AdminCaseResponse:
-    ev_count = db.execute(
-        select(func.count(Evidence.id)).where(Evidence.case_id == c.id)
-    ).scalar() or 0
+    from app.api.v1.evidence import count_case_artifacts
+    ev_count = count_case_artifacts(db, [c.id]).get(c.id, 0)
 
     assigned_names = db.execute(
         select(User.username)

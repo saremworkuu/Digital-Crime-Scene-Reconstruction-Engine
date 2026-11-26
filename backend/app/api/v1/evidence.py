@@ -162,21 +162,53 @@ def to_evidence_response(
     up_time = evidence.uploaded_at if isinstance(evidence.uploaded_at, datetime) else utc_now()
     up_by = evidence.uploaded_by if isinstance(evidence.uploaded_by, uuid.UUID) else (uuid.UUID(str(evidence.uploaded_by)) if str(evidence.uploaded_by or "").strip() and str(evidence.uploaded_by) != "None" else uuid.uuid4())
 
+    from app.services.report import is_container_evidence
+    is_container = is_container_evidence(evidence, event_count=evt_count)
+    if is_container and not evidence.parser_used:
+        norm_parser = "ZipArchive"
+
     parsed_at_dt = None
+    parsed_audit_details = None
     try:
         from app.db.models.audit_log import AuditLog
-        parsed_row = db.execute(
-            select(AuditLog.timestamp)
+        parsed_log = db.execute(
+            select(AuditLog)
             .where(
                 AuditLog.resource == f"evidence:{ev_id}",
                 AuditLog.action.in_(["evidence.parsed", "EVIDENCE_PARSED"]),
             )
             .order_by(AuditLog.timestamp.desc())
         ).scalars().first()
-        if parsed_row is not None:
-            parsed_at_dt = parsed_row
+        if parsed_log is not None:
+            parsed_at_dt = parsed_log.timestamp
+            if isinstance(parsed_log.details, dict):
+                parsed_audit_details = parsed_log.details
     except Exception:
         pass
+
+    extracted_count: Optional[int] = None
+    if is_container:
+        with _ZIP_JOB_LOCK:
+            job = _ZIP_JOB_STATUS.get(str(ev_id))
+            if job is not None:
+                job_items = job.get("extracted_results") or []
+                stored_in_job = sum(1 for item in job_items if getattr(item, "evidence", None) is not None)
+                extracted_count = stored_in_job if stored_in_job > 0 else int(job.get("completed") or 0)
+        if extracted_count is None and isinstance(db, Session) and evidence.filename:
+            marker = f"extracted from {evidence.filename}:"
+            child_descriptions = db.execute(
+                select(Evidence.description).where(
+                    Evidence.case_id == evidence.case_id,
+                    Evidence.id != ev_id,
+                    Evidence.description.isnot(None),
+                )
+            ).scalars().all()
+            marker_lower = marker.lower()
+            extracted_count = sum(1 for desc in child_descriptions if marker_lower in str(desc or "").lower())
+        if (extracted_count is None or extracted_count == 0) and isinstance(parsed_audit_details, dict):
+            audit_total = parsed_audit_details.get("extracted_total")
+            if audit_total is not None:
+                extracted_count = int(audit_total)
 
     return EvidenceResponse(
         id=ev_id,
@@ -201,7 +233,54 @@ def to_evidence_response(
         raw_sample=raw_sample,
         duplicate=duplicate,
         duplicate_of=duplicate_of,
+        is_container=is_container,
+        extracted_count=extracted_count,
     )
+
+
+def count_case_artifacts(db: Session, case_ids: List[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """Count non-container Evidence artifacts per case using existing container classification."""
+    if not case_ids:
+        return {}
+    from app.services.report import is_container_evidence
+
+    rows = db.execute(
+        select(Evidence.id, Evidence.case_id, Evidence.parser_used, Evidence.filename)
+        .where(Evidence.case_id.in_(case_ids))
+    ).all()
+    if not rows:
+        return {cid: 0 for cid in case_ids}
+
+    legacy_zip_ids = [
+        ev_id
+        for ev_id, _cid, parser_used, filename in rows
+        if (parser_used or "").strip() != "ZipArchive"
+        and str(filename or "").strip().lower().endswith(".zip")
+    ]
+    evt_counts_by_id: dict[uuid.UUID, int] = {}
+    if legacy_zip_ids:
+        for ev_id, cnt in db.execute(
+            select(EventEvidence.evidence_id, func.count(EventEvidence.event_id))
+            .where(EventEvidence.evidence_id.in_(legacy_zip_ids))
+            .group_by(EventEvidence.evidence_id)
+        ).all():
+            evt_counts_by_id[ev_id] = int(cnt or 0)
+        missing_ev_ids = [eid for eid in legacy_zip_ids if evt_counts_by_id.get(eid, 0) == 0]
+        if missing_ev_ids:
+            for ev_id, cnt in db.execute(
+                select(Event.evidence_id, func.count(Event.id))
+                .where(Event.evidence_id.in_(missing_ev_ids))
+                .group_by(Event.evidence_id)
+            ).all():
+                evt_counts_by_id[ev_id] = int(cnt or 0)
+
+    counts: dict[uuid.UUID, int] = {cid: 0 for cid in case_ids}
+    for ev_id, cid, parser_used, filename in rows:
+        item = {"parser_used": parser_used, "filename": filename}
+        if is_container_evidence(item, event_count=evt_counts_by_id.get(ev_id, 0)):
+            continue
+        counts[cid] = counts.get(cid, 0) + 1
+    return counts
 
 
 def _apply_single_host_inference(
@@ -1354,6 +1433,13 @@ def reparse_evidence(
         db=db,
         allow_viewer=False,
     )
+
+    from app.services.report import is_container_evidence
+    if is_container_evidence(evidence):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archive containers cannot be reparsed as a single evidence log.",
+        )
 
     file_path = Path(evidence.file_path)
     if not file_path.exists():

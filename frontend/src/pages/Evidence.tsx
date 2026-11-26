@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 
 import { useApp } from '../store';
 import { formatCaseNameWithId } from '../utils/caseDisplay';
+import { formatEvidenceStatusLabel, isEvidenceContainer } from '../utils/evidenceContainer';
 
 import { EvidenceFile, ParserType } from '../types';
 
@@ -107,11 +108,21 @@ export const Evidence: React.FC = () => {
 
 
 
+  const artifactEvidence = activeCaseEvidence.filter((ev) => !isEvidenceContainer(ev));
+
   const filteredEvidence = activeCaseEvidence
 
     .filter((ev) => {
 
-      const matchesStatus = statusFilter === 'All' || ev.status === statusFilter;
+      const matchesStatus =
+
+        statusFilter === 'All' ||
+
+        (statusFilter === 'Parsed'
+
+          ? !isEvidenceContainer(ev) && ev.status === 'Parsed'
+
+          : ev.status === statusFilter);
 
       const q = searchQuery.toLowerCase().trim();
 
@@ -282,7 +293,7 @@ export const Evidence: React.FC = () => {
 
           <div className="font-mono text-xs text-[#a8a29e] tabular-nums">
 
-            Total evidence items: <span className="text-[#f95721] font-semibold">{activeCaseEvidence.length}</span>
+            Total evidence items: <span className="text-[#f95721] font-semibold">{artifactEvidence.length}</span>
 
           </div>
 
@@ -383,7 +394,7 @@ export const Evidence: React.FC = () => {
 
             <span className={`text-[11px] font-mono ${isLight ? 'text-[#64748b]' : 'text-[#78716c]'}`}>
 
-              ({filteredEvidence.length} files)
+              ({filteredEvidence.filter((ev) => !isEvidenceContainer(ev)).length} files)
 
             </span>
 
@@ -551,7 +562,11 @@ export const Evidence: React.FC = () => {
 
               ) : (
 
-                filteredEvidence.map((ev) => (
+                filteredEvidence.map((ev) => {
+
+                  const isContainer = isEvidenceContainer(ev);
+
+                  return (
 
                   <tr key={ev.id} className={`${isLight ? 'hover:bg-slate-50' : 'hover:bg-[#1c1918]'} transition-colors`}>
 
@@ -563,29 +578,47 @@ export const Evidence: React.FC = () => {
 
                       <div className="flex items-center gap-2 mt-1">
 
-                        <select
+                        {isContainer ? (
 
-                          value={getEffectiveParser(ev)}
+                          <span
 
-                          onChange={(e) => reparseEvidence(ev.id, e.target.value as ParserType)}
+                            className={`${isLight ? 'bg-slate-100 border-slate-300 text-slate-700' : 'bg-[#1a1817] border-[#38312d] text-[#d6d3d1]'} border rounded px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider`}
 
-                          className={`${isLight ? 'bg-slate-100 border-slate-300 text-orange-700' : 'bg-[#100f0e] border-[#2e2926] text-[#fb923c]'} border rounded px-1.5 py-0.5 text-[10px] font-mono focus:outline-none`}
+                            title="Uploaded archive container (members extracted separately for chain of custody)"
 
-                          title="Change parser and reparse"
+                          >
 
-                        >
+                            container
 
-                          <option value="linux_auth">linux_auth</option>
+                          </span>
 
-                          <option value="web_server">web_server</option>
+                        ) : (
 
-                          <option value="windows_evtx">windows_evtx</option>
+                          <select
 
-                          <option value="pcap_summary">pcap_summary</option>
+                            value={getEffectiveParser(ev)}
 
-                          <option value="generic_json_csv">generic_json_csv</option>
+                            onChange={(e) => reparseEvidence(ev.id, e.target.value as ParserType)}
 
-                        </select>
+                            className={`${isLight ? 'bg-slate-100 border-slate-300 text-orange-700' : 'bg-[#100f0e] border-[#2e2926] text-[#fb923c]'} border rounded px-1.5 py-0.5 text-[10px] font-mono focus:outline-none`}
+
+                            title="Change parser and reparse"
+
+                          >
+
+                            <option value="linux_auth">linux_auth</option>
+
+                            <option value="web_server">web_server</option>
+
+                            <option value="windows_evtx">windows_evtx</option>
+
+                            <option value="pcap_summary">pcap_summary</option>
+
+                            <option value="generic_json_csv">generic_json_csv</option>
+
+                          </select>
+
+                        )}
 
                         {ev.parse_errors && ev.parse_errors.length > 0 && (
 
@@ -659,19 +692,31 @@ export const Evidence: React.FC = () => {
 
                     <td className="py-3 px-4 text-center">
 
-                      <span className={`inline-block font-mono text-[11px] font-semibold uppercase px-2 py-0.5 rounded ${ev.status === 'Parsed'
+                      <span className={`inline-block font-mono text-[11px] font-semibold px-2 py-0.5 rounded ${isContainer
 
-                        ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-800/60'
-
-                        : ev.status === 'Failed'
+                        ? ev.status === 'Failed'
 
                           ? 'bg-red-950/70 text-red-400 border border-red-800/60'
 
-                          : 'bg-[#221f1d] text-[#a8a29e]'
+                          : isLight
+
+                            ? 'bg-slate-100 text-slate-700 border border-slate-300'
+
+                            : 'bg-[#221f1d] text-[#d6d3d1] border border-[#38312d]'
+
+                        : ev.status === 'Parsed'
+
+                          ? 'uppercase bg-emerald-950/70 text-emerald-400 border border-emerald-800/60'
+
+                          : ev.status === 'Failed'
+
+                            ? 'uppercase bg-red-950/70 text-red-400 border border-red-800/60'
+
+                            : 'uppercase bg-[#221f1d] text-[#a8a29e]'
 
                         }`}>
 
-                        {ev.status}
+                        {formatEvidenceStatusLabel(ev)}
 
                       </span>
 
@@ -683,7 +728,7 @@ export const Evidence: React.FC = () => {
 
                     <td className="py-3 px-4 font-mono text-right font-semibold text-[#fafaf9] tabular-nums">
 
-                      {ev.event_count}
+                      {isContainer ? <span className="text-[#78716c] font-normal">—</span> : ev.event_count}
 
                     </td>
 
@@ -772,7 +817,9 @@ export const Evidence: React.FC = () => {
 
                   </tr>
 
-                ))
+                  );
+
+                })
 
               )}
 

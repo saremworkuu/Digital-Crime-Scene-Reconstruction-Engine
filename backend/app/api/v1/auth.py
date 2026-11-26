@@ -543,6 +543,15 @@ def change_password(
     )
 
     db.commit()
+
+    role_str = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    new_token = create_access_token({
+        "sub": str(current_user.id),
+        "role": role_str,
+    })
     return {
-        "message": "Password changed successfully. Please log in again."
+        "message": "Password changed successfully.",
+        "access_token": new_token,
+        "token": new_token,
+        "token_type": "bearer",
     }

@@ -64,6 +64,7 @@ export interface AdminEvidence {
   parsing_status: ParsingStatus;
   error_text?: string;
   verified?: boolean | null;
+  is_container?: boolean;
 }
 
 export interface AdminSigmaRule {

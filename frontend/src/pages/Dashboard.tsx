@@ -2,13 +2,15 @@ import React from 'react';
 import { useApp } from '../store';
 import { ThreatMap } from '../components/ThreatMap';
 import { formatCaseNameWithId } from '../utils/caseDisplay';
+import { isEvidenceContainer } from '../utils/evidenceContainer';
 
 export const Dashboard: React.FC = () => {
   const { activeCase, activeCaseDetections, activeCaseEvents, activeCaseEvidence, setCurrentPage } = useApp();
+  const artifactEvidenceCount = activeCaseEvidence.filter(item => !isEvidenceContainer(item)).length;
   const metrics = [
     { label: 'Findings', value: activeCaseDetections.filter(item => !item.false_positive).length },
     { label: 'Normalized events', value: activeCaseEvents.length },
-    { label: 'Evidence files', value: activeCaseEvidence.length },
+    { label: 'Evidence files', value: artifactEvidenceCount },
   ];
 
   return (
