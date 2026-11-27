@@ -52,7 +52,7 @@ export const EventTable: React.FC<EventTableProps> = ({ events }) => {
       
       {/* Table Container */}
       <div className="overflow-x-auto min-h-[300px]">
-        <table className="w-full text-left border-collapse text-xs">
+        <table className="w-full text-left border-collapse text-xs min-w-[800px]">
           <thead>
             <tr className="border-b border-[#282321] bg-[#100f0e] text-[#a8a29e] font-mono text-[11px] select-none">
               <th className="py-2.5 px-3 w-10 text-center">#</th>

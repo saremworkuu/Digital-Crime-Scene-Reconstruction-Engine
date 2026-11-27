@@ -13,6 +13,13 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
   detection, 
   onToggleFalsePositive 
 }) => {
+  const targetHosts = detection.hosts?.length
+    ? detection.hosts
+    : (detection.targetHost ? [detection.targetHost] : (detection.entitiesInvolved?.hosts || []));
+  const sourceIps = detection.source_ips?.length
+    ? detection.source_ips
+    : (detection.sourceIps || []);
+
   return (
     <div className={`p-4 rounded-lg border space-y-3 transition-colors ${
       detection.falsePositive 
@@ -41,8 +48,16 @@ export const DetectionCard: React.FC<DetectionCardProps> = ({
         <p className="text-xs text-slate-400 mt-1">{detection.description}</p>
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800/60">
-        <span>Matched Events: {detection.matchedEventIds?.length || 0}</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-2 border-t border-slate-800/60">
+        <div className="flex flex-wrap items-center gap-3">
+          {sourceIps.length > 0 && (
+            <span>Source: <strong className="text-slate-200 font-mono">{sourceIps.join(', ')}</strong></span>
+          )}
+          {targetHosts.length > 0 && (
+            <span>Target host: <strong className="text-slate-200 font-mono">{targetHosts.join(', ')}</strong></span>
+          )}
+          <span>Matched Events: {detection.matchedEventIds?.length || 0}</span>
+        </div>
         <span className="font-mono">{detection.timestamp ? detection.timestamp.substring(0, 19).replace('T', ' ') : '-'}</span>
       </div>
     </div>

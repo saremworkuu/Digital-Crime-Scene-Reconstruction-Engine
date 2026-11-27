@@ -1,0 +1,18 @@
+INCIDENT NOTES - WEB-01 (shop.acme.example)  CASE IR-2026-0722 (SYNTHETIC)
+==========================================================================
+Reported: 2026-07-22 03:05 UTC by monitoring (CPU 98% on WEB-01).
+
+What we know so far
+- 01:12  Nikto-style scan from 203.0.113.140
+- 01:25  SQL injection (sqlmap) on /product.php; 01:31 user table dumped
+- 01:38  Webshell uploaded via /upload.php (shell.php.jpg)
+- 01:44  Reverse shell to 203.0.113.140:4444
+- 01:52  Root via "sudo vim" (www-data NOPASSWD rule)
+- 01:58  Backdoor account sysupdate + SSH key persistence
+- 02:10  Cryptominer downloaded from 198.51.100.201, cron persistence
+- 02:15  customers table dumped and sent to attacker by scp
+- 02:30  Attacker cleared shell history
+
+Missed warnings: vulnerability scan on 2026-07-15 reported all three flaws
+(SEC-4411, SEC-4412, SEC-4413) and they were still open. WAF was in
+DetectionOnly mode, so no request was blocked.

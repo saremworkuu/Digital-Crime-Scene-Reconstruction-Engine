@@ -1,0 +1,101 @@
+# User model
+
+import enum
+import uuid
+
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean,DateTime, Enum, String
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+class UserRole(str, enum.Enum):
+    ADMIN="admin"
+    INVESTIGATOR="investigator"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID]=mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    username: Mapped[str]=mapped_column(
+        String,
+        unique=True,
+        nullable=False
+    )
+
+    email: Mapped[str]=mapped_column(
+        String,
+        unique=True,
+        nullable=False
+    )
+
+    hashed_password:Mapped[str]=mapped_column(
+        String,
+        nullable=False
+    )
+
+    role: Mapped[UserRole] = mapped_column(
+    Enum(
+        UserRole,
+        name="user_role",
+        values_callable=lambda enum_class: [e.value for e in enum_class]
+    ),
+    nullable=False,
+    default=UserRole.INVESTIGATOR
+)
+
+    is_active: Mapped[bool] = mapped_column(
+    Boolean,
+    default=True,
+    nullable=False
+)
+
+    created_at: Mapped[datetime]=mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+
+    updated_at: Mapped[datetime]=mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+
+    department: Mapped[str | None] = mapped_column(
+        String,
+        default="Digital Forensic Incident Response (DFIR) Command",
+        nullable=True
+    )
+
+    badge_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True
+    )
+
+    two_factor_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="active",
+        nullable=True
+    )
+
+    sessions: Mapped[list | None] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=True
+    )

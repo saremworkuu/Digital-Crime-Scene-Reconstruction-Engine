@@ -16,6 +16,7 @@ export interface NormalizedEvent {
   case_id: string;
   evidence_id: string;
   timestamp: string;
+  timestamp_timezone_known?: boolean;
   source_type: string;
   host: string;
   user: string;
@@ -24,7 +25,22 @@ export interface NormalizedEvent {
   src_port?: number;
   dst_port?: number;
   protocol?: string;
+  packets?: number;
+  bytes?: number;
+  flags?: string;
+  http_request?: string;
+  http_status?: string;
+  payload_preview?: string;
+  payload_untrusted?: boolean;
   process?: string;
+  parent_process?: string;
+  command_line?: string;
+  service_name?: string;
+  target_file?: string;
+  host_inferred?: boolean;
+  source_file?: string;
+  source_record_id?: any;
+  event_id?: any;
   action: string;
   outcome: EventOutcome;
   severity: EventSeverity;
@@ -33,7 +49,13 @@ export interface NormalizedEvent {
   mitre_tactic?: string;
   is_attack_path?: boolean;
   attack_phase?: string;
+  category?: string;
+  status?: string;
+  ticket?: string;
+  first_detected?: string;
+  date_only?: boolean;
   metadata?: Record<string, any>;
+  extra?: Record<string, any>;
 
   // CamelCase accessors
   caseId?: string;
@@ -81,6 +103,7 @@ export interface DetectionResult {
   rule_name: string;
   severity: EventSeverity;
   mitre_technique: string;
+  mitre_techniques_all?: string[];
   mitre_tactic: string;
   timestamp: string;
   description: string;
@@ -88,6 +111,16 @@ export interface DetectionResult {
   false_positive: boolean;
   false_positive_reason?: string;
   false_positive_marked_by?: string;
+  host?: string;
+  target_host?: string;
+  hosts?: string[];
+  source_ips?: string[];
+  src_ip?: string;
+  user?: string;
+  source?: string;
+  source_file?: string;
+  source_record_references?: any[];
+  rule_information?: Record<string, any>;
   entities_involved: {
     hosts?: string[];
     users?: string[];

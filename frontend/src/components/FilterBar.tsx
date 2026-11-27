@@ -9,6 +9,7 @@ export interface FilterState {
   user: string;
   sourceType: string;
   onlyAttackPath: boolean;
+  showMetrics: boolean;
 }
 
 interface FilterBarProps {
@@ -41,7 +42,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
       host: '',
       user: '',
       sourceType: '',
-      onlyAttackPath: false
+      onlyAttackPath: false,
+      showMetrics: false
     });
   };
 
@@ -51,15 +53,16 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     filters.host !== '' ||
     filters.user !== '' ||
     filters.sourceType !== '' ||
-    filters.onlyAttackPath;
+    filters.onlyAttackPath ||
+    filters.showMetrics;
 
   return (
-    <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-4 mb-4 space-y-3.5 backdrop-blur-xl shadow-xl">
+    <div className="bg-[#161413]/90 border border-[#2b2523] rounded-2xl p-3 sm:p-4 mb-4 space-y-3.5 backdrop-blur-xl shadow-xl">
       {/* Search & Main Toggles Row */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
         
         {/* Search input */}
-        <div className="relative flex-1 min-w-[240px]">
+        <div className="relative flex-1 min-w-[180px] sm:min-w-[240px]">
           <Search className="w-4 h-4 text-[#78716c] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -106,6 +109,17 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             className="rounded border-[#38312d] bg-[#141211] text-[#f95721] accent-[#f95721] cursor-pointer"
           />
           <span className="font-semibold text-[#f95721] font-mono text-xs">Attack Path Only</span>
+        </label>
+
+        {/* Show Metrics Checkbox */}
+        <label className="flex items-center gap-2 cursor-pointer text-xs text-[#fafaf9] select-none bg-[#0d0c0c] border border-[#2b2523] px-3 py-1.5 rounded-lg hover:border-[#38312d] transition-colors">
+          <input
+            type="checkbox"
+            checked={filters.showMetrics}
+            onChange={(e) => updateFilter('showMetrics', e.target.checked)}
+            className="rounded border-[#38312d] bg-[#141211] text-[#a8a29e] accent-[#a8a29e] cursor-pointer"
+          />
+          <span className="font-semibold text-[#a8a29e] font-mono text-xs">Show Metrics</span>
         </label>
 
       </div>

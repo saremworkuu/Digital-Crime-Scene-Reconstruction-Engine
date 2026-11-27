@@ -1,0 +1,66 @@
+{
+  "source": "SyntheticWAF",
+  "mode": "DetectionOnly",
+  "alerts": [
+    {
+      "id": "WAF-5001",
+      "time": "2026-07-22T01:25:07.000Z",
+      "src_ip": "203.0.113.140",
+      "rule_id": "942100",
+      "message": "SQL Injection Attack Detected via libinjection",
+      "severity": "high",
+      "uri": "/product.php?id=1'",
+      "action": "logged_not_blocked"
+    },
+    {
+      "id": "WAF-5002",
+      "time": "2026-07-22T01:25:38.000Z",
+      "src_ip": "203.0.113.140",
+      "rule_id": "942130",
+      "message": "SQL Injection Attack: Tautology",
+      "severity": "high",
+      "uri": "/product.php?id=1 OR '1'='1",
+      "action": "logged_not_blocked"
+    },
+    {
+      "id": "WAF-5003",
+      "time": "2026-07-22T01:27:20.000Z",
+      "src_ip": "203.0.113.140",
+      "rule_id": "942190",
+      "message": "MSSQL/UNION based injection",
+      "severity": "critical",
+      "uri": "/product.php?id=1 UNION SELECT NULL,NULL,NULL",
+      "action": "logged_not_blocked"
+    },
+    {
+      "id": "WAF-5004",
+      "time": "2026-07-22T01:31:44.000Z",
+      "src_ip": "203.0.113.140",
+      "rule_id": "942190",
+      "message": "UNION based injection (data extraction)",
+      "severity": "critical",
+      "uri": "/product.php?id=-1 UNION SELECT ... FROM users",
+      "action": "logged_not_blocked"
+    },
+    {
+      "id": "WAF-5005",
+      "time": "2026-07-22T01:38:20.000Z",
+      "src_ip": "203.0.113.140",
+      "rule_id": "933110",
+      "message": "PHP Injection: dangerous file upload (.php.jpg)",
+      "severity": "high",
+      "uri": "/upload.php",
+      "action": "logged_not_blocked"
+    },
+    {
+      "id": "WAF-5006",
+      "time": "2026-07-22T01:44:10.000Z",
+      "src_ip": "203.0.113.140",
+      "rule_id": "932100",
+      "message": "Remote Command Execution: Unix command injection",
+      "severity": "critical",
+      "uri": "/uploads/shell.php.jpg?cmd=bash -c ...",
+      "action": "logged_not_blocked"
+    }
+  ]
+}

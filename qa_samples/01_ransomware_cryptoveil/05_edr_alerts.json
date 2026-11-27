@@ -1,0 +1,118 @@
+{
+  "source": "SyntheticEDR",
+  "case_id": "IR-2026-0903",
+  "alerts": [
+    {
+      "id": "ALR-3001",
+      "time": "2026-09-03T07:41:27.000Z",
+      "host": "WS-HR-12",
+      "severity": "high",
+      "rule": "Office Application Spawning Script Interpreter",
+      "mitre": [
+        "T1204.002",
+        "T1059.001"
+      ],
+      "user": "ACME\\mlee"
+    },
+    {
+      "id": "ALR-3002",
+      "time": "2026-09-03T07:43:09.000Z",
+      "host": "WS-HR-12",
+      "severity": "high",
+      "rule": "Unsigned Binary Executed From AppData",
+      "mitre": [
+        "T1204.002"
+      ],
+      "user": "ACME\\mlee"
+    },
+    {
+      "id": "ALR-3003",
+      "time": "2026-09-03T07:44:00.000Z",
+      "host": "WS-HR-12",
+      "severity": "medium",
+      "rule": "Run Key Persistence",
+      "mitre": [
+        "T1547.001"
+      ],
+      "user": "ACME\\mlee"
+    },
+    {
+      "id": "ALR-3004",
+      "time": "2026-09-03T08:20:48.000Z",
+      "host": "WS-HR-12",
+      "severity": "critical",
+      "rule": "LSASS Memory Access via comsvcs.dll",
+      "mitre": [
+        "T1003.001"
+      ],
+      "user": "ACME\\mlee"
+    },
+    {
+      "id": "ALR-3005",
+      "time": "2026-09-03T08:41:30.000Z",
+      "host": "DC-01",
+      "severity": "critical",
+      "rule": "NTDS.dit Extraction via ntdsutil",
+      "mitre": [
+        "T1003.003"
+      ],
+      "user": "ACME\\admin_svc"
+    },
+    {
+      "id": "ALR-3006",
+      "time": "2026-09-03T09:02:15.000Z",
+      "host": "SRV-FS-02",
+      "severity": "high",
+      "rule": "Remote Service Creation (PsExec)",
+      "mitre": [
+        "T1569.002",
+        "T1021.002"
+      ],
+      "user": "ACME\\admin_svc"
+    },
+    {
+      "id": "ALR-3007",
+      "time": "2026-09-03T09:30:05.000Z",
+      "host": "SRV-FS-02",
+      "severity": "high",
+      "rule": "Large Outbound Transfer via rclone",
+      "mitre": [
+        "T1567.002"
+      ],
+      "user": "ACME\\admin_svc"
+    },
+    {
+      "id": "ALR-3008",
+      "time": "2026-09-03T10:05:44.000Z",
+      "host": "SRV-FS-02",
+      "severity": "critical",
+      "rule": "Shadow Copy Deletion",
+      "mitre": [
+        "T1490"
+      ],
+      "user": "ACME\\admin_svc"
+    },
+    {
+      "id": "ALR-3009",
+      "time": "2026-09-03T10:12:34.000Z",
+      "host": "SRV-FS-02",
+      "severity": "critical",
+      "rule": "Mass File Rename With Unknown Extension",
+      "mitre": [
+        "T1486"
+      ],
+      "user": "ACME\\admin_svc"
+    },
+    {
+      "id": "ALR-3010",
+      "time": "2026-09-03T10:40:02.000Z",
+      "host": "SRV-FS-02",
+      "severity": "high",
+      "rule": "Security Event Log Cleared",
+      "mitre": [
+        "T1070.001"
+      ],
+      "user": "ACME\\admin_svc"
+    }
+  ]
+}

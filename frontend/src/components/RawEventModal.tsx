@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { NormalizedEvent } from '../types';
 import { SeverityTag } from './SeverityTag';
 import { MitreBadge } from './MitreBadge';
 import { X, Copy, Check, Terminal, FileCode } from 'lucide-react';
+import { formatSafePayloadText } from '../utils/payloadText';
 
 interface RawEventModalProps {
   event: NormalizedEvent | null;
@@ -12,6 +14,15 @@ interface RawEventModalProps {
 export const RawEventModal: React.FC<RawEventModalProps> = ({ event, onClose }) => {
   const [copiedRaw, setCopiedRaw] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
+
+  useEffect(() => {
+    if (!event) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [event, onClose]);
 
   if (!event) return null;
 
@@ -27,12 +38,18 @@ export const RawEventModal: React.FC<RawEventModalProps> = ({ event, onClose }) 
     setTimeout(() => setCopiedJson(false), 2000);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="relative w-full max-w-3xl bg-[#161413] border border-[#2b2523] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+  const modalContent = (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[100] overflow-y-auto bg-black/80 backdrop-blur-sm p-4 sm:p-6 flex items-center justify-center animate-in fade-in duration-150"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-3xl bg-[#161413] border border-[#2b2523] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] my-auto"
+      >
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#282321] bg-[#12100f]">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-[#282321] bg-[#12100f]">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-[#24130d] border border-[#ea580c]/40 flex items-center justify-center text-[#f95721]">
               <Terminal className="w-4 h-4" />
@@ -61,7 +78,7 @@ export const RawEventModal: React.FC<RawEventModalProps> = ({ event, onClose }) 
         </div>
 
         {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-5 text-xs text-[#d6d3d1]">
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto space-y-5 text-xs text-[#d6d3d1]">
           
           {/* Action & MITRE Card */}
           <div className="bg-[#100f0e] border border-[#282321] rounded-xl p-4 space-y-2">
@@ -147,9 +164,23 @@ export const RawEventModal: React.FC<RawEventModalProps> = ({ event, onClose }) 
               </button>
             </div>
             <pre className="p-3.5 bg-[#0d0c0c] border border-[#282321] rounded-xl font-mono text-xs text-[#e7e5e4] overflow-x-auto whitespace-pre-wrap break-all selection:bg-[#f95721]/30">
-              {event.raw}
+              {formatSafePayloadText(event.raw)}
             </pre>
           </div>
+
+          {(event.payload_preview || event.metadata?.payload_preview) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-mono text-[#fbbf24]">
+                <span>Untrusted Network Payload Preview (Escaped Plain Text)</span>
+                <span className="px-2 py-0.5 rounded bg-[#451a03] border border-[#b45309] text-[10px] uppercase text-[#fde68a]">
+                  Untrusted Data
+                </span>
+              </div>
+              <pre className="p-3.5 bg-[#0d0c0c] border border-[#b45309]/50 rounded-xl font-mono text-xs text-[#fde68a] overflow-x-auto whitespace-pre-wrap break-all">
+                {formatSafePayloadText(event.payload_preview || event.metadata?.payload_preview)}
+              </pre>
+            </div>
+          )}
 
           {/* Normalized JSON Representation */}
           <div className="space-y-1.5">
@@ -173,4 +204,6 @@ export const RawEventModal: React.FC<RawEventModalProps> = ({ event, onClose }) 
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 };

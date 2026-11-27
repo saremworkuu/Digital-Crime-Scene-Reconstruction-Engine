@@ -1,0 +1,9 @@
+Jul 22 01:03:12 WEB-01 sshd[900]: Accepted publickey for opsadmin from 10.40.0.5 port 50112 ssh2
+Jul 22 01:50:02 WEB-01 sudo:   www-data : TTY=pts/1 ; PWD=/var/www/html/uploads ; USER=root ; COMMAND=list
+Jul 22 01:52:31 WEB-01 sudo:   www-data : TTY=pts/1 ; PWD=/var/www/html/uploads ; USER=root ; COMMAND=/usr/bin/vim -c :!/bin/sh
+Jul 22 01:52:31 WEB-01 sudo: pam_unix(sudo:session): session opened for user root by (uid=33)
+Jul 22 01:58:11 WEB-01 useradd[3120]: new user: name=sysupdate, UID=1002, GID=1002, home=/home/sysupdate, shell=/bin/bash
+Jul 22 01:58:25 WEB-01 usermod[3128]: add 'sysupdate' to group 'sudo'
+Jul 22 01:59:03 WEB-01 sshd[3150]: Accepted publickey for sysupdate from 203.0.113.140 port 53422 ssh2
+Jul 22 01:59:03 WEB-01 systemd-logind[640]: New session 18 of user sysupdate.
+Jul 22 02:16:44 WEB-01 sshd[3290]: Accepted publickey for sysupdate from 203.0.113.140 port 53510 ssh2

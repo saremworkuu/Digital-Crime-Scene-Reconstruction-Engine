@@ -11,10 +11,26 @@ export const authApi = {
     badge_id?: string;
     pgp_key?: string;
   }) => {
-    return apiClient.post<{ token: string; user: User }>('/auth/register', userData);
+    return apiClient.post<{
+      token?: string;
+      access_token?: string;
+      user?: Partial<User> & {
+        username?: string;
+        is_active?: boolean;
+        badge_id?: string;
+      };
+    }>('/auth/register', userData);
   },
   login: async (email: string, password: string) => {
-    return apiClient.post<{ token: string; user: User }>('/auth/login', { email, password });
+    return apiClient.post<{
+      token?: string;
+      access_token?: string;
+      user?: Partial<User> & {
+        username?: string;
+        is_active?: boolean;
+        badge_id?: string;
+      };
+    }>('/auth/login', { email, password });
   },
   logout: async () => {
     return apiClient.post('/auth/logout');
@@ -22,8 +38,27 @@ export const authApi = {
   getCurrentUser: async () => {
     return apiClient.get<User>('/auth/me');
   },
-  changePassword: async (currentPassword: string, newPassword: string) => {
-    return apiClient.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword });
+  changePassword: async (currentPassword: string, newPassword: string, confirmPassword?: string) => {
+    return apiClient.post<{
+      message?: string;
+      access_token?: string;
+      token?: string;
+      token_type?: string;
+    }>('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+      ...(confirmPassword ? { confirm_password: confirmPassword } : {}),
+    });
+  },
+  updateProfile: async (data: {
+    name?: string;
+    username?: string;
+    email?: string;
+    department?: string;
+    badge_id?: string;
+    badgeId?: string;
+  }) => {
+    return apiClient.put<User>('/auth/me', data);
   },
   listUsers: async () => {
     return apiClient.get<User[]>('/auth/users');

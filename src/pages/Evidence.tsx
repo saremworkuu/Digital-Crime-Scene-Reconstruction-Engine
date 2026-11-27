@@ -226,7 +226,7 @@ export const Evidence: React.FC = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-xs min-w-[650px]">
             <thead>
               <tr className={`border-b ${isLight ? 'border-slate-200 bg-slate-100/80 text-slate-600' : 'border-[#2b2523] bg-[#100f0e] text-[#a8a29e]'} font-mono text-[11px]`}>
                 <th className="py-2.5 px-4">Filename & Parser</th>

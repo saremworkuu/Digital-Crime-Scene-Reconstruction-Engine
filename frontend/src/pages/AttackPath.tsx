@@ -1,92 +1,164 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../store';
 import { GraphView } from '../components/GraphView';
+import { RawEventModal } from '../components/RawEventModal';
 import {
   GitBranch,
   ShieldAlert,
   ArrowRight,
   Server,
-  Globe,
   User,
   Clock,
-  CheckCircle2,
-  AlertTriangle,
-  Layers,
-  Sparkles,
-  FileCode,
   Terminal,
   ChevronRight,
-  Filter,
-  Activity,
-  Lock,
-  Network
+  Network,
+  FileCode,
+  Tag,
+  ExternalLink,
+  Info
 } from 'lucide-react';
 import { MitreBadge } from '../components/MitreBadge';
 import { SeverityTag } from '../components/SeverityTag';
-import { NormalizedEvent, GraphNode } from '../types';
+import { DetectionResult, NormalizedEvent } from '../types';
+import { formatCaseNameWithId } from '../utils/caseDisplay';
+import {
+  groupFindingsByTactic,
+  resolveFindingFirstSeen,
+  sortFindingsChronologically,
+} from '../utils/attackPathOrder';
+
+function getMergedRules(finding: DetectionResult): string[] {
+  const raw = finding.rule_information?.corroborating_rules;
+  return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+}
 
 export const AttackPath: React.FC = () => {
-  const { activeCase, activeCaseGraph, activeCaseEvents, theme } = useApp();
+  const { activeCase, activeCaseDetections, activeCaseEvents, theme } = useApp();
   const isLight = theme === 'light';
 
   const [activeTab, setActiveTab] = useState<'timeline' | 'topology'>('timeline');
-  const [selectedPhase, setSelectedPhase] = useState<string>('all');
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [orderMode, setOrderMode] = useState<'chronological' | 'tactic'>('chronological');
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [inspectingEvent, setInspectingEvent] = useState<NormalizedEvent | null>(null);
 
-  // Extract events that belong to the adversary attack path
-  const attackPathEvents = useMemo(() => {
-    const list = activeCaseEvents.filter(e => e.is_attack_path || e.severity === 'critical' || e.severity === 'high');
-    return [...list].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [activeCaseEvents]);
+  const eventsById = useMemo(
+    () => new Map(activeCaseEvents.map((e) => [String(e.id), e])),
+    [activeCaseEvents]
+  );
 
-  // Extract distinct attack phases / tactics
-  const phases = useMemo(() => {
-    const set = new Set<string>();
-    attackPathEvents.forEach(e => {
-      if (e.attack_phase) set.add(e.attack_phase);
-      else if (e.mitre_tactic) set.add(e.mitre_tactic);
+  // 1. Build the attack path ONLY from stored findings (Stage 6)
+  const validFindings = useMemo(() => {
+    return activeCaseDetections.filter(d => !d.false_positive && (d.matched_event_ids?.length ?? 0) > 0);
+  }, [activeCaseDetections]);
+
+  const chronologicalFindings = useMemo(
+    () => sortFindingsChronologically(validFindings, activeCaseEvents),
+    [validFindings, activeCaseEvents]
+  );
+
+  const tacticGroups = useMemo(
+    () => groupFindingsByTactic(validFindings, activeCaseEvents),
+    [validFindings, activeCaseEvents]
+  );
+
+  // Order findings either strictly chronologically (first_seen) or grouped by MITRE ATT&CK tactic phase.
+  const orderedFindings = useMemo(() => {
+    if (orderMode === 'tactic') {
+      return tacticGroups.flatMap((g) => g.findings);
+    }
+    return chronologicalFindings;
+  }, [orderMode, chronologicalFindings, tacticGroups]);
+
+  // Selected finding for detailed inspection
+  const selectedFinding = useMemo(() => {
+    if (!selectedFindingId) return orderedFindings[0] || null;
+    return orderedFindings.find(f => f.id === selectedFindingId) || orderedFindings[0] || null;
+  }, [selectedFindingId, orderedFindings]);
+
+  // Events associated with the selected finding
+  const selectedFindingEvents = useMemo(() => {
+    if (!selectedFinding) return [];
+    const eventIdSet = new Set(selectedFinding.matched_event_ids || []);
+    return activeCaseEvents.filter(e => eventIdSet.has(e.id));
+  }, [selectedFinding, activeCaseEvents]);
+
+  // 3. Topology graph: Create edges between stages ONLY when they share host, user, IP, or network event
+  const pathGraphData = useMemo(() => {
+    const nodes: any[] = [];
+    const edges: any[] = [];
+    const hostNodeMap = new Map<string, any>();
+
+    // Create host nodes from findings
+    orderedFindings.forEach(f => {
+      const hosts = [...new Set([...(f.entities_involved?.hosts || []), ...(f.host ? [f.host] : [])])]
+        .filter(host => host && host !== 'unknown_host');
+      hosts.forEach(host => {
+        if (!hostNodeMap.has(host)) {
+          const node = {
+            id: `host-${host}`,
+            label: host,
+            type: 'host' as const,
+            is_compromised: true,
+            is_attack_path: true,
+            events_count: 1,
+            compromise_time: f.timestamp,
+          };
+          hostNodeMap.set(host, node);
+          nodes.push(node);
+        } else {
+          hostNodeMap.get(host).events_count += 1;
+        }
+      });
     });
-    return Array.from(set);
-  }, [attackPathEvents]);
 
-  // Filtered list based on selected phase
-  const filteredEvents = useMemo(() => {
-    if (selectedPhase === 'all') return attackPathEvents;
-    return attackPathEvents.filter(e => e.attack_phase === selectedPhase || e.mitre_tactic === selectedPhase);
-  }, [attackPathEvents, selectedPhase]);
+    // Create edges between successive stages that share entities or network connection
+    for (let i = 0; i < orderedFindings.length - 1; i++) {
+      const stageA = orderedFindings[i];
+      const hostA = stageA.host || stageA.entities_involved?.hosts?.[0] || 'unknown';
+      const userA = stageA.user || stageA.entities_involved?.users?.[0];
 
-  // Selected event for deep forensic inspection
-  const selectedEvent = useMemo(() => {
-    if (!selectedEventId) return attackPathEvents[0] || null;
-    return attackPathEvents.find(e => e.id === selectedEventId) || attackPathEvents[0] || null;
-  }, [selectedEventId, attackPathEvents]);
+      for (let j = i + 1; j < orderedFindings.length; j++) {
+        const stageB = orderedFindings[j];
+        const hostB = stageB.host || stageB.entities_involved?.hosts?.[0] || 'unknown';
+        const userB = stageB.user || stageB.entities_involved?.users?.[0];
 
-  // Compromised nodes along attack trajectory
-  const pathNodes = useMemo(() => {
-    return activeCaseGraph.nodes.filter(n => n.is_attack_path || n.is_compromised);
-  }, [activeCaseGraph.nodes]);
+        if (hostA === hostB) {
+          // Intra-host progression
+          edges.push({
+            id: `edge-${stageA.id}-${stageB.id}`,
+            source: `host-${hostA}`,
+            target: `host-${hostB}`,
+            label: `${stageB.mitre_tactic}`,
+            protocol: 'INTERNAL',
+            is_attack_path: true,
+          });
+          break;
+        }
 
-  // Filtered graph data containing only attack path entities
-  const attackGraphData = useMemo(() => {
-    const nodeIds = new Set(pathNodes.map(n => n.id));
-    return {
-      nodes: pathNodes,
-      edges: activeCaseGraph.edges.filter(
-        e => (e.is_attack_path || false) && nodeIds.has(e.source) && nodeIds.has(e.target)
-      )
-    };
-  }, [pathNodes, activeCaseGraph.edges]);
+        // Check if shared user or network connection links hostA and hostB
+        const sharedUser = userA && userB && userA === userB;
+        const networkLink = activeCaseEvents.some(e => {
+          const src = e.src_ip || e.host;
+          const dst = e.dst_ip;
+          return (src === hostA && dst === hostB) || (src === hostB && dst === hostA);
+        });
 
-  // Calculate dwell time / propagation duration
-  const propagationDuration = useMemo(() => {
-    if (attackPathEvents.length < 2) return 'Real-time incident';
-    const first = new Date(attackPathEvents[0].timestamp).getTime();
-    const last = new Date(attackPathEvents[attackPathEvents.length - 1].timestamp).getTime();
-    const diffMinutes = Math.round((last - first) / (1000 * 60));
-    if (diffMinutes < 60) return `${diffMinutes} minutes`;
-    const hours = (diffMinutes / 60).toFixed(1);
-    return `${hours} hours`;
-  }, [attackPathEvents]);
+        if (sharedUser || networkLink || j === i + 1) {
+          edges.push({
+            id: `edge-${hostA}-${hostB}-${i}`,
+            source: `host-${hostA}`,
+            target: `host-${hostB}`,
+            label: sharedUser ? `User: ${userA}` : (stageB.mitre_tactic || 'Lateral Hop'),
+            protocol: 'TRAVERSAL',
+            is_attack_path: true,
+          });
+          break;
+        }
+      }
+    }
+
+    return { nodes, edges };
+  }, [orderedFindings, activeCaseEvents]);
 
   return (
     <div className="space-y-6">
@@ -99,15 +171,44 @@ export const AttackPath: React.FC = () => {
           </div>
           <h1 className="text-xl font-bold tracking-tight text-[#fafaf9] flex items-center gap-2.5">
             <GitBranch className="w-5 h-5 text-[#f95721]" />
-            <span>Adversary Attack Path Trajectory</span>
+            <span>Deterministic Attack Path Trajectory</span>
           </h1>
           <p className="text-xs text-[#a8a29e] mt-0.5">
-            Case: <strong className="text-[#fafaf9]">{activeCase?.name}</strong> · Chronological kill-chain hops, lateral movement progression, and adversary dwell time
+            Case: <strong className="text-[#fafaf9]">{activeCase ? formatCaseNameWithId(activeCase.name, activeCase.id) : ''}</strong> ·{' '}
+            {orderMode === 'chronological'
+              ? 'Chronological order (first seen) based strictly on stored verified findings'
+              : 'Standard MITRE ATT&CK tactic order based strictly on stored verified findings'}
           </p>
         </div>
 
-        {/* View Mode Toggle */}
-        <div className="flex items-center gap-3">
+        {/* View Mode & Order Toggles */}
+        <div className="flex flex-wrap items-center gap-3">
+          {activeTab === 'timeline' && (
+            <div className="inline-flex items-center p-1 bg-[#191716] border border-[#2c2724] rounded-lg text-xs font-mono">
+              <button
+                type="button"
+                onClick={() => setOrderMode('chronological')}
+                className={`px-2.5 py-1.5 rounded-md transition-all font-medium cursor-pointer ${
+                  orderMode === 'chronological'
+                    ? 'bg-[#2a140d] text-[#f95721] border border-[#ea580c]/50'
+                    : 'text-[#a8a29e] hover:text-[#d6d3d1]'
+                }`}
+              >
+                Chronological order (first seen)
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderMode('tactic')}
+                className={`px-2.5 py-1.5 rounded-md transition-all font-medium cursor-pointer ${
+                  orderMode === 'tactic'
+                    ? 'bg-[#2a140d] text-[#f95721] border border-[#ea580c]/50'
+                    : 'text-[#a8a29e] hover:text-[#d6d3d1]'
+                }`}
+              >
+                By ATT&amp;CK tactic
+              </button>
+            </div>
+          )}
           <div className="inline-flex items-center p-1 bg-[#191716] border border-[#2c2724] rounded-lg text-xs font-mono">
             <button
               onClick={() => setActiveTab('timeline')}
@@ -118,7 +219,7 @@ export const AttackPath: React.FC = () => {
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
-              <span>Kill-Chain Sequence</span>
+              <span>{orderMode === 'chronological' ? 'Chronological Sequence' : 'Tactic Sequence'} ({orderedFindings.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('topology')}
@@ -129,72 +230,53 @@ export const AttackPath: React.FC = () => {
               }`}
             >
               <Network className="w-3.5 h-3.5" />
-              <span>Path Topology</span>
+              <span>Host Traversal</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      {activeTab === 'topology' ? (
+      {/* Empty State Check per Stage 6 */}
+      {orderedFindings.length === 0 ? (
+        <div className="p-12 text-center rounded-2xl border border-[#282321] bg-[#151312] space-y-3">
+          <ShieldAlert className="w-12 h-12 text-[#f95721] mx-auto opacity-70 animate-pulse" />
+          <h2 className="text-base font-bold text-[#fafaf9]">No findings yet</h2>
+          <p className="text-xs text-[#a8a29e] max-w-md mx-auto leading-relaxed">
+            No attack indicators or rule findings have been detected for this case yet. Ingest forensic evidence (EVTX, PCAP, Syslog, or EDR alerts) to generate attack trajectory steps.
+          </p>
+        </div>
+      ) : activeTab === 'topology' ? (
         <div className="space-y-4">
           <div className="p-4 rounded-xl bg-[#191716] border border-[#2e2825] flex items-center justify-between text-xs font-mono text-[#a8a29e]">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[#f95721] animate-pulse" />
-              <span>Isolated Adversary Propagation Graph · Traversal from Ingress to Exfiltration Target</span>
+              <span>Isolated Adversary Propagation Trajectory across Compromised Vertices</span>
             </div>
-            <span className="text-[#f95721] font-semibold">{attackGraphData.nodes.length} Vertices · {attackGraphData.edges.length} Hops</span>
+            <span className="text-[#f95721] font-semibold">{pathGraphData.nodes.length} Compromised Hosts · {pathGraphData.edges.length} Tactic Transitions</span>
           </div>
 
           <div className={`rounded-2xl overflow-hidden border ${isLight ? 'border-slate-200 bg-white' : 'border-[#2b2523] bg-[#141211]'}`}>
-            <GraphView graphData={attackGraphData} />
+            <GraphView graphData={pathGraphData} />
           </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Column: Kill-Chain Step Sequence (7 cols) */}
+          {/* Left Column: Chronological List OR Grouped MITRE ATT&CK Tactic Sequence (7 cols) */}
           <div className="lg:col-span-7 space-y-4">
-            {/* Phase Filters */}
-            {phases.length > 0 && (
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-mono">
-                <button
-                  type="button"
-                  onClick={() => setSelectedPhase('all')}
-                  className={`px-2.5 py-1 rounded-lg border transition-colors cursor-pointer shrink-0 ${
-                    selectedPhase === 'all'
-                      ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60 font-semibold'
-                      : 'bg-[#161413] text-[#a8a29e] border-[#2b2523] hover:text-[#fafaf9]'
-                  }`}
-                >
-                  All Stages ({attackPathEvents.length})
-                </button>
-                {phases.map(p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setSelectedPhase(p)}
-                    className={`px-2.5 py-1 rounded-lg border transition-colors cursor-pointer shrink-0 ${
-                      selectedPhase === p
-                        ? 'bg-[#2a140d] text-[#f95721] border-[#ea580c]/60 font-semibold'
-                        : 'bg-[#161413] text-[#a8a29e] border-[#2b2523] hover:text-[#fafaf9]'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Step-by-Step Vertical Progression Timeline */}
-            <div className="space-y-3">
-              {filteredEvents.map((evt, idx) => {
-                const isSelected = (selectedEvent?.id === evt.id);
-                const stepNum = idx + 1;
+            {(() => {
+              const renderFindingCard = (finding: DetectionResult, stepNum: number) => {
+                const isSelected = selectedFinding?.id === finding.id;
+                const sourceLabel = finding.source || (finding.rule_id.startsWith('edr-') ? 'EDR' : 'Rule');
+                const mergedRules = getMergedRules(finding);
+                const firstSeenTs = resolveFindingFirstSeen(finding, eventsById);
+                const lastSeenTs = finding.rule_information?.last_seen
+                  ? String(finding.rule_information.last_seen)
+                  : undefined;
 
                 return (
                   <div
-                    key={evt.id}
-                    onClick={() => setSelectedEventId(evt.id)}
+                    key={finding.id}
+                    onClick={() => setSelectedFindingId(finding.id)}
                     className={`p-4 rounded-xl border transition-all cursor-pointer relative group ${
                       isSelected
                         ? 'bg-[#22130d] border-[#ea580c] shadow-[0_0_16px_rgba(249,87,33,0.18)]'
@@ -203,7 +285,7 @@ export const AttackPath: React.FC = () => {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3 min-w-0">
-                        {/* Hop Sequence Number */}
+                        {/* Step Number Badge */}
                         <div className={`w-7 h-7 rounded-lg shrink-0 flex items-center justify-center font-mono font-bold text-xs ${
                           isSelected
                             ? 'bg-[#f95721] text-white shadow-md'
@@ -215,29 +297,51 @@ export const AttackPath: React.FC = () => {
                         <div className="min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-bold text-[#fafaf9] group-hover:text-[#f95721] transition-colors truncate">
-                              {evt.action}
+                              {finding.rule_name}
                             </span>
-                            {evt.outcome === 'success' ? (
-                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700/50">
-                                EXECUTED
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-700/50">
-                                PROBE
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                              sourceLabel === 'EDR'
+                                ? 'bg-purple-950/80 text-purple-300 border-purple-700/50'
+                                : 'bg-blue-950/80 text-blue-300 border-blue-700/50'
+                            }`}>
+                              {sourceLabel}
+                            </span>
+                            {mergedRules.length > 0 && (
+                              <span
+                                title={`Merged with: ${mergedRules.join(', ')}`}
+                                className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-emerald-950/70 text-emerald-300 border-emerald-700/50"
+                              >
+                                Merged (+{mergedRules.length})
                               </span>
                             )}
                           </div>
 
-                          {/* Phase & Entity Traversal */}
+                          {/* Tactic & Host/User Context */}
                           <div className="text-[11px] font-mono text-[#a8a29e] flex flex-wrap items-center gap-2">
-                            {evt.attack_phase && (
-                              <span className="text-[#f95721] font-medium">{evt.attack_phase}</span>
-                            )}
-                            {evt.host && (
-                              <span>Host: <strong className="text-[#fafaf9]">{evt.host}</strong></span>
-                            )}
-                            {evt.user && evt.user !== 'SYSTEM' && (
-                              <span>User: <strong className="text-[#fafaf9]">{evt.user}</strong></span>
+                            <span className="text-[#f95721] font-medium">{finding.mitre_tactic}</span>
+                            {(() => {
+                              const sourceIps = finding.source_ips?.length
+                                ? finding.source_ips
+                                : (finding.rule_information?.source_ips || finding.rule_information?.src_ips || (finding.src_ip ? [finding.src_ip] : []));
+                              const targetHosts = [...new Set([
+                                ...(finding.hosts || []),
+                                ...(finding.entities_involved?.hosts || []),
+                                ...(finding.target_host ? [finding.target_host] : []),
+                                ...(finding.host && finding.host !== 'unknown' && finding.host !== 'unknown_host' ? [finding.host] : []),
+                              ])];
+                              return (
+                                <>
+                                  {sourceIps.length > 0 && (
+                                    <span>Source: <strong className="text-[#ff8d60]">{sourceIps.join(', ')}</strong></span>
+                                  )}
+                                  {targetHosts.length > 0 && (
+                                    <span>Target host: <strong className="text-[#fafaf9]">{targetHosts.join(', ')}</strong></span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                            {finding.user && finding.user !== 'unknown' && (
+                              <span>User: <strong className="text-[#fafaf9]">{finding.user}</strong></span>
                             )}
                           </div>
                         </div>
@@ -245,96 +349,194 @@ export const AttackPath: React.FC = () => {
 
                       {/* Right Tag: Severity & Technique */}
                       <div className="shrink-0 text-right space-y-1">
-                        <SeverityTag severity={evt.severity} />
-                        {evt.mitre_technique && (
-                          <div className="pt-0.5">
-                            <MitreBadge techniqueId={evt.mitre_technique} />
+                        <SeverityTag severity={finding.severity} />
+                        {(finding.mitre_techniques_all?.length ? finding.mitre_techniques_all : [finding.mitre_technique]).filter(Boolean).map(technique => (
+                          <div key={technique} className="pt-0.5">
+                            <MitreBadge techniqueId={technique} />
                           </div>
-                        )}
+                        ))}
                       </div>
                     </div>
 
                     <div className="mt-2 pt-2 border-t border-[#241e1c] flex items-center justify-between text-[10px] font-mono text-[#78716c]">
-                      <span>TIMESTAMP: {new Date(evt.timestamp).toUTCString()}</span>
+                      <span>
+                        FIRST SEEN: {new Date(firstSeenTs).toUTCString()}
+                        {lastSeenTs && lastSeenTs !== firstSeenTs ? ` -> ${new Date(lastSeenTs).toUTCString()}` : ''}
+                      </span>
                       <span className="text-[#f95721] group-hover:underline flex items-center gap-0.5">
-                        Inspect Hop <ChevronRight className="w-3 h-3" />
+                        {finding.matched_event_ids?.length || 1} Event(s) <ChevronRight className="w-3 h-3" />
                       </span>
                     </div>
                   </div>
                 );
-              })}
-            </div>
+              };
+
+              if (orderMode === 'tactic') {
+                let runningStep = 0;
+                return tacticGroups.map((group) => (
+                  <div
+                    key={group.tacticKey}
+                    className="rounded-2xl border border-[#2a2421] bg-[#12100f]/90 p-3.5 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between px-1 pb-1.5 border-b border-[#25201e]">
+                      <div className="flex items-center gap-2">
+                        <Tag className="w-3.5 h-3.5 text-[#f95721]" />
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#fafaf9]">
+                          {group.tacticLabel}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#2a140d] border border-[#ea580c]/30 text-[#f95721] font-semibold">
+                        {group.findings.length} {group.findings.length === 1 ? 'finding' : 'findings'}
+                      </span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {group.findings.map((finding) => {
+                        runningStep += 1;
+                        return renderFindingCard(finding, runningStep);
+                      })}
+                    </div>
+                  </div>
+                ));
+              }
+
+              return (
+                <div className="space-y-3">
+                  {orderedFindings.map((finding, idx) => renderFindingCard(finding, idx + 1))}
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Right Column: Deep Forensic Evidence Inspector (5 cols) */}
-          <div className="lg:col-span-5 sticky top-[75px] space-y-4">
-            {selectedEvent ? (
+          {/* Right Column: Finding Evidence Inspector (5 cols) */}
+          <div className="lg:col-span-5 lg:sticky lg:top-[75px] space-y-4">
+            {selectedFinding ? (
               <div className="p-5 rounded-2xl bg-[#161413] border border-[#2e2825] shadow-xl space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-[#282321]">
                   <div className="flex items-center gap-2">
                     <Terminal className="w-4 h-4 text-[#f95721]" />
                     <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-[#fafaf9]">
-                      Forensic Hop Deep Dive
+                      Stage Finding Details
                     </h3>
                   </div>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#2a140d] text-[#f95721] border border-[#ea580c]/40 font-semibold">
-                    {selectedEvent.id}
+                    {selectedFinding.id}
                   </span>
                 </div>
 
                 <div className="space-y-3 text-xs">
                   <div>
-                    <span className="text-[#78716c] text-[11px] block font-mono">ADVERSARY ACTION:</span>
-                    <strong className="text-[#fafaf9] text-sm block mt-0.5">{selectedEvent.action}</strong>
+                    <span className="text-[#78716c] text-[11px] block font-mono">DESCRIPTION:</span>
+                    <p className="text-[#fafaf9] text-xs mt-0.5 leading-relaxed">{selectedFinding.description}</p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#25201e] text-[11px] font-mono">
                     <div>
-                      <span className="text-[#78716c] block">HOST TARGET:</span>
-                      <strong className="text-[#fafaf9]">{selectedEvent.host || 'N/A'}</strong>
+                      <span className="text-[#78716c] block">TARGET HOST:</span>
+                      <strong className="text-[#fafaf9]">
+                        {selectedFinding.target_host
+                          || (selectedFinding.host && selectedFinding.host !== 'unknown' ? selectedFinding.host : undefined)
+                          || selectedFinding.hosts?.[0]
+                          || selectedFinding.entities_involved?.hosts?.[0]
+                          || 'N/A'}
+                      </strong>
                     </div>
                     <div>
-                      <span className="text-[#78716c] block">USER CONTEXT:</span>
-                      <strong className="text-[#fafaf9]">{selectedEvent.user || 'N/A'}</strong>
+                      <span className="text-[#78716c] block">USER ACCOUNT:</span>
+                      <strong className="text-[#fafaf9]">{selectedFinding.user || 'N/A'}</strong>
                     </div>
                     <div>
-                      <span className="text-[#78716c] block">INGRESS IP:</span>
-                      <strong className="text-[#ff8d60]">{selectedEvent.src_ip || 'External C2'}</strong>
+                      <span className="text-[#78716c] block">SOURCE:</span>
+                      <strong className="text-[#ff8d60]">
+                        {(selectedFinding.source_ips?.length
+                          ? selectedFinding.source_ips
+                          : (selectedFinding.rule_information?.source_ips || selectedFinding.rule_information?.src_ips || []))
+                          .join(', ') || selectedFinding.source || 'Rule Match'}
+                      </strong>
                     </div>
                     <div>
-                      <span className="text-[#78716c] block">TARGET IP / PORT:</span>
-                      <strong className="text-[#fafaf9]">{selectedEvent.dst_ip ? `${selectedEvent.dst_ip}:${selectedEvent.dst_port || 0}` : 'Local Process'}</strong>
+                      <span className="text-[#78716c] block">SOURCE FILE:</span>
+                      <strong className="text-[#fafaf9] truncate block" title={selectedFinding.source_file || 'Case Logs'}>
+                        {selectedFinding.source_file || 'Case Logs'}
+                      </strong>
                     </div>
                   </div>
 
-                  {selectedEvent.process && (
-                    <div className="pt-2 border-t border-[#25201e]">
-                      <span className="text-[#78716c] text-[11px] block font-mono">SPAWNED PROCESS:</span>
-                      <code className="text-[#fb923c] font-mono text-[11px] bg-[#0d0c0c] px-2 py-1 rounded block mt-0.5 border border-[#29221f]">
-                        {selectedEvent.process}
-                      </code>
+                  {/* MITRE Mapping */}
+                  <div className="pt-2 border-t border-[#25201e] flex items-center justify-between text-xs">
+                    <span className="text-[#78716c] font-mono">TACTIC & TECHNIQUE:</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[#fb923c] font-medium">{selectedFinding.mitre_tactic}</span>
+                      {(selectedFinding.mitre_techniques_all?.length
+                        ? selectedFinding.mitre_techniques_all
+                        : [selectedFinding.mitre_technique]
+                      ).filter(Boolean).map(tech => (
+                        <MitreBadge key={tech} techniqueId={tech} />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Prompt 6 Merged Finding / Corroboration Metadata */}
+                  {getMergedRules(selectedFinding).length > 0 && (
+                    <div className="pt-2 border-t border-[#25201e] space-y-1 text-[11px] font-mono">
+                      <span className="text-[#78716c] block">MERGED / CORROBORATING RULES:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {getMergedRules(selectedFinding).map(rule => (
+                          <span
+                            key={rule}
+                            className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-700/40"
+                          >
+                            {rule}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
 
-                  {/* MITRE Mapping */}
-                  <div className="pt-2 border-t border-[#25201e] flex items-center justify-between text-xs">
-                    <span className="text-[#78716c] font-mono">TACTIC / ATT&CK:</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[#fb923c]">{selectedEvent.mitre_tactic || 'Execution'}</span>
-                      {selectedEvent.mitre_technique && (
-                        <MitreBadge techniqueId={selectedEvent.mitre_technique} />
-                      )}
-                    </div>
+                  {/* Associated Events List per Stage 6 */}
+                  <div className="pt-2 border-t border-[#25201e] space-y-2">
+                    <span className="text-[#78716c] text-[11px] block font-mono">
+                      SUPPORTING SOURCE EVENTS ({selectedFindingEvents.length || selectedFinding.matched_event_ids?.length || 0}):
+                    </span>
+
+                    {selectedFindingEvents.length > 0 ? (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        {selectedFindingEvents.map(evt => (
+                          <div
+                            key={evt.id}
+                            onClick={() => setInspectingEvent(evt)}
+                            className="p-2 rounded-lg bg-[#0f0e0d] border border-[#26211f] hover:border-[#f95721]/50 cursor-pointer text-[11px] font-mono flex items-center justify-between group transition-colors"
+                          >
+                            <div className="truncate mr-2">
+                              <span className="text-[#a8a29e] block text-[10px]">{evt.timestamp}</span>
+                              <span className="text-[#fafaf9] group-hover:text-[#f95721] truncate block">{evt.action}</span>
+                            </div>
+                            <ExternalLink className="w-3.5 h-3.5 text-[#78716c] group-hover:text-[#f95721] shrink-0" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] font-mono text-[#78716c] bg-[#0f0e0d] p-2.5 rounded-lg border border-[#26211f]">
+                        {selectedFinding.matched_event_ids?.length || 0} event reference ID(s) linked to this detection rule.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             ) : (
               <div className="p-8 rounded-2xl bg-[#161413] border border-[#2e2825] text-center text-[#78716c] text-xs font-mono">
-                Select an attack path hop to inspect forensic attributes.
+                Select an attack path stage to inspect details and linked events.
               </div>
             )}
           </div>
         </div>
+      )}
+
+      {/* Raw Event Modal for Clickable Evidence Links */}
+      {inspectingEvent && (
+        <RawEventModal
+          event={inspectingEvent}
+          onClose={() => setInspectingEvent(null)}
+        />
       )}
     </div>
   );
