@@ -1,6 +1,6 @@
 export const APP_NAME = "አሻራ";
 export const APP_FULL_NAME = "አሻራ - Digital Crime Scene Reconstruction Engine";
-export const RENDER_BACKEND_URL = "https://digital-crime-scene-reconstruction-engine.onrender.com";
+export const RENDER_BACKEND_URL = "https://ashara-p3c3.onrender.com";
 export const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL)
   ? import.meta.env.VITE_API_BASE_URL
   : (typeof import.meta !== 'undefined' && import.meta.env?.PROD)
