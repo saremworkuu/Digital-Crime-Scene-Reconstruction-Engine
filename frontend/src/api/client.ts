@@ -67,6 +67,23 @@ class ApiClient {
     return this.warmUpPromise;
   }
 
+  /**
+   * Poll GET /health (preflight-free) while a cold-started host (e.g. Render)
+   * is booting so callers retry only once the server actually responds 200 OK.
+   */
+  async waitForBackendReady(maxWaitMs = 75000): Promise<boolean> {
+    if (typeof fetch !== 'function') return false;
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+      const ok = await this.warmUp(true);
+      if (ok) return true;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((r) => setTimeout(r, Math.min(2500, remaining)));
+    }
+    return false;
+  }
+
   setToken(token: string | null) {
     this.token = token;
     if (typeof window !== 'undefined') {
@@ -119,6 +136,7 @@ class ApiClient {
     // for safe/auth calls when no explicit caller signal was provided.
     const perAttemptTimeoutMs = options.timeout ?? (isRetrySafe ? 40000 : 90000);
     const maxAttempts = isRetrySafe && !options.signal ? 3 : 1;
+    const startedAt = Date.now();
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
@@ -134,7 +152,9 @@ class ApiClient {
 
         if (!response.ok) {
           if (attempt < maxAttempts && [502, 503, 504].includes(response.status)) {
-            await new Promise((r) => setTimeout(r, attempt * 2000));
+            const elapsed = Date.now() - startedAt;
+            const remainingBudget = Math.max(5000, 75000 - elapsed);
+            await this.waitForBackendReady(remainingBudget);
             continue;
           }
           if (response.status === 401) {
@@ -167,9 +187,12 @@ class ApiClient {
           /networkerror|failed to fetch|load failed/i.test(rawMsg);
         const canRetry = attempt < maxAttempts && (err?.name === 'AbortError' || isNetworkBlocked);
         if (canRetry) {
-          this.warmUp(true);
-          await new Promise((r) => setTimeout(r, attempt * 2500));
-          continue;
+          const elapsed = Date.now() - startedAt;
+          const remainingBudget = Math.max(5000, 75000 - elapsed);
+          const ready = await this.waitForBackendReady(remainingBudget);
+          if (ready) {
+            continue;
+          }
         }
         return {
           error: err?.name === 'AbortError'

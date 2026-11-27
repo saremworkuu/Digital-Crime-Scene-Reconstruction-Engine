@@ -57,8 +57,8 @@ def migrate_schema():
 
 
 def init_db():
-    migrate_schema()
     Base.metadata.create_all(bind=engine)
+    migrate_schema()
     db = SessionLocal()
     try:
         # Seed or sync default admin user
