@@ -41,26 +41,19 @@ def migrate_schema():
                 except Exception as ex:
                     logger.warning(f"Column migration notice for {table}.{col}: {ex}")
         elif dialect == "postgresql":
-            tables_cols = [
-                ("cases", "legal_hold", "BOOLEAN DEFAULT FALSE"),
-                ("cases", "is_archived", "BOOLEAN DEFAULT FALSE"),
-                ("evidence", "expected_sha256", "VARCHAR(64)"),
-                ("evidence", "verified", "BOOLEAN DEFAULT NULL"),
-                ("users", "department", "VARCHAR DEFAULT 'Digital Forensic Incident Response (DFIR) Command'"),
-                ("users", "badge_id", "VARCHAR DEFAULT NULL"),
-                ("users", "two_factor_enabled", "BOOLEAN DEFAULT FALSE"),
-                ("users", "status", "VARCHAR(20) DEFAULT 'active'"),
-                ("users", "sessions", "JSONB DEFAULT '[]'::jsonb"),
-                ("reports", "version", "VARCHAR(20) DEFAULT '1.0'"),
-                ("reports", "generator_name", "VARCHAR DEFAULT 'Lead Forensics Investigator'"),
-                ("reports", "report_data", "TEXT DEFAULT NULL"),
+            alter_statements = [
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS legal_hold BOOLEAN DEFAULT FALSE, ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE evidence ADD COLUMN IF NOT EXISTS expected_sha256 VARCHAR(64), ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT NULL",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR DEFAULT 'Digital Forensic Incident Response (DFIR) Command', ADD COLUMN IF NOT EXISTS badge_id VARCHAR DEFAULT NULL, ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE, ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active', ADD COLUMN IF NOT EXISTS sessions JSONB DEFAULT '[]'::jsonb",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS version VARCHAR(20) DEFAULT '1.0', ADD COLUMN IF NOT EXISTS generator_name VARCHAR DEFAULT 'Lead Forensics Investigator', ADD COLUMN IF NOT EXISTS report_data TEXT DEFAULT NULL",
             ]
-            for table, col, col_def in tables_cols:
+            for stmt in alter_statements:
                 try:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_def}"))
+                    conn.execute(text(stmt))
                     conn.commit()
                 except Exception as ex:
-                    logger.warning(f"PostgreSQL column migration notice for {table}.{col}: {ex}")
+                    conn.rollback()
+                    logger.warning(f"PostgreSQL column migration notice: {ex}")
 
 
 def init_db():

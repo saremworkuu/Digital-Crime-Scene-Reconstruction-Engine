@@ -322,13 +322,14 @@ def login(
         )
 
     # Clear recent failures for this email and IP after success.
-    db.execute(
+    del_res = db.execute(
         delete(LoginAttempt).where(
             LoginAttempt.email == input_identifier,
             LoginAttempt.ip_address == client_ip,
         )
     )
-    db.commit()
+    if del_res.rowcount:
+        db.commit()
 
     role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
     access_token = create_access_token({

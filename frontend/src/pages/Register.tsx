@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../store';
 import {
   Eye,
@@ -28,6 +28,20 @@ export const Register: React.FC = () => {
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSlowWake, setIsSlowWake] = useState(false);
+
+  useEffect(() => {
+    apiClient.warmUp();
+  }, []);
+
+  useEffect(() => {
+    if (!isSubmitting) {
+      setIsSlowWake(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsSlowWake(true), 3000);
+    return () => clearTimeout(timer);
+  }, [isSubmitting]);
 
   // Strict real email validation
   const validateEmail = (val: string) => {
@@ -327,8 +341,15 @@ export const Register: React.FC = () => {
                 disabled={isSubmitting}
                 className="w-full py-3.5 px-6 rounded-xl font-bold text-sm text-white bg-[#f95721] hover:bg-[#ea580c] active:scale-[0.99] transition-all shadow-lg hover:shadow-[0_0_20px_rgba(249,87,33,0.4)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-center"
               >
-                {isSubmitting ? 'Creating Examiner Account...' : 'Create Account'}
+                {isSubmitting
+                  ? (isSlowWake ? 'Waking server & creating account...' : 'Creating Examiner Account...')
+                  : 'Create Account'}
               </button>
+              {isSlowWake && (
+                <p className={`text-[11px] font-sans text-center mt-2 ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
+                  The deployed backend server is waking up from idle. Please wait a few seconds...
+                </p>
+              )}
             </div>
 
             {/* Footer link to Log In */}

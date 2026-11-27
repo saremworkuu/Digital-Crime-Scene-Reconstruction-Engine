@@ -12,11 +12,60 @@ export const RENDER_BACKEND_URL = 'https://digital-crime-scene-reconstruction-en
 
 class ApiClient {
   private token: string | null = null;
+  private warmUpPromise: Promise<boolean> | null = null;
+  private lastWarmUpAt = 0;
   private baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL)
     ? import.meta.env.VITE_API_BASE_URL
     : (typeof import.meta !== 'undefined' && import.meta.env?.PROD)
       ? `${RENDER_BACKEND_URL}/api/v1`
       : '/api/v1';
+
+  constructor() {
+    if (typeof window !== 'undefined' && /^https?:\/\//.test(this.baseUrl)) {
+      this.warmUp();
+    }
+  }
+
+  private getHealthUrl(): string {
+    if (/^https?:\/\//.test(this.baseUrl)) {
+      return this.baseUrl.replace(/\/api\/v1\/?$/, '') + '/health';
+    }
+    return '/health';
+  }
+
+  /**
+   * Sends a lightweight CORS-simple GET /health ping (no custom headers/preflight)
+   * so cold-started Render instances begin booting before user form submission.
+   */
+  warmUp(force = false): Promise<boolean> {
+    if (typeof fetch !== 'function') return Promise.resolve(false);
+    const now = Date.now();
+    if (!force && now - this.lastWarmUpAt < 45000 && this.warmUpPromise) {
+      return this.warmUpPromise;
+    }
+    if (this.warmUpPromise && !force) {
+      return this.warmUpPromise;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 35000);
+    this.warmUpPromise = fetch(this.getHealthUrl(), {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (res.ok) this.lastWarmUpAt = Date.now();
+        return res.ok;
+      })
+      .catch(() => false)
+      .finally(() => {
+        clearTimeout(timer);
+        setTimeout(() => {
+          this.warmUpPromise = null;
+        }, 5000);
+      });
+    return this.warmUpPromise;
+  }
 
   setToken(token: string | null) {
     this.token = token;
@@ -57,57 +106,86 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${token.trim()}`);
     }
 
-    // Hosted backends (such as Render free tier) may need time to wake from cold start,
-    // and large evidence requests need extra headroom.
-    const timeoutMs = options.timeout ?? 90000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const method = (options.method || 'GET').toUpperCase();
+    const isRetrySafe =
+      method === 'GET' ||
+      method === 'HEAD' ||
+      endpoint.startsWith('/auth/login') ||
+      endpoint.startsWith('/auth/register') ||
+      endpoint.startsWith('/auth/signup');
 
-    try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        ...options,
-        signal: options.signal || controller.signal,
-        headers,
-      });
-      clearTimeout(timeoutId);
+    // Hosted backends (such as Render free tier) may drop or time out the first
+    // edge connection while booting; use shorter per-attempt timeouts with retries
+    // for safe/auth calls when no explicit caller signal was provided.
+    const perAttemptTimeoutMs = options.timeout ?? (isRetrySafe ? 40000 : 90000);
+    const maxAttempts = isRetrySafe && !options.signal ? 3 : 1;
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          try {
-            this.token = null;
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('dcsre_access_token');
-              localStorage.removeItem('token');
-              if (token) {
-                window.dispatchEvent(new Event('dcsre:session-expired'));
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), perAttemptTimeoutMs);
+
+      try {
+        const response = await fetch(`${this.baseUrl}${endpoint}`, {
+          ...options,
+          signal: options.signal || controller.signal,
+          headers,
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          if (attempt < maxAttempts && [502, 503, 504].includes(response.status)) {
+            await new Promise((r) => setTimeout(r, attempt * 2000));
+            continue;
+          }
+          if (response.status === 401) {
+            try {
+              this.token = null;
+              if (typeof window !== 'undefined') {
+                localStorage.removeItem('dcsre_access_token');
+                localStorage.removeItem('token');
+                if (token) {
+                  window.dispatchEvent(new Event('dcsre:session-expired'));
+                }
               }
-            }
-          } catch {}
+            } catch {}
+          }
+          const errorData = await response.json().catch(() => ({}));
+          return {
+            error: errorData.detail || `Request failed with status ${response.status}`,
+            status: response.status,
+          };
         }
-        const errorData = await response.json().catch(() => ({}));
+
+        const data = await response.json();
+        this.lastWarmUpAt = Date.now();
+        return { data, status: response.status };
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        const rawMsg = String(err?.message || '');
+        const isNetworkBlocked =
+          err?.name === 'TypeError' ||
+          /networkerror|failed to fetch|load failed/i.test(rawMsg);
+        const canRetry = attempt < maxAttempts && (err?.name === 'AbortError' || isNetworkBlocked);
+        if (canRetry) {
+          this.warmUp(true);
+          await new Promise((r) => setTimeout(r, attempt * 2500));
+          continue;
+        }
         return {
-          error: errorData.detail || `Request failed with status ${response.status}`,
-          status: response.status,
+          error: err?.name === 'AbortError'
+            ? 'Request timed out (backend may still be waking up; please retry).'
+            : isNetworkBlocked
+              ? 'Unable to reach backend server (it may be waking up or blocked by CORS/network). Please wait a few seconds and try again.'
+              : (rawMsg || 'Network request failed'),
+          status: 0,
         };
       }
-
-      const data = await response.json();
-      return { data, status: response.status };
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      const rawMsg = String(err?.message || '');
-      const isNetworkBlocked =
-        err?.name === 'TypeError' ||
-        /networkerror|failed to fetch|load failed/i.test(rawMsg);
-      return {
-        error: err?.name === 'AbortError'
-          ? 'Request timed out (backend may still be waking up; please retry).'
-          : isNetworkBlocked
-            ? 'Unable to reach backend server (it may be waking up or blocked by CORS/network). Please wait a few seconds and try again.'
-            : (rawMsg || 'Network request failed'),
-        status: 0,
-      };
     }
+
+    return {
+      error: 'Unable to reach backend server (it may be waking up or blocked by CORS/network). Please wait a few seconds and try again.',
+      status: 0,
+    };
   }
 
   get<T>(endpoint: string) {
