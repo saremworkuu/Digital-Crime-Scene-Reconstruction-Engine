@@ -27,20 +27,10 @@ export const Login: React.FC = () => {
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSlowWake, setIsSlowWake] = useState(false);
 
   useEffect(() => {
     apiClient.warmUp();
   }, []);
-
-  useEffect(() => {
-    if (!isSubmitting) {
-      setIsSlowWake(false);
-      return;
-    }
-    const timer = setTimeout(() => setIsSlowWake(true), 3000);
-    return () => clearTimeout(timer);
-  }, [isSubmitting]);
 
   const validateEmail = (val: string) => {
     setEmail(val);
@@ -314,7 +304,7 @@ export const Login: React.FC = () => {
                 {isSubmitting ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>{isSlowWake ? 'Waking server & signing in...' : 'Signing in...'}</span>
+                    <span>Signing in...</span>
                   </>
                 ) : (
                   <>
@@ -323,11 +313,6 @@ export const Login: React.FC = () => {
                   </>
                 )}
               </button>
-              {isSlowWake && (
-                <p className={`text-[11px] font-sans text-center mt-2 ${isLight ? 'text-slate-500' : 'text-[#a8a29e]'}`}>
-                  The deployed backend server is waking up from idle. Please wait a few seconds...
-                </p>
-              )}
             </div>
 
             {/* Footer link to Register */}
